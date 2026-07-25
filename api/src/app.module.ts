@@ -17,6 +17,7 @@ import { InventoryModule } from './modules/inventory/inventory.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { CompanySettingsModule } from './modules/settings/company-settings.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -39,6 +40,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     CustomersModule,
     SalesModule,
     DashboardModule,
+    CompanySettingsModule,
   ],
   providers: [
     // Order matters: authenticate → throttle → authorize.

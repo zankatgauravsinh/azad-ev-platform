@@ -20,30 +20,38 @@ async function main(): Promise<void> {
   }
   console.log(`✓ Company ready → ${company.name} (${companyId})`);
 
-  // ── Company settings (one per company) ─────────────────
+  // ── Company settings — the single source of truth (one per company) ──
   await prisma.companySetting.upsert({
-    where: { companyId },
-    update: {},
-    create: { companyId, businessName: 'AZAD EV POINT', legalName: 'Azad Enterprise', city: 'Una, Gujarat' },
-  });
-
-  // ── Invoice settings (one per company) ─────────────────
-  await prisma.invoiceSetting.upsert({
     where: { companyId },
     update: {},
     create: {
       companyId,
-      invoicePrefix: 'AZAD/25-26/',
-      quotationPrefix: 'QT/25-26/',
-      bookingPrefix: 'BK/25-26/',
-      servicePrefix: 'SVC/25-26/',
-      showGst: false,
+      businessName: 'AZAD EV POINT',
+      legalName: 'Azad Enterprise',
+      city: 'Una, Gujarat',
+      state: 'Gujarat',
+      currency: 'INR',
+      timezone: 'Asia/Kolkata',
+      language: 'en',
+      gstEnabled: false,
+      invoicePrefix: 'INV',
+      bookingPrefix: 'BK',
+      quotationPrefix: 'QT',
+      receiptPrefix: 'RC',
+      jobCardPrefix: 'JC',
+      defaultWarrantyMonths: 36,
+      serviceReminderDays: 90,
+      primaryColor: '#0B2545',
+      secondaryColor: '#00B8A9',
       termsAndConditions:
         '1. Goods once sold will not be taken back.\n2. Warranty as per manufacturer terms.\n3. Subject to Una jurisdiction.',
-      footerNote: 'Thank you for choosing AZAD EV POINT — Ride Free. Ride Electric.',
+      invoiceFooter: 'Thank you for choosing AZAD EV POINT — Ride Free. Ride Electric.',
     },
   });
-  console.log('✓ Company & invoice settings ready');
+
+  // ── Sequence counters (one per company) ────────────────
+  await prisma.invoiceSetting.upsert({ where: { companyId }, update: {}, create: { companyId } });
+  console.log('✓ Company settings & sequence counters ready');
 
   // ── Owner account ──────────────────────────────────────
   const passwordHash = await bcrypt.hash(ownerPassword, 12);

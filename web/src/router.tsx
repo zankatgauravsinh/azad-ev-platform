@@ -13,6 +13,7 @@ import { QuotationDetailPage } from '@/features/sales/pages/quotation-detail-pag
 import { BookingsListPage } from '@/features/sales/pages/bookings-list-page';
 import { BookingDetailPage } from '@/features/sales/pages/booking-detail-page';
 import { DashboardPage } from '@/features/dashboard/pages/dashboard-page';
+import { SettingsPage } from '@/features/settings/pages/settings-page';
 
 export const router = createBrowserRouter([
   {
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
           { path: '/quotations/:id', element: <QuotationDetailPage /> },
           { path: '/bookings', element: <BookingsListPage /> },
           { path: '/bookings/:id', element: <BookingDetailPage /> },
+          { path: '/settings', element: <SettingsPage /> },
           { path: '*', element: <NotFound /> },
         ],
       },

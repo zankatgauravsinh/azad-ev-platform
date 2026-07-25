@@ -127,8 +127,20 @@ ActivityAction      : CREATE | UPDATE | DELETE | STATUS_CHANGE | LOGIN | PAYMENT
 
 **Notification** — `recipientId→User, type, title, body, entityType, entityId, readAt?`
 **ActivityLog** — `actorId→User, action(ActivityAction), entityType, entityId, summary, metadata(jsonb), ip?`
-**CompanySetting** (singleton) — `businessName, legalName, address, city, phone, email, gstin, logoKey`
-**InvoiceSetting** (singleton) — `invoicePrefix, nextInvoiceNumber, quotationPrefix, nextQuotationNumber, bookingPrefix, servicePrefix, termsAndConditions, taxRate(decimal), showGst(bool), footerNote`
+**CompanySetting** (one row per company, `@unique companyId`) — the company configuration framework every module reads from. Strongly-typed columns, grouped:
+- _Business_ — `businessName, legalName?, address?, city, state, phone?, email?`
+- _Localization_ — `currency, timezone, language, dateFormat, timeFormat`
+- _GST/Tax_ — `gstEnabled(bool), gstNumber?, taxPercentage(decimal 5,2)`
+- _Document prefixes_ — `invoicePrefix, bookingPrefix, quotationPrefix, receiptPrefix, jobCardPrefix`
+- _Sales/Service_ — `defaultWarrantyMonths(int), serviceReminderDays(int)`
+- _Branding_ — `companyLogo?(key), favicon?(key), primaryColor, secondaryColor`
+- _Working hours_ — `workingDays(string[]), workingHours`
+- _Notifications_ — `emailEnabled, smsEnabled, whatsappEnabled (bool)`
+- _Backup_ — `backupEnabled(bool), backupFrequency(BackupFrequency enum: DAILY|WEEKLY|MONTHLY)`
+- _Invoice text_ — `termsAndConditions?, invoiceFooter?`
+- _Audit_ — `updatedById?→User`
+
+**InvoiceSetting** (one row per company, `@unique companyId`) — **sequence counter state only** (separation of concerns; prefixes now live in CompanySetting): `nextInvoiceNumber, nextBookingNumber, nextQuotationNumber, nextReceiptNumber, nextServiceNumber`. `SequenceService` atomically reads the prefix from CompanySetting and increments the matching counter here inside a transaction.
 
 ## 3.4 Relationships summary
 - **1:N** — Model→Variant→Unit; Customer→(Documents, Notes, TestRides, Bookings, Sales, ServiceJobs); Sale→(SaleItems, Payments, SaleAccessories); ServiceJob→(Parts, Labour, Payments); Booking→(Accessories, Documents, Payments); Delivery→Photos.

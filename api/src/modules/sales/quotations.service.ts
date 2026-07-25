@@ -199,14 +199,14 @@ export class QuotationsService {
 
   async generatePdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
     const q = await this.getById(id);
-    const settings = await this.prisma.invoiceSetting.findFirstOrThrow();
     const company = await this.prisma.companySetting.findFirstOrThrow();
+    const settings = company; // terms & footer now live on CompanySetting
     const buffer = await this.pdf.render({
       docType: 'QUOTATION',
       number: q.code,
       date: q.createdAt,
       validUntil: q.validUntil,
-      company: { businessName: company.businessName, legalName: company.legalName, address: company.address, city: company.city, phone: company.phone, gstin: company.gstin },
+      company: { businessName: company.businessName, legalName: company.legalName, address: company.address, city: company.city, phone: company.phone, gstin: company.gstEnabled ? company.gstNumber : null },
       customer: { name: q.customer.name, phone: q.customer.phone, address: q.customer.address, city: q.customer.city },
       vehicle: { model: q.variant.model.name, variant: q.variant.name, colour: q.variant.colour },
       lines: [
@@ -222,7 +222,7 @@ export class QuotationsService {
       total: q.total,
       finance: q.financeLoanAmount > 0n ? { company: 'Finance estimate', loanAmount: q.financeLoanAmount, downPayment: q.financeDownPayment, emi: q.financeEmi, tenureMonths: q.financeTenureMonths } : null,
       terms: settings.termsAndConditions,
-      footer: settings.footerNote,
+      footer: settings.invoiceFooter,
     });
     return { buffer, filename: `${q.code.replace(/\//g, '-')}.pdf` };
   }

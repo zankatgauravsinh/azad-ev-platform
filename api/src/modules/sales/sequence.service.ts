@@ -4,33 +4,35 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 type SequenceKind = 'quotation' | 'booking' | 'invoice' | 'receipt' | 'service';
 
-const FIELDS: Record<SequenceKind, { prefix: keyof Prisma.InvoiceSettingUpdateInput; next: keyof Prisma.InvoiceSettingUpdateInput }> = {
-  quotation: { prefix: 'quotationPrefix', next: 'nextQuotationNumber' },
-  booking: { prefix: 'bookingPrefix', next: 'nextBookingNumber' },
-  invoice: { prefix: 'invoicePrefix', next: 'nextInvoiceNumber' },
-  receipt: { prefix: 'receiptPrefix', next: 'nextReceiptNumber' },
-  service: { prefix: 'servicePrefix', next: 'nextServiceNumber' },
+// Which CompanySetting prefix + InvoiceSetting counter each document series uses.
+const FIELDS: Record<SequenceKind, { prefix: keyof Prisma.CompanySettingUpdateInput; counter: keyof Prisma.InvoiceSettingUpdateInput }> = {
+  quotation: { prefix: 'quotationPrefix', counter: 'nextQuotationNumber' },
+  booking: { prefix: 'bookingPrefix', counter: 'nextBookingNumber' },
+  invoice: { prefix: 'invoicePrefix', counter: 'nextInvoiceNumber' },
+  receipt: { prefix: 'receiptPrefix', counter: 'nextReceiptNumber' },
+  service: { prefix: 'jobCardPrefix', counter: 'nextServiceNumber' },
 };
 
 /**
- * Allocates the next human-readable code for a document series and advances the
- * counter — atomically within the caller's transaction. Unique constraints on
- * the target columns guarantee no duplicates even under a rare race.
+ * Allocates the next document code: the prefix comes from company settings (the
+ * single source of truth) and the counter from the per-company sequence store.
+ * Runs inside the caller's transaction; unique constraints prevent duplicates.
  */
 @Injectable()
 export class SequenceService {
   constructor(private readonly prisma: PrismaService) {}
 
   async next(kind: SequenceKind, tx: Prisma.TransactionClient): Promise<string> {
-    const settings = await tx.invoiceSetting.findFirstOrThrow();
-    const { prefix, next } = FIELDS[kind];
-    const record = settings as unknown as Record<string, string | number>;
-    const current = record[next as string] as number;
-    const prefixValue = record[prefix as string] as string;
+    const { prefix, counter } = FIELDS[kind];
+    const settings = await tx.companySetting.findFirstOrThrow();
+    const sequence = await tx.invoiceSetting.findFirstOrThrow();
+
+    const prefixValue = (settings as unknown as Record<string, string>)[prefix as string] ?? '';
+    const current = (sequence as unknown as Record<string, number>)[counter as string] ?? 1;
 
     await tx.invoiceSetting.update({
-      where: { id: settings.id },
-      data: { [next as string]: current + 1 },
+      where: { id: sequence.id },
+      data: { [counter as string]: current + 1 },
     });
     return `${prefixValue}${String(current).padStart(4, '0')}`;
   }

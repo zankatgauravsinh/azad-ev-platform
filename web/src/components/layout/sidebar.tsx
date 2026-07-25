@@ -2,17 +2,28 @@ import { NavLink } from 'react-router-dom';
 import type { Role } from '@azad/shared';
 import { cn } from '@/lib/utils';
 import { BrandMark } from '@/components/brand/brand-mark';
+import { useBranding } from '@/features/settings/hooks';
 import { visibleNavItems } from './nav-items';
+
+const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/v1$/, '');
 
 export function Sidebar({ role, onNavigate }: { role: Role; onNavigate?: () => void }): JSX.Element {
   const items = visibleNavItems(role);
+  const { data: branding } = useBranding();
+  const logoSrc = branding?.companyLogoUrl
+    ? branding.companyLogoUrl.startsWith('http') ? branding.companyLogoUrl : `${API_ORIGIN}${branding.companyLogoUrl}`
+    : null;
 
   return (
     <div className="flex h-full flex-col gap-2">
       <div className="flex items-center gap-2 px-4 py-4">
-        <BrandMark className="h-8 w-8" />
+        {logoSrc ? (
+          <img src={logoSrc} alt="Logo" className="h-8 w-8 rounded object-contain" />
+        ) : (
+          <BrandMark className="h-8 w-8" />
+        )}
         <div className="leading-tight">
-          <p className="text-sm font-bold tracking-tight">AZAD EV POINT</p>
+          <p className="text-sm font-bold tracking-tight">{branding?.businessName ?? 'AZAD EV POINT'}</p>
           <p className="text-[11px] text-muted-foreground">Showroom</p>
         </div>
       </div>

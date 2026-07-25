@@ -41,7 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Service', to: '/service', icon: Wrench, enabled: false, roles: ['OWNER', 'MANAGER', 'TECHNICIAN'] },
   { label: 'Expenses', to: '/expenses', icon: Wallet, enabled: false, roles: ['OWNER', 'MANAGER'] },
   { label: 'Reports', to: '/reports', icon: BarChart3, enabled: false, roles: ['OWNER', 'MANAGER'] },
-  { label: 'Settings', to: '/settings', icon: Settings, enabled: false, roles: ['OWNER'] },
+  { label: 'Settings', to: '/settings', icon: Settings, enabled: true, roles: ['OWNER', 'MANAGER'] },
 ];
 
 export function visibleNavItems(role: Role): NavItem[] {

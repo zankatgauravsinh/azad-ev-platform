@@ -34,7 +34,7 @@ async function bootstrap(): Promise<void> {
   });
 
   const port = config.get('API_PORT');
-  await app.listen(port);
+await app.listen(process.env.PORT || 3000, '0.0.0.0');
   Logger.log(`AZAD EV POINT API running on http://localhost:${port}/api/v1`, 'Bootstrap');
   Logger.log(`API docs at http://localhost:${port}/api/docs`, 'Bootstrap');
 }

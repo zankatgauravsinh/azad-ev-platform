@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ThemeProvider } from './theme-context';
 import { AuthProvider } from '@/features/auth/auth-context';
+import { ThemeApplier } from '@/features/settings/theme-applier';
 import { Toaster } from '@/components/ui/sonner';
 
 export function AppProviders({ children }: { children: React.ReactNode }): JSX.Element {
@@ -22,6 +23,7 @@ export function AppProviders({ children }: { children: React.ReactNode }): JSX.E
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
+          <ThemeApplier />
           {children}
           <Toaster position="top-right" richColors />
         </AuthProvider>

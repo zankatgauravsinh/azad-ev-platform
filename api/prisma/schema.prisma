@@ -201,6 +201,12 @@ enum ActivityAction {
   EXPORT
 }
 
+enum BackupFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
 // ─────────────────────────── Tenant root ───────────────────────────
 
 /// The tenant root. Single-tenant-ready: every business record carries a
@@ -1146,17 +1152,66 @@ model ActivityLog {
   @@index([companyId])
 }
 
+/// The single source of truth for all configurable company behaviour.
+/// One row per company; every module reads its settings from here.
 model CompanySetting {
-  id           String  @id @default(uuid())
-  companyId    String  @unique @default("")
+  id        String @id @default(uuid())
+  companyId String @unique @default("")
+
+  // Business
   businessName String  @default("AZAD EV POINT")
   legalName    String  @default("Azad Enterprise")
   address      String?
   city         String  @default("Una, Gujarat")
+  state        String  @default("Gujarat")
   phone        String?
   email        String?
-  gstin        String?
-  logoKey      String?
+
+  // Localization
+  currency   String @default("INR")
+  timezone   String @default("Asia/Kolkata")
+  language   String @default("en")
+  dateFormat String @default("DD/MM/YYYY")
+  timeFormat String @default("12h")
+
+  // GST / tax
+  gstEnabled    Boolean @default(false)
+  gstNumber     String?
+  taxPercentage Decimal @default(0) @db.Decimal(5, 2)
+
+  // Document prefixes
+  invoicePrefix   String @default("INV")
+  bookingPrefix   String @default("BK")
+  quotationPrefix String @default("QT")
+  receiptPrefix   String @default("RC")
+  jobCardPrefix   String @default("JC")
+
+  // Sales / Service
+  defaultWarrantyMonths Int @default(36)
+  serviceReminderDays   Int @default(90)
+
+  // Branding
+  companyLogo    String?
+  favicon        String?
+  primaryColor   String @default("#0B2545")
+  secondaryColor String @default("#00B8A9")
+
+  // Business hours
+  workingDays  String[] @default(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
+  workingHours String   @default("10:00-19:00")
+
+  // Notifications
+  emailEnabled    Boolean @default(false)
+  smsEnabled      Boolean @default(false)
+  whatsappEnabled Boolean @default(false)
+
+  // Backup
+  backupEnabled   Boolean         @default(false)
+  backupFrequency BackupFrequency @default(WEEKLY)
+
+  // Invoice
+  termsAndConditions String?
+  invoiceFooter      String?
 
   createdById String?
   updatedById String?
@@ -1164,23 +1219,15 @@ model CompanySetting {
   updatedAt   DateTime @updatedAt
 }
 
+/// Per-company document sequence counters (state, not user-editable settings).
 model InvoiceSetting {
-  id                  String  @id @default(uuid())
-  companyId           String  @unique @default("")
-  invoicePrefix       String  @default("AZAD/25-26/")
-  nextInvoiceNumber   Int     @default(1)
-  quotationPrefix     String  @default("QT/25-26/")
-  nextQuotationNumber Int     @default(1)
-  bookingPrefix       String  @default("BK/25-26/")
-  nextBookingNumber   Int     @default(1)
-  servicePrefix       String  @default("SVC/25-26/")
-  nextServiceNumber   Int     @default(1)
-  receiptPrefix       String  @default("RCPT/25-26/")
-  nextReceiptNumber   Int     @default(1)
-  termsAndConditions  String?
-  taxRate             Decimal @default(0) @db.Decimal(5, 2)
-  showGst             Boolean @default(false)
-  footerNote          String?
+  id                  String @id @default(uuid())
+  companyId           String @unique @default("")
+  nextInvoiceNumber   Int    @default(1)
+  nextBookingNumber   Int    @default(1)
+  nextQuotationNumber Int    @default(1)
+  nextReceiptNumber   Int    @default(1)
+  nextServiceNumber   Int    @default(1)
 
   createdById String?
   updatedById String?

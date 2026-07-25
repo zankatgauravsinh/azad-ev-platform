@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the pro
 ### Planned
 - Module 5 — Service.
 
+## [Company Settings Framework] — 2026-07-25
+A reusable, strongly-typed company-configuration system every module reads from (not a simple settings table). One company = one `CompanySetting` row. See `docs/modules/settings.md`.
+
+### Added
+- Comprehensive `CompanySetting` (~40 typed columns: Business, Localization, GST/Tax, Prefixes, Sales/Service, Branding, Working hours, Notifications, Backup, Invoice text) + `updatedById` audit link; `enum BackupFrequency`.
+- `GET /settings/company` (Owner+Manager), `PATCH /settings/company` (Owner, Zod-validated, audit-logged), `GET /settings/company/branding` (all roles, for app-wide theming), `POST`/`DELETE /settings/company/{logo|favicon}` (Owner, ≤5 MB, company-scoped storage).
+- Tabbed `/settings` page (General, Branding, Sales, Invoice, Service, Notifications, Localization, Backup): load/edit/save, inline validation, unsaved-changes bar + navigation/unload guards, success toast; Manager read-only. Logo/favicon upload with preview.
+- `ThemeApplier` applies `primaryColor`/`secondaryColor` as runtime CSS variables; sidebar shows company logo + name.
+- Tests: settings service unit spec; settings e2e (auth matrix, validation, single-source-of-truth prefix check).
+
+### Changed
+- `InvoiceSetting` reduced to **sequence counters only**; document prefixes now live in `CompanySetting`. `SequenceService` reads prefix (CompanySetting) + counter (InvoiceSetting) atomically. Quotation/invoice PDF reads GST/footer from `CompanySetting`.
+- Migration copies seeded `termsAndConditions`/`footerNote`/`showGst`/`taxRate` into the new columns before dropping the old ones (zero drift).
+
+### Unchanged
+- Inventory, Customers, Sales, Dashboard, Platform-Foundation tenant-isolation suites all pass untouched. Out of scope (not added): SaaS billing, dealer onboarding, subscriptions, offline sync, super-admin.
+
 ## [Platform Foundation] — 2026-07-25
 Single-dealer → single-tenant-ready architecture, with no change to current behaviour. See `docs/PLATFORM-FOUNDATION.md`.
 

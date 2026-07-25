@@ -6,3 +6,4 @@ export * from './inventory';
 export * from './customer';
 export * from './sales';
 export * from './dashboard';
+export * from './settings';

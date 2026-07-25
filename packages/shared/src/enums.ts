@@ -255,6 +255,14 @@ export const NotificationType = {
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
 export const NOTIFICATION_TYPES = Object.values(NotificationType);
 
+export const BackupFrequency = {
+  DAILY: 'DAILY',
+  WEEKLY: 'WEEKLY',
+  MONTHLY: 'MONTHLY',
+} as const;
+export type BackupFrequency = (typeof BackupFrequency)[keyof typeof BackupFrequency];
+export const BACKUP_FREQUENCIES = Object.values(BackupFrequency);
+
 export const ActivityAction = {
   CREATE: 'CREATE',
   UPDATE: 'UPDATE',
