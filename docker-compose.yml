@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: azad_ev_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: azad
+      POSTGRES_PASSWORD: azad
+      POSTGRES_DB: azad_ev
+    ports:
+      - "5432:5432"
+    volumes:
+      - azad_ev_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U azad -d azad_ev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  azad_ev_pgdata:

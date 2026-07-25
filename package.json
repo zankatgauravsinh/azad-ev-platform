@@ -1,0 +1,30 @@
+{
+  "name": "azad-ev-point",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AZAD EV POINT — Showroom Management System (single dealership)",
+  "workspaces": [
+    "packages/*",
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:api dev:web",
+    "dev:api": "npm run dev --workspace api",
+    "dev:web": "npm run dev --workspace web",
+    "build": "npm run build --workspace packages/shared && npm run build --workspace api && npm run build --workspace web",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "prisma:migrate": "npm run prisma:migrate --workspace api",
+    "prisma:seed": "npm run prisma:seed --workspace api",
+    "prisma:studio": "npm run prisma:studio --workspace api",
+    "lint": "npm run lint --workspace api && npm run lint --workspace web",
+    "test": "npm run test --workspace api"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "npm-run-all": "4.1.5"
+  }
+}

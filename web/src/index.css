@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * AZAD EV POINT brand tokens.
+ * Navy #0B2545 (primary/trust) · Teal #00B8A9 (accent/energy) · Gold #F2A93B (highlight).
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 213 40% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 213 40% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 213 40% 12%;
+
+    --primary: 213 72% 16%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 213 72% 16%;
+
+    --muted: 210 20% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 174 100% 36%;
+    --accent-foreground: 0 0% 100%;
+
+    --gold: 36 88% 59%;
+    --gold-foreground: 213 72% 16%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 20% 90%;
+    --input: 214 20% 90%;
+    --ring: 174 100% 36%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 213 45% 9%;
+    --foreground: 210 20% 96%;
+
+    --card: 213 40% 12%;
+    --card-foreground: 210 20% 96%;
+
+    --popover: 213 40% 12%;
+    --popover-foreground: 210 20% 96%;
+
+    --primary: 174 90% 42%;
+    --primary-foreground: 213 45% 9%;
+
+    --secondary: 213 30% 18%;
+    --secondary-foreground: 210 20% 96%;
+
+    --muted: 213 30% 18%;
+    --muted-foreground: 214 15% 65%;
+
+    --accent: 174 90% 42%;
+    --accent-foreground: 213 45% 9%;
+
+    --gold: 36 88% 59%;
+    --gold-foreground: 213 45% 9%;
+
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 210 20% 96%;
+
+    --border: 213 25% 20%;
+    --input: 213 25% 22%;
+    --ring: 174 90% 42%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+}

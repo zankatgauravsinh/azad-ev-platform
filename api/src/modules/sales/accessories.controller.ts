@@ -1,0 +1,37 @@
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { createAccessorySchema, Role, type CreateAccessoryInput } from '@azad/shared';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { PrismaService } from '../../prisma/prisma.service';
+
+@ApiTags('Accessories')
+@ApiBearerAuth('access-token')
+@Controller('accessories')
+export class AccessoriesController {
+  constructor(private readonly prisma: PrismaService) {}
+
+  @Get()
+  @Roles(Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE)
+  @ApiOperation({ summary: 'List accessories / parts catalogue' })
+  list(@Query('q') q?: string, @Query('isPart') isPart?: string) {
+    return this.prisma.accessory.findMany({
+      where: {
+        isActive: true,
+        ...(isPart !== undefined ? { isPart: isPart === 'true' } : {}),
+        ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}),
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  @Post()
+  @Roles(Role.OWNER, Role.MANAGER)
+  @ApiOperation({ summary: 'Add an accessory / part' })
+  create(@Body(new ZodValidationPipe(createAccessorySchema)) dto: CreateAccessoryInput, @CurrentUser('id') userId: string) {
+    return this.prisma.accessory.create({
+      data: { name: dto.name, sku: dto.sku ?? null, sellPrice: BigInt(dto.sellPrice), costPrice: BigInt(dto.costPrice), isPart: dto.isPart, createdById: userId, updatedById: userId },
+    });
+  }
+}

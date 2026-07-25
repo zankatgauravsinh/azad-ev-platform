@@ -1,0 +1,1189 @@
+// AZAD EV POINT — Prisma schema (single showroom).
+// Money is stored as BigInt paise (₹ x 100). Every model carries audit fields
+// (createdById / updatedById as user-id strings) + createdAt / updatedAt.
+// Soft-deletable business models carry deletedAt (filtered by PrismaService middleware).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── Enums ───────────────────────────
+
+enum Role {
+  OWNER
+  MANAGER
+  SALES_EXECUTIVE
+  TECHNICIAN
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  INTERESTED
+  TEST_RIDE
+  NEGOTIATION
+  BOOKED
+  WON
+  LOST
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum CustomerEventType {
+  LEAD_CREATED
+  STATUS_CHANGED
+  PHONE_CALL
+  WALK_IN
+  TEST_RIDE
+  QUOTATION
+  BOOKING
+  ADVANCE_PAYMENT
+  FINANCE_APPROVED
+  INSURANCE_ADDED
+  VEHICLE_ASSIGNED
+  INVOICE_GENERATED
+  DELIVERY
+  FIRST_SERVICE
+  WARRANTY
+  FEEDBACK
+  REFERRAL
+  NOTE_ADDED
+  DOCUMENT_UPLOADED
+  FOLLOW_UP_SCHEDULED
+  FOLLOW_UP_COMPLETED
+}
+
+enum FollowUpPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum FollowUpStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum DocumentType {
+  AADHAAR
+  DRIVING_LICENSE
+  PAN
+  FINANCE
+  INSURANCE
+  INVOICE
+  WARRANTY
+  DELIVERY_PHOTO
+  SIGNATURE
+  GOOGLE_REVIEW
+  PHOTO
+  OTHER
+}
+
+enum UnitStatus {
+  AVAILABLE
+  RESERVED
+  BOOKED
+  DELIVERED
+  IN_SERVICE
+  RETURNED
+}
+
+enum TestRideStatus {
+  SCHEDULED
+  ONGOING
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum BookingStatus {
+  DRAFT
+  CONFIRMED
+  CONVERTED
+  CANCELLED
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+}
+
+enum FinanceStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum InsuranceStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum SaleStatus {
+  DRAFT
+  INVOICED
+  PAID
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMode {
+  CASH
+  UPI
+  CARD
+  BANK_TRANSFER
+  FINANCE
+  EXCHANGE
+}
+
+enum PaymentContext {
+  BOOKING_ADVANCE
+  SALE
+  SERVICE
+}
+
+enum ServiceJobType {
+  FREE
+  PAID
+  WARRANTY
+}
+
+enum ServiceStatus {
+  OPEN
+  IN_PROGRESS
+  READY
+  CLOSED
+  CANCELLED
+}
+
+enum ExpenseCategory {
+  RENT
+  ELECTRICITY
+  SALARY
+  MARKETING
+  TEA
+  FUEL
+  CLEANING
+  OFFICE
+  MISC
+}
+
+enum NotificationType {
+  DELIVERY_UPCOMING
+  PAYMENT_DUE
+  SERVICE_DUE
+  LOW_INVENTORY
+}
+
+enum ActivityAction {
+  CREATE
+  UPDATE
+  DELETE
+  STATUS_CHANGE
+  LOGIN
+  PAYMENT
+  EXPORT
+}
+
+// ─────────────────────────── Tenant root ───────────────────────────
+
+/// The tenant root. Single-tenant-ready: every business record carries a
+/// companyId scoped to a Company. Only one Company exists today (AZAD EV POINT).
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  branches Branch[]
+}
+
+/// A physical branch of a Company. Single primary branch today; the table exists
+/// so future multi-branch support needs no schema migration.
+model Branch {
+  id        String  @id @default(uuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  isPrimary Boolean @default(false)
+  address   String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+// ─────────────────────────── Identity ───────────────────────────
+
+model User {
+  id               String    @id @default(uuid())
+  companyId        String    @default("")
+  name             String
+  email            String    @unique
+  phone            String?
+  passwordHash     String
+  role             Role      @default(SALES_EXECUTIVE)
+  isActive         Boolean   @default(true)
+  lastLoginAt      DateTime?
+  refreshTokenHash String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // functional relations
+  assignedCustomers Customer[]         @relation("CustomerAssignedTo")
+  followUps         CustomerFollowUp[] @relation("FollowUpAssignedTo")
+  customerNotes     CustomerNote[]     @relation("CustomerNoteAuthor")
+  testRides         TestRide[]         @relation("TestRideExecutive")
+  bookings          Booking[]          @relation("BookingSalesExecutive")
+  deliveryBookings  Booking[]          @relation("BookingDeliveryExecutive")
+  sales             Sale[]             @relation("SaleSalesExecutive")
+  payments          Payment[]          @relation("PaymentReceivedBy")
+  deliveries        Delivery[]         @relation("DeliveryDeliveredBy")
+  serviceJobs       ServiceJob[]       @relation("ServiceJobTechnician")
+  notifications     Notification[]     @relation("NotificationRecipient")
+  activityLogs      ActivityLog[]      @relation("ActivityLogActor")
+
+  @@index([role])
+  @@index([isActive])
+  @@index([companyId])
+}
+
+// ─────────────────────────── Customers ───────────────────────────
+
+model Customer {
+  id                     String        @id @default(uuid())
+  companyId              String        @default("")
+  name                   String
+  phone                  String        @unique
+  altPhone               String?
+  email                  String?
+  address                String?
+  city                   String?
+  state                  String?
+  pin                    String?
+  village                String?
+  occupation             String?
+  dateOfBirth            DateTime?
+  gender                 Gender?
+  leadStatus             LeadStatus    @default(NEW)
+  source                 String?
+  lostReason             String?
+  preferredModelId       String?
+  preferredModel         ScooterModel? @relation("CustomerPreferredModel", fields: [preferredModelId], references: [id])
+  preferredColour        String?
+  preferredFinanceOption String?
+  assignedToId           String?
+  assignedTo             User?         @relation("CustomerAssignedTo", fields: [assignedToId], references: [id])
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  documents   CustomerDocument[]
+  notes       CustomerNote[]
+  timeline    CustomerTimelineEntry[]
+  followUps   CustomerFollowUp[]
+  testRides   TestRide[]
+  bookings    Booking[]
+  quotations  Quotation[]
+  sales       Sale[]
+  serviceJobs ServiceJob[]
+
+  @@index([leadStatus])
+  @@index([assignedToId])
+  @@index([name])
+  @@index([phone])
+  @@index([preferredModelId])
+  @@index([deletedAt])
+  @@index([companyId])
+}
+
+/// Append-only, immutable customer timeline. Entries are only ever created by
+/// the system (in response to domain events or logged interactions) and read.
+model CustomerTimelineEntry {
+  id          String            @id @default(uuid())
+  companyId   String            @default("")
+  customerId  String
+  customer    Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type        CustomerEventType
+  title       String
+  description String?
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  occurredAt  DateTime          @default(now())
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([customerId, occurredAt])
+  @@index([customerId, type])
+  @@index([companyId])
+}
+
+model CustomerFollowUp {
+  id                  String           @id @default(uuid())
+  companyId           String           @default("")
+  customerId          String
+  customer            Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  dueAt               DateTime
+  priority            FollowUpPriority @default(MEDIUM)
+  note                String?
+  remindBeforeMinutes Int?
+  status              FollowUpStatus   @default(PENDING)
+  completedAt         DateTime?
+  assignedToId        String?
+  assignedTo          User?            @relation("FollowUpAssignedTo", fields: [assignedToId], references: [id])
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status, dueAt])
+  @@index([assignedToId])
+  @@index([companyId])
+}
+
+model CustomerDocument {
+  id         String       @id @default(uuid())
+  companyId  String       @default("")
+  customerId String
+  customer   Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type       DocumentType
+  fileKey    String
+  fileName   String
+  mimeType   String
+  sizeBytes  Int
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([type])
+  @@index([companyId])
+}
+
+model CustomerNote {
+  id         String   @id @default(uuid())
+  companyId  String   @default("")
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  authorId   String
+  author     User     @relation("CustomerNoteAuthor", fields: [authorId], references: [id])
+  body       String
+  editCount  Int      @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  revisions CustomerNoteRevision[]
+
+  @@index([customerId])
+  @@index([companyId])
+}
+
+/// Prior versions of a note, written each time it is edited (edit history).
+model CustomerNoteRevision {
+  id         String       @id @default(uuid())
+  noteId     String
+  note       CustomerNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  body       String
+  editedById String?
+  createdAt  DateTime     @default(now())
+
+  @@index([noteId, createdAt])
+}
+
+// ─────────────────────────── Inventory ───────────────────────────
+
+model ScooterModel {
+  id          String  @id @default(uuid())
+  companyId   String  @default("")
+  name        String
+  brand       String
+  description String?
+  isActive    Boolean @default(true)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  variants             ScooterVariant[]
+  preferredByCustomers Customer[]       @relation("CustomerPreferredModel")
+
+  @@unique([brand, name])
+  @@index([companyId])
+}
+
+model ScooterVariant {
+  id              String       @id @default(uuid())
+  companyId       String       @default("")
+  modelId         String
+  model           ScooterModel @relation(fields: [modelId], references: [id], onDelete: Restrict)
+  name            String
+  colour          String
+  hexColour       String?
+  exShowroomPrice BigInt
+  batteryType     String?
+  batteryCapacity String?
+  rangeKm         Int?
+  topSpeedKmph    Int?
+  chargingTimeHrs Decimal?     @db.Decimal(5, 2)
+  motorPowerW     Int?
+  warrantyMonths  Int?
+  isActive        Boolean      @default(true)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  units      InventoryUnit[]
+  testRides  TestRide[]
+  quotations Quotation[]
+
+  @@unique([modelId, name, colour])
+  @@index([modelId])
+  @@index([companyId])
+}
+
+model InventoryUnit {
+  id            String         @id @default(uuid())
+  companyId     String         @default("")
+  variantId     String
+  variant       ScooterVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  vin           String         @unique
+  motorNumber   String         @unique
+  batteryNumber String         @unique
+  status        UnitStatus     @default(AVAILABLE)
+  purchaseDate  DateTime?
+  purchaseCost  BigInt         @default(0)
+  sellingPrice  BigInt         @default(0)
+  location      String?
+  supplier      String?
+  notes         String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  testRides   TestRide[]
+  bookings    Booking[]
+  sales       Sale[]
+  serviceJobs ServiceJob[]
+  events      InventoryEvent[]
+  photos      InventoryUnitPhoto[]
+  documents   InventoryUnitDocument[]
+
+  @@index([status])
+  @@index([variantId])
+  @@index([deletedAt])
+  @@index([createdAt])
+  @@index([companyId])
+}
+
+/// Append-only status history. Never mutated or deleted (except on hard-delete of the unit).
+model InventoryEvent {
+  id         String        @id @default(uuid())
+  companyId  String        @default("")
+  unitId     String
+  unit       InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  fromStatus UnitStatus?
+  toStatus   UnitStatus
+  note       String?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([unitId, createdAt])
+  @@index([companyId])
+}
+
+model InventoryUnitPhoto {
+  id        String        @id @default(uuid())
+  companyId String        @default("")
+  unitId    String
+  unit      InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  fileKey   String
+  label     String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([unitId])
+  @@index([companyId])
+}
+
+model InventoryUnitDocument {
+  id        String        @id @default(uuid())
+  companyId String        @default("")
+  unitId    String
+  unit      InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  type      DocumentType
+  fileKey   String
+  fileName  String
+  mimeType  String
+  sizeBytes Int
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([unitId])
+  @@index([companyId])
+}
+
+model Accessory {
+  id        String  @id @default(uuid())
+  companyId String  @default("")
+  name      String
+  sku       String? @unique
+  sellPrice BigInt  @default(0)
+  costPrice BigInt  @default(0)
+  stockQty  Int     @default(0)
+  isPart    Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  bookingAccessories   BookingAccessory[]
+  quotationAccessories QuotationAccessory[]
+  saleAccessories      SaleAccessory[]
+  serviceParts         ServicePart[]
+
+  @@index([isPart])
+  @@index([companyId])
+}
+
+// ─────────────────────────── Test Ride ───────────────────────────
+
+model TestRide {
+  id             String         @id @default(uuid())
+  companyId      String         @default("")
+  customerId     String
+  customer       Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  variantId      String
+  variant        ScooterVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  unitId         String?
+  unit           InventoryUnit? @relation(fields: [unitId], references: [id])
+  executiveId    String
+  executive      User           @relation("TestRideExecutive", fields: [executiveId], references: [id])
+  scheduledAt    DateTime
+  status         TestRideStatus @default(SCHEDULED)
+  feedbackRating Int?
+  feedbackNote   String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([executiveId])
+  @@index([customerId])
+  @@index([scheduledAt])
+  @@index([companyId])
+}
+
+// ─────────────────────────── Booking ───────────────────────────
+
+model Booking {
+  id                String        @id @default(uuid())
+  companyId         String        @default("")
+  code              String        @unique
+  customerId        String
+  customer          Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  unitId            String
+  unit              InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  salesExecutiveId  String
+  salesExecutive    User          @relation("BookingSalesExecutive", fields: [salesExecutiveId], references: [id])
+  quotationId       String?       @unique
+  quotation         Quotation?    @relation(fields: [quotationId], references: [id])
+  status            BookingStatus @default(DRAFT)
+  financeRequired   Boolean       @default(false)
+  insuranceRequired Boolean       @default(false)
+
+  // Price breakup (paise)
+  exShowroom       BigInt @default(0)
+  discount         BigInt @default(0)
+  exchangeValue    BigInt @default(0)
+  accessoriesTotal BigInt @default(0)
+  rto              BigInt @default(0)
+  insuranceCharge  BigInt @default(0)
+  registration     BigInt @default(0)
+  extendedWarranty BigInt @default(0)
+  taxAmount        BigInt @default(0)
+  total            BigInt @default(0)
+  advanceAmount    BigInt @default(0)
+
+  // Delivery scheduling
+  expectedDelivery    DateTime?
+  actualDelivery      DateTime?
+  deliveryExecutiveId String?
+  deliveryExecutive   User?     @relation("BookingDeliveryExecutive", fields: [deliveryExecutiveId], references: [id])
+  pendingDocuments    String?
+  notes               String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  accessories BookingAccessory[]
+  documents   BookingDocument[]
+  payments    Payment[]
+  finance     FinanceDetail?
+  insurance   InsuranceDetail?
+  sale        Sale?
+
+  @@index([status])
+  @@index([customerId])
+  @@index([unitId])
+  @@index([createdAt])
+  @@index([companyId])
+}
+
+model BookingAccessory {
+  id          String    @id @default(uuid())
+  bookingId   String
+  booking     Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  accessoryId String
+  accessory   Accessory @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
+  qty         Int       @default(1)
+  unitPrice   BigInt    @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([bookingId])
+}
+
+model BookingDocument {
+  id        String       @id @default(uuid())
+  companyId String       @default("")
+  bookingId String
+  booking   Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  type      DocumentType
+  fileKey   String
+  fileName  String
+  mimeType  String
+  sizeBytes Int
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([bookingId])
+  @@index([companyId])
+}
+
+// ─────────────────────────── Quotation ───────────────────────────
+
+model Quotation {
+  id                  String          @id @default(uuid())
+  companyId           String          @default("")
+  code                String          @unique
+  customerId          String
+  customer            Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  variantId           String
+  variant             ScooterVariant  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  exShowroom          BigInt          @default(0)
+  discount            BigInt          @default(0)
+  exchangeValue       BigInt          @default(0)
+  accessoriesTotal    BigInt          @default(0)
+  rto                 BigInt          @default(0)
+  insurance           BigInt          @default(0)
+  registration        BigInt          @default(0)
+  extendedWarranty    BigInt          @default(0)
+  total               BigInt          @default(0)
+  // Finance estimate
+  financeDownPayment  BigInt          @default(0)
+  financeLoanAmount   BigInt          @default(0)
+  financeTenureMonths Int             @default(0)
+  financeEmi          BigInt          @default(0)
+  status              QuotationStatus @default(DRAFT)
+  validUntil          DateTime?
+  notes               String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       QuotationItem[]
+  accessories QuotationAccessory[]
+  booking     Booking?
+  sale        Sale?
+
+  @@index([customerId])
+  @@index([status])
+  @@index([companyId])
+}
+
+model QuotationAccessory {
+  id          String    @id @default(uuid())
+  quotationId String
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  accessoryId String
+  accessory   Accessory @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
+  qty         Int       @default(1)
+  unitPrice   BigInt    @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([quotationId])
+}
+
+model QuotationItem {
+  id          String    @id @default(uuid())
+  quotationId String
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  label       String
+  amount      BigInt    @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([quotationId])
+}
+
+// ─────────────────────────── Sales ───────────────────────────
+
+model Sale {
+  id               String        @id @default(uuid())
+  companyId        String        @default("")
+  invoiceNumber    String?       @unique
+  bookingId        String?       @unique
+  booking          Booking?      @relation(fields: [bookingId], references: [id])
+  quotationId      String?       @unique
+  quotation        Quotation?    @relation(fields: [quotationId], references: [id])
+  customerId       String
+  customer         Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  unitId           String
+  unit             InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  salesExecutiveId String
+  salesExecutive   User          @relation("SaleSalesExecutive", fields: [salesExecutiveId], references: [id])
+  exShowroom       BigInt        @default(0)
+  discount         BigInt        @default(0)
+  exchangeValue    BigInt        @default(0)
+  rto              BigInt        @default(0)
+  insuranceCharge  BigInt        @default(0)
+  accessoriesTotal BigInt        @default(0)
+  registration     BigInt        @default(0)
+  extendedWarranty BigInt        @default(0)
+  taxAmount        BigInt        @default(0)
+  total            BigInt        @default(0)
+  status           SaleStatus    @default(DRAFT)
+  invoicedAt       DateTime?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  items       SaleItem[]
+  accessories SaleAccessory[]
+  payments    Payment[]
+  delivery    Delivery?
+
+  @@index([customerId])
+  @@index([status])
+  @@index([unitId])
+  @@index([invoicedAt])
+  @@index([companyId])
+}
+
+model SaleItem {
+  id      String  @id @default(uuid())
+  saleId  String
+  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  label   String
+  amount  BigInt  @default(0)
+  taxable Boolean @default(false)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([saleId])
+}
+
+model SaleAccessory {
+  id          String    @id @default(uuid())
+  saleId      String
+  sale        Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  accessoryId String
+  accessory   Accessory @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
+  qty         Int       @default(1)
+  unitPrice   BigInt    @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([saleId])
+}
+
+model FinanceDetail {
+  id              String        @id @default(uuid())
+  companyId       String        @default("")
+  bookingId       String        @unique
+  booking         Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  financeCompany  String
+  downPayment     BigInt        @default(0)
+  loanAmount      BigInt        @default(0)
+  emiAmount       BigInt        @default(0)
+  tenureMonths    Int           @default(0)
+  interestRate    Decimal       @default(0) @db.Decimal(5, 2)
+  disbursedAmount BigInt        @default(0)
+  status          FinanceStatus @default(PENDING)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+model InsuranceDetail {
+  id           String          @id @default(uuid())
+  companyId    String          @default("")
+  bookingId    String          @unique
+  booking      Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  provider     String
+  policyNumber String?
+  premium      BigInt          @default(0)
+  startDate    DateTime?
+  endDate      DateTime?
+  status       InsuranceStatus @default(PENDING)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+model Payment {
+  id            String         @id @default(uuid())
+  companyId     String         @default("")
+  receiptNumber String?        @unique
+  context       PaymentContext
+  bookingId     String?
+  booking       Booking?       @relation(fields: [bookingId], references: [id])
+  saleId        String?
+  sale          Sale?          @relation(fields: [saleId], references: [id])
+  serviceJobId  String?
+  serviceJob    ServiceJob?    @relation(fields: [serviceJobId], references: [id])
+  amount        BigInt
+  mode          PaymentMode
+  reference     String?
+  receivedById  String
+  receivedBy    User           @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
+  paidAt        DateTime       @default(now())
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([saleId])
+  @@index([bookingId])
+  @@index([serviceJobId])
+  @@index([mode])
+  @@index([paidAt])
+  @@index([companyId])
+}
+
+// ─────────────────────────── Delivery ───────────────────────────
+
+model Delivery {
+  id                   String   @id @default(uuid())
+  companyId            String   @default("")
+  saleId               String   @unique
+  sale                 Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  deliveredAt          DateTime @default(now())
+  deliveredById        String
+  deliveredBy          User     @relation("DeliveryDeliveredBy", fields: [deliveredById], references: [id])
+  customerSignatureKey String?
+  notes                String?
+  overrideReason       String?
+  googleReviewSent     Boolean  @default(false)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  checklist DeliveryChecklist?
+  photos    DeliveryPhoto[]
+
+  @@index([companyId])
+}
+
+model DeliveryChecklist {
+  id         String   @id @default(uuid())
+  deliveryId String   @unique
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  helmet     Boolean  @default(false)
+  charger    Boolean  @default(false)
+  keys       Boolean  @default(false)
+  documents  Boolean  @default(false)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model DeliveryPhoto {
+  id         String   @id @default(uuid())
+  deliveryId String
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  fileKey    String
+  label      String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([deliveryId])
+}
+
+// ─────────────────────────── Service ───────────────────────────
+
+model ServiceJob {
+  id            String         @id @default(uuid())
+  companyId     String         @default("")
+  code          String         @unique
+  customerId    String
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  unitId        String
+  unit          InventoryUnit  @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  technicianId  String?
+  technician    User?          @relation("ServiceJobTechnician", fields: [technicianId], references: [id])
+  type          ServiceJobType @default(PAID)
+  complaint     String
+  status        ServiceStatus  @default(OPEN)
+  odometerKm    Int?
+  partsTotal    BigInt         @default(0)
+  labourTotal   BigInt         @default(0)
+  total         BigInt         @default(0)
+  underWarranty Boolean        @default(false)
+  closedAt      DateTime?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  parts    ServicePart[]
+  labour   ServiceLabour[]
+  payments Payment[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([unitId])
+  @@index([technicianId])
+  @@index([companyId])
+}
+
+model ServicePart {
+  id           String     @id @default(uuid())
+  serviceJobId String
+  serviceJob   ServiceJob @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
+  accessoryId  String?
+  accessory    Accessory? @relation(fields: [accessoryId], references: [id])
+  name         String
+  qty          Int        @default(1)
+  unitCost     BigInt     @default(0)
+  warranty     Boolean    @default(false)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([serviceJobId])
+}
+
+model ServiceLabour {
+  id           String     @id @default(uuid())
+  serviceJobId String
+  serviceJob   ServiceJob @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
+  description  String
+  hours        Decimal    @default(0) @db.Decimal(5, 2)
+  rate         BigInt     @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([serviceJobId])
+}
+
+// ─────────────────────────── Expenses ───────────────────────────
+
+model Expense {
+  id         String          @id @default(uuid())
+  companyId  String          @default("")
+  category   ExpenseCategory
+  amount     BigInt
+  paidTo     String?
+  mode       PaymentMode     @default(CASH)
+  spentAt    DateTime        @default(now())
+  note       String?
+  receiptKey String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([category])
+  @@index([spentAt])
+  @@index([deletedAt])
+  @@index([companyId])
+}
+
+// ─────────────────────────── System ───────────────────────────
+
+model Notification {
+  id          String           @id @default(uuid())
+  companyId   String           @default("")
+  recipientId String
+  recipient   User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  type        NotificationType
+  title       String
+  body        String?
+  entityType  String?
+  entityId    String?
+  readAt      DateTime?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([recipientId, readAt])
+  @@index([type])
+  @@index([companyId])
+}
+
+model ActivityLog {
+  id         String         @id @default(uuid())
+  companyId  String         @default("")
+  actorId    String?
+  actor      User?          @relation("ActivityLogActor", fields: [actorId], references: [id])
+  action     ActivityAction
+  entityType String
+  entityId   String?
+  summary    String
+  metadata   Json?
+  ip         String?
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([companyId])
+}
+
+model CompanySetting {
+  id           String  @id @default(uuid())
+  companyId    String  @unique @default("")
+  businessName String  @default("AZAD EV POINT")
+  legalName    String  @default("Azad Enterprise")
+  address      String?
+  city         String  @default("Una, Gujarat")
+  phone        String?
+  email        String?
+  gstin        String?
+  logoKey      String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model InvoiceSetting {
+  id                  String  @id @default(uuid())
+  companyId           String  @unique @default("")
+  invoicePrefix       String  @default("AZAD/25-26/")
+  nextInvoiceNumber   Int     @default(1)
+  quotationPrefix     String  @default("QT/25-26/")
+  nextQuotationNumber Int     @default(1)
+  bookingPrefix       String  @default("BK/25-26/")
+  nextBookingNumber   Int     @default(1)
+  servicePrefix       String  @default("SVC/25-26/")
+  nextServiceNumber   Int     @default(1)
+  receiptPrefix       String  @default("RCPT/25-26/")
+  nextReceiptNumber   Int     @default(1)
+  termsAndConditions  String?
+  taxRate             Decimal @default(0) @db.Decimal(5, 2)
+  showGst             Boolean @default(false)
+  footerNote          String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
