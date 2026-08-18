@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, Banknote, CalendarClock, CheckCircle2, FileText, Shield, Truck, User } from 'lucide-react';
+import { ArrowLeft, Ban, Banknote, CalendarClock, CheckCircle2, Download, Eye, FileText, Printer, Shield, Truck, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookingStatus, PaymentStatus } from '@azad/shared';
 import { apiErrorMessage } from '@/lib/api-client';
+import { openBlob, printBlob, saveBlob } from '@/lib/download';
 import { formatPaise } from '@/lib/money';
 import { titleCase } from '@/lib/labels';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,16 @@ export function BookingDetailPage(): JSX.Element {
     finally { setBusy(false); }
   };
 
+  // Invoice actions read the already-generated invoice — repeatable, never regenerates.
+  const invoiceFile = (): string => `${(b.sale?.invoiceNumber ?? 'invoice').replace(/\//g, '-')}.pdf`;
+  const withInvoicePdf = async (consume: (blob: Blob) => void): Promise<void> => {
+    try { consume(await salesApi.invoicePdf(b.id)); }
+    catch (e) { toast.error(apiErrorMessage(e)); }
+  };
+  const viewInvoice = (): Promise<void> => withInvoicePdf((blob) => openBlob(blob, invoiceFile()));
+  const downloadInvoice = (): Promise<void> => withInvoicePdf((blob) => saveBlob(blob, invoiceFile()));
+  const printInvoice = (): Promise<void> => withInvoicePdf((blob) => printBlob(blob, invoiceFile()));
+
   const rows: { label: string; value: string; negative?: boolean }[] = [
     { label: 'Ex-showroom', value: formatPaise(b.exShowroom) },
     { label: 'Discount', value: formatPaise(b.discount), negative: true },
@@ -69,7 +80,15 @@ export function BookingDetailPage(): JSX.Element {
             <Button variant="outline" onClick={() => setDialog('finance')}><Banknote className="h-4 w-4" /> Finance</Button>
             <Button variant="outline" onClick={() => setDialog('insurance')}><Shield className="h-4 w-4" /> Insurance</Button>
             <Button variant="outline" onClick={() => setDialog('schedule')}><CalendarClock className="h-4 w-4" /> Schedule</Button>
-            {!b.sale && <Button variant="outline" onClick={() => run(() => salesApi.generateInvoice(b.id), 'Invoice generated')} disabled={busy}><FileText className="h-4 w-4" /> Invoice</Button>}
+            {!b.sale ? (
+              <Button variant="outline" onClick={() => run(() => salesApi.generateInvoice(b.id), 'Invoice generated')} disabled={busy}><FileText className="h-4 w-4" /> Generate invoice</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={viewInvoice}><Eye className="h-4 w-4" /> View invoice</Button>
+                <Button variant="outline" onClick={downloadInvoice}><Download className="h-4 w-4" /> Download PDF</Button>
+                <Button variant="outline" onClick={printInvoice}><Printer className="h-4 w-4" /> Print</Button>
+              </>
+            )}
             {b.sale && !b.actualDelivery && <Button variant="accent" onClick={() => run(() => salesApi.deliver(b.id), 'Delivered')} disabled={busy}><Truck className="h-4 w-4" /> Deliver</Button>}
             {b.status !== BookingStatus.CONVERTED && <Button variant="outline" className="text-destructive" onClick={() => setCancelOpen(true)}><Ban className="h-4 w-4" /> Cancel</Button>}
           </div>
@@ -115,6 +134,11 @@ export function BookingDetailPage(): JSX.Element {
               <div>
                 <p className="mb-1 flex items-center gap-2 text-sm font-semibold"><FileText className="h-4 w-4" /> Invoice</p>
                 <p className="text-sm font-mono">{b.sale.invoiceNumber}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={viewInvoice}><Eye className="h-4 w-4" /> View</Button>
+                  <Button size="sm" variant="outline" onClick={downloadInvoice}><Download className="h-4 w-4" /> PDF</Button>
+                  <Button size="sm" variant="outline" onClick={printInvoice}><Printer className="h-4 w-4" /> Print</Button>
+                </div>
               </div>
             )}
           </CardContent>

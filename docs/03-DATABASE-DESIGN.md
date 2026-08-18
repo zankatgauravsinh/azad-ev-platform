@@ -46,7 +46,7 @@ ServiceJob 1──∞ ServiceLabour
 ServiceJob 1──∞ Payment
 
 Expense ∞──1 ExpenseCategory(enum)
-Notification ∞──1 User (recipient)
+Notification (company-scoped, auto-generated + manual)
 ActivityLog ∞──1 User (actor)
 CompanySetting (singleton) · InvoiceSetting (singleton)
 ```
@@ -70,10 +70,14 @@ InsuranceStatus     : PENDING | ACTIVE | EXPIRED | CANCELLED
 SaleStatus          : DRAFT | INVOICED | PAID | DELIVERED | CANCELLED
 PaymentMode         : CASH | UPI | CARD | BANK_TRANSFER | FINANCE | EXCHANGE
 PaymentContext      : BOOKING_ADVANCE | SALE | SERVICE
-ServiceJobType      : FREE | PAID | WARRANTY
+ServiceJobType      : FREE_1 | FREE_2 | FREE_3 | PAID | WARRANTY | REPAIR | INSPECTION
+ServiceStatus       : BOOKED | CHECKED_IN | DIAGNOSIS | WAITING_FOR_PARTS | REPAIRING | QUALITY_CHECK | READY | DELIVERED | CANCELLED
+ServicePriority     : LOW | MEDIUM | HIGH | EMERGENCY
+InspectionResult    : GOOD | NEEDS_ATTENTION | REPLACED
 ServiceStatus       : OPEN | IN_PROGRESS | READY | CLOSED | CANCELLED
 ExpenseCategory     : RENT | ELECTRICITY | SALARY | MARKETING | TEA | FUEL | CLEANING | OFFICE | MISC
-NotificationType    : DELIVERY_UPCOMING | PAYMENT_DUE | SERVICE_DUE | LOW_INVENTORY   (the 4 simple notifications)
+NotificationType    : DELIVERY | PAYMENT | SERVICE | INVENTORY | CUSTOMER | WARRANTY | SYSTEM
+NotificationPriority: CRITICAL | HIGH | MEDIUM | LOW
 ActivityAction      : CREATE | UPDATE | DELETE | STATUS_CHANGE | LOGIN | PAYMENT | EXPORT
 ```
 
@@ -119,23 +123,29 @@ ActivityAction      : CREATE | UPDATE | DELETE | STATUS_CHANGE | LOGIN | PAYMENT
 **DeliveryChecklist** — `deliveryId(unique), helmet, charger, keys, documents (all bool)` — the 4 handover items; documents = RC/insurance/invoice/warranty bundle.
 **DeliveryPhoto** — `deliveryId, fileKey, label` — delivery photo(s).
 
-**ServiceJob** — `code(unique), customerId, unitId, technicianId→User, type(ServiceJobType), complaint, status, odometerKm, partsTotal, labourTotal, total(BigInt), underWarranty(bool), closedAt?`
-**ServicePart** — `serviceJobId, accessoryId?, name, qty, unitCost(BigInt), warranty(bool)`
-**ServiceLabour** — `serviceJobId, description, hours(decimal), rate(BigInt)`
+**ServiceJob** — `code(unique), customerId, unitId, bookingId?, saleId?, technicianId→User, type, priority, status, odometerKm?, scheduledDate?, checkInAt?, checkOutAt?, expectedDelivery?, actualDelivery?, notes?, underWarranty(bool), partsTotal/labourTotal/discount/taxAmount/total(BigInt), feedbackRating?/feedbackNote?, closedAt?, deletedAt?` (soft-delete, tenant-scoped)
+**ServiceComplaint** — `serviceJobId, description, priority(ServicePriority), resolved(bool)`
+**ServiceInspectionItem** — `serviceJobId, item, result(InspectionResult), notes?` · unique `(serviceJobId,item)`
+**ServicePart** — `serviceJobId, sparePartId?→SparePart, name, qty, unitCost, unitPrice(BigInt), warranty(bool)`
+**ServiceLabour** — `serviceJobId, labourItemId?→LabourItem, description, cost(BigInt)`
+**ServiceJobPhoto** — `serviceJobId, key(storage), caption?`
+**SparePart** (workshop inventory) — `companyId, name, sku, quantity, cost/sellingPrice(BigInt), warrantyMonths, minStock, deletedAt?` · unique `(companyId,sku)`; stock decremented atomically when fitted
+**LabourItem** (catalogue) — `companyId, name, defaultCost(BigInt), durationMins, deletedAt?` · unique `(companyId,name)`
+**CompanySetting** (service additions) — `freeService{1,2,3}Km`, `freeService{1,2,3}Days` (configurable free-service intervals)
 
 **Expense** — `category(ExpenseCategory), amount(BigInt), paidTo, mode(PaymentMode), spentAt, note, receiptKey?`
 
-**Notification** — `recipientId→User, type, title, body, entityType, entityId, readAt?`
+**Notification** — company-scoped: `title, message, type(category), priority, entityType?, entityId?, dedupeKey?(unique per company — de-dupes auto-generated), readAt?, archivedAt?, expiresAt?, createdById?`
 **ActivityLog** — `actorId→User, action(ActivityAction), entityType, entityId, summary, metadata(jsonb), ip?`
 **CompanySetting** (one row per company, `@unique companyId`) — the company configuration framework every module reads from. Strongly-typed columns, grouped:
-- _Business_ — `businessName, legalName?, address?, city, state, phone?, email?`
+- _Business_ — `businessName, legalName?, dealerName?, address?, city, state, phone?` (comma-separated for multiple), `email?, website?, tagline` (default "POWERING TOMORROW") — these drive the PDF letterhead via `PdfBrandService`.
 - _Localization_ — `currency, timezone, language, dateFormat, timeFormat`
 - _GST/Tax_ — `gstEnabled(bool), gstNumber?, taxPercentage(decimal 5,2)`
 - _Document prefixes_ — `invoicePrefix, bookingPrefix, quotationPrefix, receiptPrefix, jobCardPrefix`
 - _Sales/Service_ — `defaultWarrantyMonths(int), serviceReminderDays(int)`
 - _Branding_ — `companyLogo?(key), favicon?(key), primaryColor, secondaryColor`
 - _Working hours_ — `workingDays(string[]), workingHours`
-- _Notifications_ — `emailEnabled, smsEnabled, whatsappEnabled (bool)`
+- _Notifications_ — `notifyDelivery/Payment/Service/Inventory/Warranty, desktopNotifications` (in-app categories) + `emailEnabled, smsEnabled, whatsappEnabled` (future channels)
 - _Backup_ — `backupEnabled(bool), backupFrequency(BackupFrequency enum: DAILY|WEEKLY|MONTHLY)`
 - _Invoice text_ — `termsAndConditions?, invoiceFooter?`
 - _Audit_ — `updatedById?→User`
@@ -157,7 +167,7 @@ Payment(saleId) · (bookingId) · (serviceJobId) · (paidAt) · (mode)
 ServiceJob(code) unique · (unitId) · (customerId) · (status) · (technicianId)
 Quotation(code) unique · (customerId) · (status)
 Expense(category) · (spentAt)
-Notification(recipientId, readAt) · ActivityLog(entityType, entityId) · (actorId, createdAt)
+Notification(companyId, readAt|type|priority|createdAt) · unique(companyId, dedupeKey) · (expiresAt) · ActivityLog(entityType, entityId) · (actorId, createdAt)
 Composite for dashboard: Sale(status, invoicedAt) · Payment(context, paidAt) · Expense(category, spentAt)
 ```
 

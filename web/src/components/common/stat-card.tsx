@@ -1,6 +1,12 @@
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 
+const toneClass: Record<string, string> = {
+  positive: 'text-emerald-600',
+  warning: 'text-amber-600',
+  danger: 'text-destructive',
+};
+
 export function StatCard({
   label,
   value,
@@ -8,6 +14,7 @@ export function StatCard({
   active,
   loading,
   onClick,
+  tone,
 }: {
   label: string;
   value: React.ReactNode;
@@ -15,6 +22,7 @@ export function StatCard({
   active?: boolean;
   loading?: boolean;
   onClick?: () => void;
+  tone?: 'default' | 'positive' | 'warning' | 'danger';
 }): JSX.Element {
   const Comp = onClick ? 'button' : 'div';
   return (
@@ -30,7 +38,7 @@ export function StatCard({
       {loading ? (
         <Skeleton className="mt-2 h-7 w-16" />
       ) : (
-        <p className="mt-1 text-2xl font-bold tabular-nums">{value}</p>
+        <p className={cn('mt-1 text-2xl font-bold tabular-nums', tone && tone !== 'default' && toneClass[tone])}>{value}</p>
       )}
       {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
     </Comp>

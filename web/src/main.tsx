@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { initNative } from './lib/native';
 import './index.css';
 
 const container = document.getElementById('root');
@@ -13,3 +14,6 @@ createRoot(container).render(
     <App />
   </StrictMode>,
 );
+
+// Native (Capacitor) integrations — no-op on web/desktop.
+initNative();

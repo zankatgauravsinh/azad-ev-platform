@@ -3,6 +3,8 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import type { SequenceService } from './sequence.service';
 import type { CustomerTimelineService } from '../customers/customer-timeline.service';
 import type { ActivityLogService } from '../../activity-log/activity-log.service';
+import type { SalesPdfService } from './sales-pdf.service';
+import type { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 
 describe('BookingsService.paymentSummary (payment calculations)', () => {
   const service = new BookingsService(
@@ -10,6 +12,8 @@ describe('BookingsService.paymentSummary (payment calculations)', () => {
     {} as SequenceService,
     {} as CustomerTimelineService,
     {} as ActivityLogService,
+    {} as SalesPdfService,
+    {} as PdfBrandService,
   );
 
   it('reports PENDING when nothing is paid', () => {

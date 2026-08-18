@@ -1,0 +1,13 @@
+# systemd oneshot + timer for nightly database backups.
+# Install both files, then: sudo systemctl enable --now azad-backup.timer
+[Unit]
+Description=AZAD EV POINT nightly database backup
+
+[Service]
+Type=oneshot
+User=azad
+WorkingDirectory=/opt/azad-ev/app
+EnvironmentFile=/opt/azad-ev/app/.env
+Environment=BACKUP_DIR=/opt/azad-ev/backups
+Environment=RETENTION_DAYS=14
+ExecStart=/opt/azad-ev/app/scripts/backup.sh

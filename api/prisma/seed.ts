@@ -28,8 +28,11 @@ async function main(): Promise<void> {
       companyId,
       businessName: 'AZAD EV POINT',
       legalName: 'Azad Enterprise',
+      dealerName: 'Authorized Dealer – COMPTECH Electric Vehicles',
       city: 'Una, Gujarat',
       state: 'Gujarat',
+      phone: '9274442390, 9978644457, 9978644458',
+      tagline: 'POWERING TOMORROW',
       currency: 'INR',
       timezone: 'Asia/Kolkata',
       language: 'en',
@@ -76,6 +79,40 @@ async function main(): Promise<void> {
     });
   }
   console.log(`✓ ${models.length} scooter models ready (VX1, VZ1, MARS)`);
+
+  // Standard labour catalogue (editable in the app).
+  const labour = [
+    { name: 'General Service', defaultCost: 30000n, durationMins: 60 },
+    { name: 'Battery Replacement', defaultCost: 50000n, durationMins: 45 },
+    { name: 'Motor Repair', defaultCost: 80000n, durationMins: 120 },
+    { name: 'Brake Adjustment', defaultCost: 20000n, durationMins: 30 },
+    { name: 'Controller Update', defaultCost: 25000n, durationMins: 40 },
+    { name: 'Wheel Alignment', defaultCost: 15000n, durationMins: 30 },
+  ];
+  for (const item of labour) {
+    await prisma.labourItem.upsert({
+      where: { companyId_name: { companyId, name: item.name } },
+      update: { companyId },
+      create: { ...item, companyId },
+    });
+  }
+  console.log(`✓ ${labour.length} labour catalogue items ready`);
+
+  // A few starter spare parts.
+  const spares = [
+    { name: 'Brake Pad Set', sku: 'SP-BRK-01', quantity: 40, cost: 18000n, sellingPrice: 25000n, warrantyMonths: 3, minStock: 10 },
+    { name: 'Headlight Assembly', sku: 'SP-LGT-01', quantity: 15, cost: 60000n, sellingPrice: 85000n, warrantyMonths: 6, minStock: 5 },
+    { name: 'Charger 48V', sku: 'SP-CHG-01', quantity: 8, cost: 150000n, sellingPrice: 210000n, warrantyMonths: 12, minStock: 4 },
+    { name: 'Tyre Tubeless', sku: 'SP-TYR-01', quantity: 30, cost: 90000n, sellingPrice: 130000n, warrantyMonths: 0, minStock: 8 },
+  ];
+  for (const part of spares) {
+    await prisma.sparePart.upsert({
+      where: { companyId_sku: { companyId, sku: part.sku } },
+      update: { companyId },
+      create: { ...part, companyId },
+    });
+  }
+  console.log(`✓ ${spares.length} spare parts ready`);
 
   console.log('\nSeed complete.');
 }

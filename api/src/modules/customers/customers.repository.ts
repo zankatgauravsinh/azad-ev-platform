@@ -125,7 +125,11 @@ export class CustomersRepository {
     return this.prisma.serviceJob.findMany({
       where: { customerId },
       orderBy: { createdAt: 'desc' },
-      select: { id: true, code: true, status: true, complaint: true, createdAt: true },
+      select: {
+        id: true, code: true, status: true, type: true, priority: true, total: true, createdAt: true,
+        technician: { select: { name: true } },
+        complaints: { select: { description: true }, orderBy: { createdAt: 'asc' } },
+      },
     });
   }
 

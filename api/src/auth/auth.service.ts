@@ -79,6 +79,8 @@ export class AuthService {
     }
     const passwordHash = await this.passwords.hash(input.next);
     await this.users.updatePassword(user.id, passwordHash);
+    // Invalidate any existing refresh session so a leaked token can't outlive the change.
+    await this.users.setRefreshTokenHash(user.id, null);
     await this.activityLog.record({
       actorId: user.id,
       action: ActivityAction.UPDATE,

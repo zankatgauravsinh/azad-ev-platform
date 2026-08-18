@@ -13,7 +13,14 @@ import { QuotationDetailPage } from '@/features/sales/pages/quotation-detail-pag
 import { BookingsListPage } from '@/features/sales/pages/bookings-list-page';
 import { BookingDetailPage } from '@/features/sales/pages/booking-detail-page';
 import { DashboardPage } from '@/features/dashboard/pages/dashboard-page';
+import { ServiceListPage } from '@/features/service/pages/service-list-page';
+import { ServiceDetailPage } from '@/features/service/pages/service-detail-page';
+import { SparePartsPage } from '@/features/service/pages/spare-parts-page';
+import { ServiceReportsPage } from '@/features/service/pages/service-reports-page';
 import { SettingsPage } from '@/features/settings/pages/settings-page';
+import { ReportsPage } from '@/features/reports/pages/reports-page';
+import { WarrantyPage } from '@/features/warranty/pages/warranty-page';
+import { FinancePage } from '@/features/finance/pages/finance-page';
 
 export const router = createBrowserRouter([
   {
@@ -36,6 +43,13 @@ export const router = createBrowserRouter([
           { path: '/quotations/:id', element: <QuotationDetailPage /> },
           { path: '/bookings', element: <BookingsListPage /> },
           { path: '/bookings/:id', element: <BookingDetailPage /> },
+          { path: '/service', element: <ServiceListPage /> },
+          { path: '/service/spare-parts', element: <SparePartsPage /> },
+          { path: '/service/reports', element: <ServiceReportsPage /> },
+          { path: '/service/:id', element: <ServiceDetailPage /> },
+          { path: '/warranty', element: <WarrantyPage /> },
+          { path: '/finance', element: <FinancePage /> },
+          { path: '/reports', element: <ReportsPage /> },
           { path: '/settings', element: <SettingsPage /> },
           { path: '*', element: <NotFound /> },
         ],

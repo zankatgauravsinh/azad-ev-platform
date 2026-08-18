@@ -1,0 +1,27 @@
+# systemd unit for the AZAD EV POINT API (non-Docker on-prem deployment).
+# Install: sudo cp deploy/azad-api.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now azad-api
+[Unit]
+Description=AZAD EV POINT API (NestJS)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=azad
+WorkingDirectory=/opt/azad-ev/app
+# Secrets live in an environment file readable only by the service user (chmod 600).
+EnvironmentFile=/opt/azad-ev/app/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node api/dist/main.js
+Restart=always
+RestartSec=3
+# Hardening.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/azad-ev/app/uploads /opt/azad-ev/backups
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

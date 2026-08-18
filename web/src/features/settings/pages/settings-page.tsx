@@ -41,16 +41,27 @@ export function SettingsPage(): JSX.Element {
   useEffect(() => {
     if (settings) {
       reset({
-        businessName: settings.businessName, legalName: settings.legalName ?? '', address: settings.address ?? '',
+        businessName: settings.businessName, legalName: settings.legalName ?? '', dealerName: settings.dealerName ?? '', address: settings.address ?? '',
         city: settings.city ?? '', state: settings.state ?? '', phone: settings.phone ?? '', email: settings.email ?? '',
+        website: settings.website ?? '', tagline: settings.tagline ?? '',
         currency: settings.currency as never, timezone: settings.timezone, language: settings.language as never,
         dateFormat: settings.dateFormat as never, timeFormat: settings.timeFormat as never,
         gstEnabled: settings.gstEnabled, gstNumber: settings.gstNumber ?? '', taxPercentage: Number(settings.taxPercentage),
         invoicePrefix: settings.invoicePrefix, bookingPrefix: settings.bookingPrefix, quotationPrefix: settings.quotationPrefix,
         receiptPrefix: settings.receiptPrefix, jobCardPrefix: settings.jobCardPrefix,
         defaultWarrantyMonths: settings.defaultWarrantyMonths, serviceReminderDays: settings.serviceReminderDays,
+        warrantyEnabled: settings.warrantyEnabled, amcEnabled: settings.amcEnabled, warrantyReminderDays: settings.warrantyReminderDays,
+        financeEnabled: settings.financeEnabled, expensePrefix: settings.expensePrefix, vendorPrefix: settings.vendorPrefix,
+        incomePrefix: settings.incomePrefix, bankPrefix: settings.bankPrefix, financeGstRate: settings.financeGstRate,
+        financialYearStartMonth: settings.financialYearStartMonth, openingCash: Number(settings.openingCash) / 100, openingBank: Number(settings.openingBank) / 100,
+        lowCashThreshold: Number(settings.lowCashThreshold) / 100, largeExpenseThreshold: Number(settings.largeExpenseThreshold) / 100,
+        freeService1Km: settings.freeService1Km, freeService1Days: settings.freeService1Days,
+        freeService2Km: settings.freeService2Km, freeService2Days: settings.freeService2Days,
+        freeService3Km: settings.freeService3Km, freeService3Days: settings.freeService3Days,
         primaryColor: settings.primaryColor, secondaryColor: settings.secondaryColor,
         workingDays: settings.workingDays as FormValues['workingDays'], workingHours: settings.workingHours,
+        notifyDelivery: settings.notifyDelivery, notifyPayment: settings.notifyPayment, notifyService: settings.notifyService,
+        notifyInventory: settings.notifyInventory, notifyWarranty: settings.notifyWarranty, desktopNotifications: settings.desktopNotifications,
         emailEnabled: settings.emailEnabled, smsEnabled: settings.smsEnabled, whatsappEnabled: settings.whatsappEnabled,
         backupEnabled: settings.backupEnabled, backupFrequency: settings.backupFrequency,
         termsAndConditions: settings.termsAndConditions ?? '', invoiceFooter: settings.invoiceFooter ?? '',
@@ -93,7 +104,7 @@ export function SettingsPage(): JSX.Element {
         <fieldset disabled={!canWrite}>
           <Tabs defaultValue="general">
             <TabsList className="flex-wrap">
-              {['general', 'branding', 'sales', 'invoice', 'service', 'notifications', 'localization', 'backup'].map((t) => (
+              {['general', 'branding', 'sales', 'invoice', 'service', 'finance', 'notifications', 'localization', 'backup'].map((t) => (
                 <TabsTrigger key={t} value={t}>{titleCase(t)}</TabsTrigger>
               ))}
             </TabsList>
@@ -103,8 +114,11 @@ export function SettingsPage(): JSX.Element {
                 <Grid>
                   <Field label="Business name" error={errors.businessName?.message}><Input {...register('businessName')} /></Field>
                   <Field label="Legal name"><Input {...register('legalName')} /></Field>
-                  <Field label="Phone"><Input {...register('phone')} /></Field>
+                  <Field label="Dealer line" className="sm:col-span-2"><Input placeholder="Authorized Dealer – …" {...register('dealerName')} /></Field>
+                  <Field label="Phone(s)" error={errors.phone?.message}><Input placeholder="Comma-separated" {...register('phone')} /></Field>
                   <Field label="Email" error={errors.email?.message}><Input type="email" {...register('email')} /></Field>
+                  <Field label="Website"><Input placeholder="www.example.com" {...register('website')} /></Field>
+                  <Field label="Tagline" error={errors.tagline?.message}><Input placeholder="POWERING TOMORROW" {...register('tagline')} /></Field>
                   <Field label="Address" className="sm:col-span-2"><Input {...register('address')} /></Field>
                   <Field label="City"><Input {...register('city')} /></Field>
                   <Field label="State"><Input {...register('state')} /></Field>
@@ -170,13 +184,61 @@ export function SettingsPage(): JSX.Element {
                   <Field label="Default warranty (months)" error={errors.defaultWarrantyMonths?.message}><Input type="number" min={0} {...register('defaultWarrantyMonths', { valueAsNumber: true })} /></Field>
                   <Field label="Service reminder (days)" error={errors.serviceReminderDays?.message}><Input type="number" min={0} {...register('serviceReminderDays', { valueAsNumber: true })} /></Field>
                 </Grid>
+                <p className="mt-5 mb-2 text-sm font-semibold">Free service intervals</p>
+                <Grid>
+                  <Field label="1st free service — km" error={errors.freeService1Km?.message}><Input type="number" min={0} {...register('freeService1Km', { valueAsNumber: true })} /></Field>
+                  <Field label="1st free service — days" error={errors.freeService1Days?.message}><Input type="number" min={0} {...register('freeService1Days', { valueAsNumber: true })} /></Field>
+                  <Field label="2nd free service — km" error={errors.freeService2Km?.message}><Input type="number" min={0} {...register('freeService2Km', { valueAsNumber: true })} /></Field>
+                  <Field label="2nd free service — days" error={errors.freeService2Days?.message}><Input type="number" min={0} {...register('freeService2Days', { valueAsNumber: true })} /></Field>
+                  <Field label="3rd free service — km" error={errors.freeService3Km?.message}><Input type="number" min={0} {...register('freeService3Km', { valueAsNumber: true })} /></Field>
+                  <Field label="3rd free service — days" error={errors.freeService3Days?.message}><Input type="number" min={0} {...register('freeService3Days', { valueAsNumber: true })} /></Field>
+                </Grid>
+                <p className="mt-5 mb-2 text-sm font-semibold">Warranty &amp; AMC</p>
+                <Grid>
+                  <Field label="Warranty reminder (days before expiry)" error={errors.warrantyReminderDays?.message}><Input type="number" min={1} {...register('warrantyReminderDays', { valueAsNumber: true })} /></Field>
+                </Grid>
+                <div className="mt-3 space-y-1">
+                  <SwitchRow control={control} name="warrantyEnabled" label="Warranty module" hint="Track warranties, coverage, claims and free services." />
+                  <SwitchRow control={control} name="amcEnabled" label="AMC module" hint="Annual maintenance contracts and service visits." />
+                </div>
+              </Panel>
+            </TabsContent>
+
+            <TabsContent value="finance">
+              <Panel>
+                <Grid>
+                  <Field label="Expense prefix" error={errors.expensePrefix?.message}><Input {...register('expensePrefix')} /></Field>
+                  <Field label="Vendor prefix" error={errors.vendorPrefix?.message}><Input {...register('vendorPrefix')} /></Field>
+                  <Field label="Income prefix" error={errors.incomePrefix?.message}><Input {...register('incomePrefix')} /></Field>
+                  <Field label="Bank prefix" error={errors.bankPrefix?.message}><Input {...register('bankPrefix')} /></Field>
+                  <Field label="Default GST rate (%)" error={errors.financeGstRate?.message}><Input type="number" min={0} step="0.01" {...register('financeGstRate', { valueAsNumber: true })} /></Field>
+                  <Field label="Financial year start month" error={errors.financialYearStartMonth?.message}><Input type="number" min={1} max={12} {...register('financialYearStartMonth', { valueAsNumber: true })} /></Field>
+                </Grid>
+                <p className="mt-5 mb-2 text-sm font-semibold">Opening balances &amp; alerts (₹)</p>
+                <Grid>
+                  <Field label="Opening cash" error={errors.openingCash?.message}><Input type="number" min={0} {...register('openingCash', { setValueAs: (v) => Math.round(Number(v) * 100) })} /></Field>
+                  <Field label="Opening bank" error={errors.openingBank?.message}><Input type="number" min={0} {...register('openingBank', { setValueAs: (v) => Math.round(Number(v) * 100) })} /></Field>
+                  <Field label="Low-cash alert below" error={errors.lowCashThreshold?.message}><Input type="number" min={0} {...register('lowCashThreshold', { setValueAs: (v) => Math.round(Number(v) * 100) })} /></Field>
+                  <Field label="Large-expense alert above" error={errors.largeExpenseThreshold?.message}><Input type="number" min={0} {...register('largeExpenseThreshold', { setValueAs: (v) => Math.round(Number(v) * 100) })} /></Field>
+                </Grid>
+                <div className="mt-3 space-y-1">
+                  <SwitchRow control={control} name="financeEnabled" label="Finance module" hint="Expenses, income, vendors, cash book and P&L." />
+                </div>
               </Panel>
             </TabsContent>
 
             <TabsContent value="notifications">
               <Panel>
                 <div className="space-y-3">
-                  <SwitchRow control={control} name="emailEnabled" label="Email notifications" hint="Send email reminders (channel wiring is future-ready)." />
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">In-app categories</p>
+                  <SwitchRow control={control} name="notifyDelivery" label="Delivery notifications" />
+                  <SwitchRow control={control} name="notifyPayment" label="Payment notifications" />
+                  <SwitchRow control={control} name="notifyService" label="Service notifications" />
+                  <SwitchRow control={control} name="notifyInventory" label="Inventory notifications" />
+                  <SwitchRow control={control} name="notifyWarranty" label="Warranty notifications" />
+                  <SwitchRow control={control} name="desktopNotifications" label="Desktop notifications" hint="Show the notification bell + badge in the top bar." />
+                  <p className="pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Channels (future-ready)</p>
+                  <SwitchRow control={control} name="emailEnabled" label="Email notifications" hint="Channel wiring is future-ready." />
                   <SwitchRow control={control} name="smsEnabled" label="SMS notifications" />
                   <SwitchRow control={control} name="whatsappEnabled" label="WhatsApp notifications" />
                 </div>
@@ -207,7 +269,7 @@ export function SettingsPage(): JSX.Element {
         </fieldset>
 
         {canWrite && isDirty && (
-          <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 p-3 backdrop-blur">
+          <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 px-3 pt-3 pb-[calc(0.75rem_+_env(safe-area-inset-bottom))] backdrop-blur">
             <div className="mx-auto flex max-w-6xl items-center justify-between">
               <span className="text-sm text-amber-600">You have unsaved changes.</span>
               <div className="flex gap-2">

@@ -27,6 +27,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { CustomerTimelineService } from '../customers/customer-timeline.service';
 import { SequenceService } from './sequence.service';
+import { SalesPdfService } from './sales-pdf.service';
+import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { computeTotal, sumAccessories } from './pricing';
 
 type Tx = Prisma.TransactionClient;
@@ -53,6 +55,8 @@ export class BookingsService {
     private readonly sequence: SequenceService,
     private readonly timeline: CustomerTimelineService,
     private readonly activityLog: ActivityLogService,
+    private readonly pdf: SalesPdfService,
+    private readonly pdfBrand: PdfBrandService,
   ) {}
 
   // ── Reads ──────────────────────────────────────────────
@@ -311,6 +315,40 @@ export class BookingsService {
     });
     await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'Sale', entityId: sale.id, summary: `Generated invoice ${sale.invoiceNumber}` });
     return this.getById(id);
+  }
+
+  /**
+   * Renders the invoice PDF for an already-generated invoice. Idempotent and
+   * side-effect free — it reads the immutable Sale and re-renders on demand, so
+   * the PDF can be downloaded/printed unlimited times without regenerating the
+   * invoice number or creating a new Sale record.
+   */
+  async invoicePdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
+    const booking = await this.getById(id);
+    if (!booking.sale?.invoiceNumber) throw new BadRequestException('No invoice has been generated for this booking');
+    const invoiceNumber = booking.sale.invoiceNumber;
+    const brand = await this.pdfBrand.resolve();
+    const buffer = await this.pdf.render({
+      docType: 'INVOICE',
+      number: invoiceNumber,
+      date: booking.sale.invoicedAt ?? booking.createdAt,
+      brand,
+      customer: { name: booking.customer.name, phone: booking.customer.phone, address: booking.customer.address, city: booking.customer.city },
+      vehicle: { model: booking.unit.variant.model.name, variant: booking.unit.variant.name, colour: booking.unit.variant.colour, vin: booking.unit.vin },
+      lines: [
+        { label: 'Ex-showroom', amount: booking.exShowroom },
+        { label: 'Discount', amount: booking.discount, negative: true },
+        { label: 'Exchange', amount: booking.exchangeValue, negative: true },
+        { label: 'Accessories', amount: booking.accessoriesTotal },
+        { label: 'RTO', amount: booking.rto },
+        { label: 'Insurance', amount: booking.insuranceCharge },
+        { label: 'Registration', amount: booking.registration },
+        { label: 'Extended warranty', amount: booking.extendedWarranty },
+      ],
+      total: booking.total,
+      finance: booking.finance ? { company: booking.finance.financeCompany, loanAmount: booking.finance.loanAmount, downPayment: booking.finance.downPayment, emi: booking.finance.emiAmount, tenureMonths: booking.finance.tenureMonths } : null,
+    });
+    return { buffer, filename: `${invoiceNumber.replace(/\//g, '-')}.pdf` };
   }
 
   // ── Helpers ────────────────────────────────────────────

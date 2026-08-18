@@ -64,9 +64,34 @@ export interface DashboardCharts {
   leadConversion: { status: LeadStatus; count: number }[];
 }
 
+export interface TechnicianWorkloadRow {
+  technicianId: string;
+  name: string;
+  openJobs: number;
+}
+
+export interface UpcomingFreeService {
+  customerId: string;
+  customer: string;
+  vin: string;
+  service: string; // e.g. "1st Free Service"
+  dueDate: string;
+}
+
+export interface ServiceDashboard {
+  todaysServices: number;
+  overdueServices: number;
+  readyForDelivery: number;
+  pendingQualityCheck: number;
+  lowPartsStock: number;
+  technicianWorkload: TechnicianWorkloadRow[];
+  upcomingFreeServices: UpcomingFreeService[];
+}
+
 export interface DashboardSummary {
   todaysWork: TodaysWork;
   businessOverview: BusinessOverview;
+  service: ServiceDashboard;
   recentActivity: RecentActivityItem[];
   reminders: DashboardReminders;
   charts: DashboardCharts;
@@ -79,4 +104,10 @@ export interface SearchResults {
   units: { id: string; vin: string; status: string; model: string }[];
   bookings: { id: string; code: string; customer: string; status: string }[];
   invoices: { id: string; invoiceNumber: string; customer: string }[];
+  serviceJobs: { id: string; code: string; customer: string; status: string; technician: string | null }[];
+  warranties: { id: string; warrantyNumber: string; customer: string; status: string }[];
+  amc: { id: string; amcNumber: string; customer: string; status: string }[];
+  expenses: { id: string; expenseNumber: string; category: string; amount: string }[];
+  vendors: { id: string; vendorNumber: string; name: string }[];
+  income: { id: string; incomeNumber: string; source: string }[];
 }

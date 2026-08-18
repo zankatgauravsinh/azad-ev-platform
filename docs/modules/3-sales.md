@@ -27,17 +27,17 @@ Status: **delivered**. Manages the whole purchase journey: **Quotation → Booki
 
 ## API (bearer auth; Swagger `/api/docs`) — roles Owner/Manager/Sales Executive
 **Quotations** `/quotations`: list, create, `:id`, `:id/pdf`, PATCH `:id`, PATCH `:id/status`, `:id/duplicate`, `:id/convert`, DELETE `:id`.
-**Bookings** `/bookings`: list, create, `:id`, PATCH `:id`, `:id/confirm`, `:id/cancel`, `:id/payments` (GET/POST), `:id/finance`, `:id/insurance`, `:id/schedule-delivery`, `:id/deliver`, `:id/invoice`.
+**Bookings** `/bookings`: list, create, `:id`, PATCH `:id`, `:id/confirm`, `:id/cancel`, `:id/payments` (GET/POST), `:id/finance`, `:id/insurance`, `:id/schedule-delivery`, `:id/deliver`, `:id/invoice` (POST — generate once, 409 if it exists), `:id/invoice/pdf` (GET — download/print the PDF; idempotent re-render of the immutable Sale, 400 if not yet generated).
 **Accessories** `/accessories`: list, create. **Inventory** adds `/inventory/variants`.
 
 ## Tests (all required areas covered)
 - **Unit**: `pricing.spec.ts` (on-road maths, exchange, tax, negative guard); `bookings.payment-summary.spec.ts` (PENDING/PARTIAL/PAID).
-- **e2e** `sales.e2e-spec.ts`: quotation total, **booking allocation (inventory sync)**, **double allocation 409**, **payment calculations**, **finance flow**, insurance, deliver-before-invoice 400, invoice, delivery + unit `DELIVERED`, **timeline generation** (all 8 events), **cancellation releases the VIN**.
+- **e2e** `sales.e2e-spec.ts`: quotation total, **booking allocation (inventory sync)**, **double allocation 409**, **payment calculations**, **finance flow**, insurance, deliver-before-invoice 400, invoice, delivery + unit `DELIVERED`, **timeline generation** (all 8 events), **cancellation releases the VIN**, plus **invoice PDF regression** — PDF blocked before generation (400), duplicate generation rejected (409, exactly one Sale row), and repeatable downloads returning real `%PDF-` bytes with attachment headers.
 - Run: `npm test --workspace api`, `npm run test:e2e --workspace api`.
 
 ## Frontend
 - **Quotations**: list (filter/search/duplicate/convert/PDF/status) + detail (price breakup, finance estimate, convert).
-- **Bookings**: list (payment + booking status) + detail command-center — price breakup, payments (with receipts), finance/insurance/delivery cards, and actions: Take payment, Finance, Insurance, Schedule delivery, Generate invoice, Deliver, Cancel.
+- **Bookings**: list (payment + booking status) + detail command-center — price breakup, payments (with receipts), finance/insurance/delivery cards, and actions: Take payment, Finance, Insurance, Schedule delivery, Deliver, Cancel. Invoice actions are stateful: **Generate invoice** shows only when no Sale exists; once generated it is replaced by **View invoice / Download PDF / Print** (unlimited, survives refresh) sourced from the immutable Sale.
 - Reusable: `CustomerCombobox`, `PriceFields` (live on-road total), status badges.
 
 ## Next

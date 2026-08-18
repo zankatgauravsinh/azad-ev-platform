@@ -19,6 +19,7 @@ enum Role {
   MANAGER
   SALES_EXECUTIVE
   TECHNICIAN
+  ACCOUNTANT
 }
 
 enum LeadStatus {
@@ -54,6 +55,14 @@ enum CustomerEventType {
   DELIVERY
   FIRST_SERVICE
   WARRANTY
+  JOB_CARD_CREATED
+  VEHICLE_CHECKED_IN
+  DIAGNOSIS_COMPLETE
+  REPAIR_STARTED
+  PARTS_ADDED
+  QUALITY_CHECK
+  SERVICE_DELIVERED
+  FEEDBACK_RECEIVED
   FEEDBACK
   REFERRAL
   NOTE_ADDED
@@ -159,36 +168,55 @@ enum PaymentContext {
 }
 
 enum ServiceJobType {
-  FREE
+  FREE_1
+  FREE_2
+  FREE_3
   PAID
   WARRANTY
+  REPAIR
+  INSPECTION
 }
 
 enum ServiceStatus {
-  OPEN
-  IN_PROGRESS
+  BOOKED
+  CHECKED_IN
+  DIAGNOSIS
+  WAITING_FOR_PARTS
+  REPAIRING
+  QUALITY_CHECK
   READY
-  CLOSED
+  DELIVERED
   CANCELLED
 }
 
-enum ExpenseCategory {
-  RENT
-  ELECTRICITY
-  SALARY
-  MARKETING
-  TEA
-  FUEL
-  CLEANING
-  OFFICE
-  MISC
+enum ServicePriority {
+  LOW
+  MEDIUM
+  HIGH
+  EMERGENCY
+}
+
+enum InspectionResult {
+  GOOD
+  NEEDS_ATTENTION
+  REPLACED
 }
 
 enum NotificationType {
-  DELIVERY_UPCOMING
-  PAYMENT_DUE
-  SERVICE_DUE
-  LOW_INVENTORY
+  DELIVERY
+  PAYMENT
+  SERVICE
+  INVENTORY
+  CUSTOMER
+  WARRANTY
+  SYSTEM
+}
+
+enum NotificationPriority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
 }
 
 enum ActivityAction {
@@ -269,7 +297,6 @@ model User {
   payments          Payment[]          @relation("PaymentReceivedBy")
   deliveries        Delivery[]         @relation("DeliveryDeliveredBy")
   serviceJobs       ServiceJob[]       @relation("ServiceJobTechnician")
-  notifications     Notification[]     @relation("NotificationRecipient")
   activityLogs      ActivityLog[]      @relation("ActivityLogActor")
 
   @@index([role])
@@ -319,6 +346,9 @@ model Customer {
   quotations  Quotation[]
   sales       Sale[]
   serviceJobs ServiceJob[]
+  warranties  Warranty[]
+  amcPlans    AmcPlan[]
+  income      Income[]
 
   @@index([leadStatus])
   @@index([assignedToId])
@@ -514,6 +544,8 @@ model InventoryUnit {
   events      InventoryEvent[]
   photos      InventoryUnitPhoto[]
   documents   InventoryUnitDocument[]
+  warranties  Warranty[]
+  amcPlans    AmcPlan[]
 
   @@index([status])
   @@index([variantId])
@@ -595,7 +627,6 @@ model Accessory {
   bookingAccessories   BookingAccessory[]
   quotationAccessories QuotationAccessory[]
   saleAccessories      SaleAccessory[]
-  serviceParts         ServicePart[]
 
   @@index([isPart])
   @@index([companyId])
@@ -682,6 +713,7 @@ model Booking {
   finance     FinanceDetail?
   insurance   InsuranceDetail?
   sale        Sale?
+  serviceJobs ServiceJob[]
 
   @@index([status])
   @@index([customerId])
@@ -841,6 +873,7 @@ model Sale {
   accessories SaleAccessory[]
   payments    Payment[]
   delivery    Delivery?
+  serviceJobs ServiceJob[]
 
   @@index([customerId])
   @@index([status])
@@ -1014,50 +1047,106 @@ model DeliveryPhoto {
 // ─────────────────────────── Service ───────────────────────────
 
 model ServiceJob {
-  id            String         @id @default(uuid())
-  companyId     String         @default("")
-  code          String         @unique
-  customerId    String
-  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  unitId        String
-  unit          InventoryUnit  @relation(fields: [unitId], references: [id], onDelete: Restrict)
-  technicianId  String?
-  technician    User?          @relation("ServiceJobTechnician", fields: [technicianId], references: [id])
-  type          ServiceJobType @default(PAID)
-  complaint     String
-  status        ServiceStatus  @default(OPEN)
-  odometerKm    Int?
-  partsTotal    BigInt         @default(0)
-  labourTotal   BigInt         @default(0)
-  total         BigInt         @default(0)
-  underWarranty Boolean        @default(false)
-  closedAt      DateTime?
+  id               String          @id @default(uuid())
+  companyId        String          @default("")
+  code             String          @unique
+  customerId       String
+  customer         Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  unitId           String
+  unit             InventoryUnit   @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  bookingId        String?
+  booking          Booking?        @relation(fields: [bookingId], references: [id])
+  saleId           String?
+  sale             Sale?           @relation(fields: [saleId], references: [id])
+  technicianId     String?
+  technician       User?           @relation("ServiceJobTechnician", fields: [technicianId], references: [id])
+  type             ServiceJobType  @default(PAID)
+  priority         ServicePriority @default(MEDIUM)
+  status           ServiceStatus   @default(BOOKED)
+  odometerKm       Int?
+  scheduledDate    DateTime?
+  checkInAt        DateTime?
+  checkOutAt       DateTime?
+  expectedDelivery DateTime?
+  actualDelivery   DateTime?
+  notes            String?
+  underWarranty    Boolean         @default(false)
+
+  partsTotal  BigInt @default(0)
+  labourTotal BigInt @default(0)
+  discount    BigInt @default(0)
+  taxAmount   BigInt @default(0)
+  total       BigInt @default(0)
+
+  feedbackRating Int?
+  feedbackNote   String?
+
+  closedAt    DateTime?
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  complaints ServiceComplaint[]
+  inspection ServiceInspectionItem[]
+  parts      ServicePart[]
+  labour     ServiceLabour[]
+  photos     ServiceJobPhoto[]
+  payments   Payment[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([unitId])
+  @@index([technicianId])
+  @@index([scheduledDate])
+  @@index([deletedAt])
+  @@index([companyId])
+}
+
+model ServiceComplaint {
+  id           String          @id @default(uuid())
+  serviceJobId String
+  serviceJob   ServiceJob      @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
+  description  String
+  priority     ServicePriority @default(MEDIUM)
+  resolved     Boolean         @default(false)
 
   createdById String?
   updatedById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  parts    ServicePart[]
-  labour   ServiceLabour[]
-  payments Payment[]
+  @@index([serviceJobId])
+}
 
-  @@index([status])
-  @@index([customerId])
-  @@index([unitId])
-  @@index([technicianId])
-  @@index([companyId])
+model ServiceInspectionItem {
+  id           String           @id @default(uuid())
+  serviceJobId String
+  serviceJob   ServiceJob       @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
+  item         String
+  result       InspectionResult @default(GOOD)
+  notes        String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([serviceJobId, item])
+  @@index([serviceJobId])
 }
 
 model ServicePart {
   id           String     @id @default(uuid())
   serviceJobId String
   serviceJob   ServiceJob @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
-  accessoryId  String?
-  accessory    Accessory? @relation(fields: [accessoryId], references: [id])
+  sparePartId  String?
+  sparePart    SparePart? @relation(fields: [sparePartId], references: [id])
   name         String
   qty          Int        @default(1)
   unitCost     BigInt     @default(0)
+  unitPrice    BigInt     @default(0)
   warranty     Boolean    @default(false)
 
   createdById String?
@@ -1066,15 +1155,17 @@ model ServicePart {
   updatedAt   DateTime @updatedAt
 
   @@index([serviceJobId])
+  @@index([sparePartId])
 }
 
 model ServiceLabour {
-  id           String     @id @default(uuid())
+  id           String      @id @default(uuid())
   serviceJobId String
-  serviceJob   ServiceJob @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
+  serviceJob   ServiceJob  @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
+  labourItemId String?
+  labourItem   LabourItem? @relation(fields: [labourItemId], references: [id])
   description  String
-  hours        Decimal    @default(0) @db.Decimal(5, 2)
-  rate         BigInt     @default(0)
+  cost         BigInt      @default(0)
 
   createdById String?
   updatedById String?
@@ -1084,18 +1175,31 @@ model ServiceLabour {
   @@index([serviceJobId])
 }
 
-// ─────────────────────────── Expenses ───────────────────────────
+model ServiceJobPhoto {
+  id           String     @id @default(uuid())
+  serviceJobId String
+  serviceJob   ServiceJob @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
+  key          String
+  caption      String?
 
-model Expense {
-  id         String          @id @default(uuid())
-  companyId  String          @default("")
-  category   ExpenseCategory
-  amount     BigInt
-  paidTo     String?
-  mode       PaymentMode     @default(CASH)
-  spentAt    DateTime        @default(now())
-  note       String?
-  receiptKey String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([serviceJobId])
+}
+
+/// Standalone spare-parts inventory (distinct from sale Accessories). Stock is
+/// decremented atomically when a part is added to a service job.
+model SparePart {
+  id             String @id @default(uuid())
+  companyId      String @default("")
+  name           String
+  sku            String
+  quantity       Int    @default(0)
+  cost           BigInt @default(0)
+  sellingPrice   BigInt @default(0)
+  warrantyMonths Int    @default(0)
+  minStock       Int    @default(0)
 
   createdById String?
   updatedById String?
@@ -1103,34 +1207,62 @@ model Expense {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  @@index([category])
-  @@index([spentAt])
-  @@index([deletedAt])
+  usages ServicePart[]
+
+  @@unique([companyId, sku])
   @@index([companyId])
+  @@index([deletedAt])
+}
+
+/// Standard labour catalogue with editable default cost + duration.
+model LabourItem {
+  id           String @id @default(uuid())
+  companyId    String @default("")
+  name         String
+  defaultCost  BigInt @default(0)
+  durationMins Int    @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  usages ServiceLabour[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@index([deletedAt])
 }
 
 // ─────────────────────────── System ───────────────────────────
 
 model Notification {
-  id          String           @id @default(uuid())
-  companyId   String           @default("")
-  recipientId String
-  recipient   User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
-  type        NotificationType
-  title       String
-  body        String?
-  entityType  String?
-  entityId    String?
-  readAt      DateTime?
+  id         String               @id @default(uuid())
+  companyId  String               @default("")
+  title      String
+  message    String
+  type       NotificationType
+  priority   NotificationPriority @default(MEDIUM)
+  entityType String?
+  entityId   String?
+  /// Stable key for auto-generated notifications so refreshes don't duplicate them.
+  dedupeKey  String?
+  readAt     DateTime?
+  archivedAt DateTime?
+  expiresAt  DateTime?
 
   createdById String?
   updatedById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@index([recipientId, readAt])
-  @@index([type])
-  @@index([companyId])
+  @@unique([companyId, dedupeKey])
+  @@index([companyId, readAt])
+  @@index([companyId, type])
+  @@index([companyId, priority])
+  @@index([companyId, createdAt])
+  @@index([expiresAt])
 }
 
 model ActivityLog {
@@ -1161,11 +1293,14 @@ model CompanySetting {
   // Business
   businessName String  @default("AZAD EV POINT")
   legalName    String  @default("Azad Enterprise")
+  dealerName   String?
   address      String?
   city         String  @default("Una, Gujarat")
   state        String  @default("Gujarat")
   phone        String?
   email        String?
+  website      String?
+  tagline      String  @default("POWERING TOMORROW")
 
   // Localization
   currency   String @default("INR")
@@ -1185,25 +1320,59 @@ model CompanySetting {
   quotationPrefix String @default("QT")
   receiptPrefix   String @default("RC")
   jobCardPrefix   String @default("JC")
+  warrantyPrefix  String @default("WR")
+  amcPrefix       String @default("AMC")
+  claimPrefix     String @default("CLM")
 
   // Sales / Service
   defaultWarrantyMonths Int @default(36)
   serviceReminderDays   Int @default(90)
 
+  // Warranty & AMC (Module 8)
+  warrantyEnabled      Boolean @default(true)
+  amcEnabled           Boolean @default(true)
+  warrantyReminderDays Int     @default(30)
+
+  // Finance (Module 9)
+  financeEnabled          Boolean @default(true)
+  expensePrefix           String  @default("EXP")
+  vendorPrefix            String  @default("VND")
+  incomePrefix            String  @default("INC")
+  bankPrefix              String  @default("BNK")
+  financeGstRate          Decimal @default(18) @db.Decimal(5, 2)
+  financialYearStartMonth Int     @default(4)
+  openingCash             BigInt  @default(0)
+  openingBank             BigInt  @default(0)
+  lowCashThreshold        BigInt  @default(500000)
+  largeExpenseThreshold   BigInt  @default(5000000)
+  // Free-service intervals (km / days) — configurable per company
+  freeService1Km          Int     @default(500)
+  freeService1Days        Int     @default(30)
+  freeService2Km          Int     @default(3000)
+  freeService2Days        Int     @default(90)
+  freeService3Km          Int     @default(6000)
+  freeService3Days        Int     @default(180)
+
   // Branding
   companyLogo    String?
   favicon        String?
-  primaryColor   String @default("#0B2545")
-  secondaryColor String @default("#00B8A9")
+  primaryColor   String  @default("#0B2545")
+  secondaryColor String  @default("#00B8A9")
 
   // Business hours
   workingDays  String[] @default(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
   workingHours String   @default("10:00-19:00")
 
-  // Notifications
-  emailEnabled    Boolean @default(false)
-  smsEnabled      Boolean @default(false)
-  whatsappEnabled Boolean @default(false)
+  // Notifications — per-category in-app toggles (channels below are future-ready)
+  notifyDelivery       Boolean @default(true)
+  notifyPayment        Boolean @default(true)
+  notifyService        Boolean @default(true)
+  notifyInventory      Boolean @default(true)
+  notifyWarranty       Boolean @default(true)
+  desktopNotifications Boolean @default(true)
+  emailEnabled         Boolean @default(false)
+  smsEnabled           Boolean @default(false)
+  whatsappEnabled      Boolean @default(false)
 
   // Backup
   backupEnabled   Boolean         @default(false)
@@ -1228,9 +1397,473 @@ model InvoiceSetting {
   nextQuotationNumber Int    @default(1)
   nextReceiptNumber   Int    @default(1)
   nextServiceNumber   Int    @default(1)
+  nextWarrantyNumber  Int    @default(1)
+  nextAmcNumber       Int    @default(1)
+  nextClaimNumber     Int    @default(1)
+  nextExpenseNumber   Int    @default(1)
+  nextVendorNumber    Int    @default(1)
+  nextIncomeNumber    Int    @default(1)
+  nextBankNumber      Int    @default(1)
 
   createdById String?
   updatedById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// ─────────────────────────── Module 8 — Warranty & AMC ───────────────────────────
+
+enum WarrantyStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  CLAIMED
+}
+
+enum WarrantyClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum FreeServiceStatus {
+  PENDING
+  COMPLETED
+  MISSED
+}
+
+enum AmcPlanType {
+  SILVER
+  GOLD
+  PLATINUM
+  CUSTOM
+}
+
+enum AmcStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+/// One warranty per sold vehicle. Coverage is a typed JSON array of line items.
+model Warranty {
+  id             String         @id @default(uuid())
+  companyId      String         @default("")
+  warrantyNumber String
+  status         WarrantyStatus @default(ACTIVE)
+
+  customerId String
+  customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  unitId     String
+  unit       InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  bookingId     String?
+  saleId        String?
+  invoiceNumber String?
+  motorNumber   String?
+  batteryNumber String?
+
+  purchaseDate DateTime
+  startDate    DateTime
+  endDate      DateTime
+  periodMonths Int
+
+  coverage      Json    @default("[]")
+  dealerNotes   String?
+  customerNotes String?
+
+  claims       WarrantyClaim[]
+  freeServices FreeService[]
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, warrantyNumber])
+  @@index([companyId, status])
+  @@index([companyId, endDate])
+  @@index([companyId, customerId])
+  @@index([unitId])
+}
+
+model WarrantyClaim {
+  id          String              @id @default(uuid())
+  companyId   String              @default("")
+  claimNumber String
+  status      WarrantyClaimStatus @default(PENDING)
+
+  warrantyId String
+  warranty   Warranty @relation(fields: [warrantyId], references: [id], onDelete: Cascade)
+
+  complaint     String
+  diagnosis     String?
+  partsReplaced Json    @default("[]")
+  labour        String?
+  technicianId  String?
+
+  claimDate               DateTime  @default(now())
+  completionDate          DateTime?
+  claimCost               BigInt    @default(0)
+  manufacturerClaimAmount BigInt    @default(0)
+  dealerCost              BigInt    @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, claimNumber])
+  @@index([companyId, status])
+  @@index([warrantyId])
+  @@index([companyId, claimDate])
+}
+
+model FreeService {
+  id            String            @id @default(uuid())
+  companyId     String            @default("")
+  warrantyId    String
+  warranty      Warranty          @relation(fields: [warrantyId], references: [id], onDelete: Cascade)
+  serviceNumber Int
+  status        FreeServiceStatus @default(PENDING)
+  dueDate       DateTime
+  completedDate DateTime?
+  technicianId  String?
+  remarks       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([warrantyId])
+  @@index([companyId, status])
+  @@index([companyId, dueDate])
+}
+
+model AmcPlan {
+  id        String      @id @default(uuid())
+  companyId String      @default("")
+  amcNumber String
+  status    AmcStatus   @default(ACTIVE)
+  planType  AmcPlanType @default(SILVER)
+
+  customerId String
+  customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  unitId     String
+  unit       InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  startDate      DateTime
+  endDate        DateTime
+  visitsIncluded Int      @default(3)
+  visitsUsed     Int      @default(0)
+  price          BigInt   @default(0)
+  notes          String?
+
+  visits AmcVisit[]
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, amcNumber])
+  @@index([companyId, status])
+  @@index([companyId, endDate])
+  @@index([companyId, customerId])
+  @@index([unitId])
+}
+
+model AmcVisit {
+  id              String   @id @default(uuid())
+  companyId       String   @default("")
+  amcPlanId       String
+  amcPlan         AmcPlan  @relation(fields: [amcPlanId], references: [id], onDelete: Cascade)
+  visitNumber     Int
+  visitDate       DateTime @default(now())
+  technicianId    String?
+  workDone        String
+  partsUsed       String?
+  amount          BigInt   @default(0)
+  coveredUnderAmc Boolean  @default(true)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([amcPlanId])
+  @@index([companyId, visitDate])
+}
+
+// ─────────────────────────── Module 9 — Finance & Expense ───────────────────────────
+
+enum ExpenseStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ExpenseAttachmentType {
+  INVOICE
+  GST_BILL
+  PHOTO
+  PDF
+  OTHER
+}
+
+enum BankReconStatus {
+  PENDING
+  CLEARED
+  RECONCILED
+}
+
+enum VendorStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum FinancePayMethod {
+  CASH
+  UPI
+  CARD
+  BANK_TRANSFER
+  CHEQUE
+}
+
+enum IncomeSource {
+  ACCESSORIES
+  INSURANCE_COMMISSION
+  FINANCE_COMMISSION
+  REGISTRATION
+  SERVICE
+  AMC
+  WARRANTY_RECOVERY
+  OTHER
+}
+
+enum BankTxnType {
+  DEPOSIT
+  WITHDRAWAL
+  NEFT
+  RTGS
+  IMPS
+  CHEQUE
+  UPI
+}
+
+enum BankDirection {
+  CREDIT
+  DEBIT
+}
+
+model ExpenseCategory {
+  id        String  @id @default(uuid())
+  companyId String  @default("")
+  name      String
+  isSystem  Boolean @default(false)
+  active    Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  expenses  Expense[]
+  recurring RecurringExpense[]
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, name])
+  @@index([companyId, active])
+}
+
+model Vendor {
+  id           String       @id @default(uuid())
+  companyId    String       @default("")
+  vendorNumber String
+  name         String
+  mobile       String?
+  email        String?
+  gstNumber    String?
+  address      String?
+  city         String?
+  state        String?
+  status       VendorStatus @default(ACTIVE)
+  notes        String?
+
+  expenses  Expense[]
+  recurring RecurringExpense[]
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([companyId, vendorNumber])
+  @@index([companyId, status])
+  @@index([companyId, name])
+  @@index([deletedAt])
+}
+
+model Expense {
+  id            String   @id @default(uuid())
+  companyId     String   @default("")
+  expenseNumber String
+  expenseDate   DateTime @default(now())
+
+  categoryId String
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  vendorId   String?
+  vendor     Vendor?         @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+
+  amount          BigInt           @default(0)
+  gstAmount       BigInt           @default(0)
+  paymentMethod   FinancePayMethod @default(CASH)
+  referenceNumber String?
+  description     String?
+  attachmentKey   String?
+  status          ExpenseStatus    @default(APPROVED)
+  paid            Boolean          @default(true)
+  dueDate         DateTime?
+  settledDate     DateTime?
+
+  attachments ExpenseAttachment[]
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([companyId, expenseNumber])
+  @@index([companyId, status])
+  @@index([companyId, expenseDate])
+  @@index([companyId, categoryId])
+  @@index([companyId, vendorId])
+  @@index([companyId, paymentMethod])
+  @@index([referenceNumber])
+  @@index([deletedAt])
+}
+
+model Income {
+  id           String       @id @default(uuid())
+  companyId    String       @default("")
+  incomeNumber String
+  incomeDate   DateTime     @default(now())
+  source       IncomeSource @default(OTHER)
+
+  amount          BigInt           @default(0)
+  gstAmount       BigInt           @default(0)
+  paymentMethod   FinancePayMethod @default(CASH)
+  referenceNumber String?
+  description     String?
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, incomeNumber])
+  @@index([companyId, source])
+  @@index([companyId, incomeDate])
+  @@index([referenceNumber])
+}
+
+model BankTransaction {
+  id          String          @id @default(uuid())
+  companyId   String          @default("")
+  txnNumber   String
+  txnDate     DateTime        @default(now())
+  type        BankTxnType
+  direction   BankDirection
+  amount      BigInt          @default(0)
+  bankName    String?
+  reference   String?
+  notes       String?
+  reconStatus BankReconStatus @default(PENDING)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, txnNumber])
+  @@index([companyId, txnDate])
+  @@index([companyId, type])
+  @@index([reference])
+}
+
+/// Manual cash-book corrections (signed paise: + adds cash, − removes cash).
+model CashAdjustment {
+  id        String   @id @default(uuid())
+  companyId String   @default("")
+  adjDate   DateTime @default(now())
+  amount    BigInt
+  notes     String
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([companyId, adjDate])
+}
+
+model ExpenseAttachment {
+  id        String                @id @default(uuid())
+  companyId String                @default("")
+  expenseId String
+  expense   Expense               @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  type      ExpenseAttachmentType @default(OTHER)
+  fileKey   String
+  fileName  String
+  mimeType  String
+  sizeBytes Int
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([expenseId])
+  @@index([companyId])
+}
+
+/// A template that auto-generates a monthly expense (rent, salary, subscriptions…).
+model RecurringExpense {
+  id            String           @id @default(uuid())
+  companyId     String           @default("")
+  name          String
+  categoryId    String
+  category      ExpenseCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  vendorId      String?
+  vendor        Vendor?          @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  amount        BigInt           @default(0)
+  gstAmount     BigInt           @default(0)
+  paymentMethod FinancePayMethod @default(BANK_TRANSFER)
+  dayOfMonth    Int              @default(1)
+  description   String?
+  active        Boolean          @default(true)
+  lastRunYear   Int?
+  lastRunMonth  Int?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([companyId, active])
+}
+
+/// A locked accounting month — finance transactions dated inside it become read-only.
+model MonthlyClosing {
+  id        String   @id @default(uuid())
+  companyId String   @default("")
+  year      Int
+  month     Int
+  notes     String?
+  closedAt  DateTime @default(now())
+
+  closedById String?
+  createdAt  DateTime @default(now())
+
+  @@unique([companyId, year, month])
+  @@index([companyId, year, month])
 }

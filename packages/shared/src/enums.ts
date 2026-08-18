@@ -8,6 +8,7 @@ export const Role = {
   MANAGER: 'MANAGER',
   SALES_EXECUTIVE: 'SALES_EXECUTIVE',
   TECHNICIAN: 'TECHNICIAN',
+  ACCOUNTANT: 'ACCOUNTANT',
 } as const;
 export type Role = (typeof Role)[keyof typeof Role];
 export const ROLES = Object.values(Role);
@@ -50,6 +51,14 @@ export const CustomerEventType = {
   DELIVERY: 'DELIVERY',
   FIRST_SERVICE: 'FIRST_SERVICE',
   WARRANTY: 'WARRANTY',
+  JOB_CARD_CREATED: 'JOB_CARD_CREATED',
+  VEHICLE_CHECKED_IN: 'VEHICLE_CHECKED_IN',
+  DIAGNOSIS_COMPLETE: 'DIAGNOSIS_COMPLETE',
+  REPAIR_STARTED: 'REPAIR_STARTED',
+  PARTS_ADDED: 'PARTS_ADDED',
+  QUALITY_CHECK: 'QUALITY_CHECK',
+  SERVICE_DELIVERED: 'SERVICE_DELIVERED',
+  FEEDBACK_RECEIVED: 'FEEDBACK_RECEIVED',
   FEEDBACK: 'FEEDBACK',
   REFERRAL: 'REFERRAL',
   NOTE_ADDED: 'NOTE_ADDED',
@@ -215,45 +224,93 @@ export type PaymentContext = (typeof PaymentContext)[keyof typeof PaymentContext
 export const PAYMENT_CONTEXTS = Object.values(PaymentContext);
 
 export const ServiceJobType = {
-  FREE: 'FREE',
+  FREE_1: 'FREE_1',
+  FREE_2: 'FREE_2',
+  FREE_3: 'FREE_3',
   PAID: 'PAID',
   WARRANTY: 'WARRANTY',
+  REPAIR: 'REPAIR',
+  INSPECTION: 'INSPECTION',
 } as const;
 export type ServiceJobType = (typeof ServiceJobType)[keyof typeof ServiceJobType];
 export const SERVICE_JOB_TYPES = Object.values(ServiceJobType);
+export const FREE_SERVICE_TYPES = [ServiceJobType.FREE_1, ServiceJobType.FREE_2, ServiceJobType.FREE_3] as const;
 
 export const ServiceStatus = {
-  OPEN: 'OPEN',
-  IN_PROGRESS: 'IN_PROGRESS',
+  BOOKED: 'BOOKED',
+  CHECKED_IN: 'CHECKED_IN',
+  DIAGNOSIS: 'DIAGNOSIS',
+  WAITING_FOR_PARTS: 'WAITING_FOR_PARTS',
+  REPAIRING: 'REPAIRING',
+  QUALITY_CHECK: 'QUALITY_CHECK',
   READY: 'READY',
-  CLOSED: 'CLOSED',
+  DELIVERED: 'DELIVERED',
   CANCELLED: 'CANCELLED',
 } as const;
 export type ServiceStatus = (typeof ServiceStatus)[keyof typeof ServiceStatus];
 export const SERVICE_STATUSES = Object.values(ServiceStatus);
 
-export const ExpenseCategory = {
-  RENT: 'RENT',
-  ELECTRICITY: 'ELECTRICITY',
-  SALARY: 'SALARY',
-  MARKETING: 'MARKETING',
-  TEA: 'TEA',
-  FUEL: 'FUEL',
-  CLEANING: 'CLEANING',
-  OFFICE: 'OFFICE',
-  MISC: 'MISC',
-} as const;
-export type ExpenseCategory = (typeof ExpenseCategory)[keyof typeof ExpenseCategory];
-export const EXPENSE_CATEGORIES = Object.values(ExpenseCategory);
+/** Allowed status transitions for a service job (mirrors the workshop flow). */
+export const SERVICE_STATUS_TRANSITIONS: Record<ServiceStatus, ServiceStatus[]> = {
+  BOOKED: ['CHECKED_IN', 'CANCELLED'],
+  CHECKED_IN: ['DIAGNOSIS', 'CANCELLED'],
+  DIAGNOSIS: ['WAITING_FOR_PARTS', 'REPAIRING', 'CANCELLED'],
+  WAITING_FOR_PARTS: ['REPAIRING', 'CANCELLED'],
+  REPAIRING: ['QUALITY_CHECK', 'CANCELLED'],
+  QUALITY_CHECK: ['READY', 'REPAIRING', 'CANCELLED'],
+  READY: ['DELIVERED', 'CANCELLED'],
+  DELIVERED: [],
+  CANCELLED: [],
+};
+export function canTransitionService(from: ServiceStatus, to: ServiceStatus): boolean {
+  return SERVICE_STATUS_TRANSITIONS[from]?.includes(to) ?? false;
+}
 
+export const ServicePriority = {
+  LOW: 'LOW',
+  MEDIUM: 'MEDIUM',
+  HIGH: 'HIGH',
+  EMERGENCY: 'EMERGENCY',
+} as const;
+export type ServicePriority = (typeof ServicePriority)[keyof typeof ServicePriority];
+export const SERVICE_PRIORITIES = Object.values(ServicePriority);
+
+export const InspectionResult = {
+  GOOD: 'GOOD',
+  NEEDS_ATTENTION: 'NEEDS_ATTENTION',
+  REPLACED: 'REPLACED',
+} as const;
+export type InspectionResult = (typeof InspectionResult)[keyof typeof InspectionResult];
+export const INSPECTION_RESULTS = Object.values(InspectionResult);
+
+/** Fixed inspection checklist (spec order). */
+export const INSPECTION_ITEMS = [
+  'Brakes', 'Lights', 'Horn', 'Tyres', 'Suspension', 'Battery',
+  'Motor', 'Controller', 'Display', 'Charging Port', 'Fasteners', 'Test Ride',
+] as const;
+export type InspectionItem = (typeof INSPECTION_ITEMS)[number];
+
+/** Notification category (the `type` column). */
 export const NotificationType = {
-  DELIVERY_UPCOMING: 'DELIVERY_UPCOMING',
-  PAYMENT_DUE: 'PAYMENT_DUE',
-  SERVICE_DUE: 'SERVICE_DUE',
-  LOW_INVENTORY: 'LOW_INVENTORY',
+  DELIVERY: 'DELIVERY',
+  PAYMENT: 'PAYMENT',
+  SERVICE: 'SERVICE',
+  INVENTORY: 'INVENTORY',
+  CUSTOMER: 'CUSTOMER',
+  WARRANTY: 'WARRANTY',
+  SYSTEM: 'SYSTEM',
 } as const;
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
 export const NOTIFICATION_TYPES = Object.values(NotificationType);
+
+export const NotificationPriority = {
+  CRITICAL: 'CRITICAL',
+  HIGH: 'HIGH',
+  MEDIUM: 'MEDIUM',
+  LOW: 'LOW',
+} as const;
+export type NotificationPriority = (typeof NotificationPriority)[keyof typeof NotificationPriority];
+export const NOTIFICATION_PRIORITIES = Object.values(NotificationPriority);
 
 export const BackupFrequency = {
   DAILY: 'DAILY',
@@ -274,3 +331,174 @@ export const ActivityAction = {
 } as const;
 export type ActivityAction = (typeof ActivityAction)[keyof typeof ActivityAction];
 export const ACTIVITY_ACTIONS = Object.values(ActivityAction);
+
+/* ------------------------------------------------------------------ *
+ * Module 8 — Warranty & AMC
+ * ------------------------------------------------------------------ */
+
+export const WarrantyStatus = {
+  ACTIVE: 'ACTIVE',
+  EXPIRED: 'EXPIRED',
+  CANCELLED: 'CANCELLED',
+  CLAIMED: 'CLAIMED',
+} as const;
+export type WarrantyStatus = (typeof WarrantyStatus)[keyof typeof WarrantyStatus];
+export const WARRANTY_STATUSES = Object.values(WarrantyStatus);
+
+export const WarrantyClaimStatus = {
+  PENDING: 'PENDING',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+  COMPLETED: 'COMPLETED',
+} as const;
+export type WarrantyClaimStatus = (typeof WarrantyClaimStatus)[keyof typeof WarrantyClaimStatus];
+export const WARRANTY_CLAIM_STATUSES = Object.values(WarrantyClaimStatus);
+
+export const FreeServiceStatus = {
+  PENDING: 'PENDING',
+  COMPLETED: 'COMPLETED',
+  MISSED: 'MISSED',
+} as const;
+export type FreeServiceStatus = (typeof FreeServiceStatus)[keyof typeof FreeServiceStatus];
+export const FREE_SERVICE_STATUSES = Object.values(FreeServiceStatus);
+
+export const AmcPlanType = {
+  SILVER: 'SILVER',
+  GOLD: 'GOLD',
+  PLATINUM: 'PLATINUM',
+  CUSTOM: 'CUSTOM',
+} as const;
+export type AmcPlanType = (typeof AmcPlanType)[keyof typeof AmcPlanType];
+export const AMC_PLAN_TYPES = Object.values(AmcPlanType);
+
+export const AmcStatus = {
+  ACTIVE: 'ACTIVE',
+  EXPIRED: 'EXPIRED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type AmcStatus = (typeof AmcStatus)[keyof typeof AmcStatus];
+export const AMC_STATUSES = Object.values(AmcStatus);
+
+/** Standard warranty coverage line items for an EV scooter. */
+export const WarrantyCoverageItem = {
+  MOTOR: 'MOTOR',
+  BATTERY: 'BATTERY',
+  CONTROLLER: 'CONTROLLER',
+  CHARGER: 'CHARGER',
+  DISPLAY: 'DISPLAY',
+  FRAME: 'FRAME',
+  SUSPENSION: 'SUSPENSION',
+  BRAKE_COMPONENTS: 'BRAKE_COMPONENTS',
+  ELECTRICAL_COMPONENTS: 'ELECTRICAL_COMPONENTS',
+  ACCESSORIES: 'ACCESSORIES',
+  CUSTOM: 'CUSTOM',
+} as const;
+export type WarrantyCoverageItem = (typeof WarrantyCoverageItem)[keyof typeof WarrantyCoverageItem];
+export const WARRANTY_COVERAGE_ITEMS = Object.values(WarrantyCoverageItem);
+
+/** Items excluded from cover by default (wear-and-tear); everything else is covered. */
+export const DEFAULT_EXCLUDED_COVERAGE_ITEMS: WarrantyCoverageItem[] = [
+  WarrantyCoverageItem.BRAKE_COMPONENTS,
+  WarrantyCoverageItem.ACCESSORIES,
+];
+
+/* ------------------------------------------------------------------ *
+ * Module 9 — Finance & Expense Management
+ * ------------------------------------------------------------------ */
+
+export const ExpenseStatus = {
+  DRAFT: 'DRAFT',
+  PENDING: 'PENDING',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+} as const;
+export type ExpenseStatus = (typeof ExpenseStatus)[keyof typeof ExpenseStatus];
+export const EXPENSE_STATUSES = Object.values(ExpenseStatus);
+
+export const ExpenseAttachmentType = {
+  INVOICE: 'INVOICE',
+  GST_BILL: 'GST_BILL',
+  PHOTO: 'PHOTO',
+  PDF: 'PDF',
+  OTHER: 'OTHER',
+} as const;
+export type ExpenseAttachmentType = (typeof ExpenseAttachmentType)[keyof typeof ExpenseAttachmentType];
+export const EXPENSE_ATTACHMENT_TYPES = Object.values(ExpenseAttachmentType);
+
+export const BankReconStatus = {
+  PENDING: 'PENDING',
+  CLEARED: 'CLEARED',
+  RECONCILED: 'RECONCILED',
+} as const;
+export type BankReconStatus = (typeof BankReconStatus)[keyof typeof BankReconStatus];
+export const BANK_RECON_STATUSES = Object.values(BankReconStatus);
+
+export const VendorStatus = {
+  ACTIVE: 'ACTIVE',
+  INACTIVE: 'INACTIVE',
+} as const;
+export type VendorStatus = (typeof VendorStatus)[keyof typeof VendorStatus];
+export const VENDOR_STATUSES = Object.values(VendorStatus);
+
+/** How a finance transaction was settled. */
+export const FinancePayMethod = {
+  CASH: 'CASH',
+  UPI: 'UPI',
+  CARD: 'CARD',
+  BANK_TRANSFER: 'BANK_TRANSFER',
+  CHEQUE: 'CHEQUE',
+} as const;
+export type FinancePayMethod = (typeof FinancePayMethod)[keyof typeof FinancePayMethod];
+export const FINANCE_PAY_METHODS = Object.values(FinancePayMethod);
+
+export const IncomeSource = {
+  ACCESSORIES: 'ACCESSORIES',
+  INSURANCE_COMMISSION: 'INSURANCE_COMMISSION',
+  FINANCE_COMMISSION: 'FINANCE_COMMISSION',
+  REGISTRATION: 'REGISTRATION',
+  SERVICE: 'SERVICE',
+  AMC: 'AMC',
+  WARRANTY_RECOVERY: 'WARRANTY_RECOVERY',
+  OTHER: 'OTHER',
+} as const;
+export type IncomeSource = (typeof IncomeSource)[keyof typeof IncomeSource];
+export const INCOME_SOURCES = Object.values(IncomeSource);
+
+export const BankTxnType = {
+  DEPOSIT: 'DEPOSIT',
+  WITHDRAWAL: 'WITHDRAWAL',
+  NEFT: 'NEFT',
+  RTGS: 'RTGS',
+  IMPS: 'IMPS',
+  CHEQUE: 'CHEQUE',
+  UPI: 'UPI',
+} as const;
+export type BankTxnType = (typeof BankTxnType)[keyof typeof BankTxnType];
+export const BANK_TXN_TYPES = Object.values(BankTxnType);
+
+/** Whether a bank transaction increases (CREDIT) or decreases (DEBIT) the bank balance. */
+export const BankDirection = {
+  CREDIT: 'CREDIT',
+  DEBIT: 'DEBIT',
+} as const;
+export type BankDirection = (typeof BankDirection)[keyof typeof BankDirection];
+export const BANK_DIRECTIONS = Object.values(BankDirection);
+
+/** The 15 seeded expense categories (custom ones can be added). */
+export const DEFAULT_EXPENSE_CATEGORIES = [
+  'Rent',
+  'Electricity',
+  'Internet',
+  'Salary',
+  'Fuel',
+  'Office',
+  'Marketing',
+  'Repairs',
+  'Maintenance',
+  'Tea & Snacks',
+  'Transportation',
+  'Stationery',
+  'Insurance',
+  'Vehicle Purchase',
+  'Accessories',
+] as const;

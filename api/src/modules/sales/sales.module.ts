@@ -12,6 +12,6 @@ import { SalesPdfService } from './sales-pdf.service';
   imports: [CustomersModule], // for CustomerTimelineService (append to the customer timeline)
   controllers: [QuotationsController, BookingsController, AccessoriesController],
   providers: [QuotationsService, BookingsService, SequenceService, SalesPdfService],
-  exports: [BookingsService, QuotationsService],
+  exports: [BookingsService, QuotationsService, SequenceService],
 })
 export class SalesModule {}

@@ -35,7 +35,7 @@ Core business modules are built **before** the Dashboard so it shows real produc
 
 **Module 7 — Delivery** — checklist, photos, customer photo + signature pad, balance gate + override, Google review reminder. Includes **VIN scan to verify** the correct unit is being handed over.
 
-**Module 8 — Service** — job, complaint, technician, parts, labour, warranty logic, service history, service-due.
+**Module 8 — Service** — job, complaint, technician, parts, labour, warranty logic, service history, service-due. **✅ Delivered as Module 5** (`docs/modules/5-service.md`): full workshop flow, inspection, spare-parts inventory, labour catalogue, billing, 4 PDFs, reports, dashboard widgets, role matrix.
 
 **Module 9 — Expenses** — categorised CRUD, receipts, summary.
 

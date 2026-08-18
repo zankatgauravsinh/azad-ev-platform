@@ -5,7 +5,142 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the pro
 
 ## [Unreleased]
 ### Planned
-- Module 5 — Service.
+- More finance dashboard charts; S3 storage driver for attachments (interface already S3-ready).
+
+## [0.11.0] — 2026-08-04
+Module 9.1 — Finance enhancements. See `docs/modules/9-finance.md`.
+
+### Added
+- **Expense attachments** — upload Invoice / GST Bill / Photo / PDF (≤10 MB) via the shared storage abstraction (`ExpenseAttachment` model, S3-swappable `StorageService`); preview links + delete in a new expense detail dialog.
+- **Approval workflow** — `ExpenseStatus` gains `DRAFT`; flow Draft → Pending → Approved → Paid (`POST /expenses/:id/submit`, existing approve/reject + settle). Create supports "Save as draft".
+- **Recurring expenses** — `RecurringExpense` templates (rent, salary, subscriptions…) with `POST /finance/recurring/run` that generates the month's expenses idempotently (the seam a future scheduler calls); managed from a Recurring dialog.
+- **GST summary** — `GET /finance/gst-summary` (collected vs paid vs net, with a monthly breakdown) + a GST tab and export.
+- **Monthly closing** — `MonthlyClosing` locks a month; every finance mutation (expense/income/bank/adjustment create·update·delete) calls `assertOpen(date)` and 400s inside a locked month. Close/reopen from a Closing tab.
+- **Bank reconciliation** — `BankTransaction.reconStatus` (Pending / Cleared / Reconciled) with `PATCH /bank-transactions/:id/reconcile` and an inline status control.
+- Tests: 6 new finance e2e cases (attachments, approval, recurring idempotency, GST, closing lock/reopen, reconcile). **75 unit + 123 e2e + 9 web** green.
+
+## [0.10.0] — 2026-08-04
+Module 9 — Finance & Expense Management. See `docs/modules/9-finance.md`.
+
+### Added
+- **New `ACCOUNTANT` role** (finance-only access) + models `Vendor`, `ExpenseCategory`, `Expense` (rebuilt from the old stub), `Income`, `BankTransaction`, `CashAdjustment` with enums `ExpenseStatus`/`VendorStatus`/`FinancePayMethod`/`IncomeSource`/`BankTxnType`/`BankDirection`. Indexes on company, number, date, status, category, vendor, payment method, reference. New sequence series (`EXP`/`VND`/`INC`/`BNK`) via the existing `SequenceService`.
+- **Expenses** (`/expenses`): CRUD, approve/reject, settle (clears vendor outstanding), 15 seeded editable categories, branded expense/payment voucher PDF; large-expense + duplicate-expense notifications on create.
+- **Vendors** (`/vendors`): CRUD, computed outstanding + total purchases (grouped, no N+1), ledger with running balance + branded ledger PDF.
+- **Income** (`/income`): CRUD; commission/insurance/accessory/AMC/warranty-recovery income auto-appends to the customer timeline; branded receipt voucher.
+- **Bank** (`/bank-transactions`): deposits, withdrawals, NEFT/RTGS/IMPS/cheque/UPI with credit/debit direction.
+- **Cash Book** (`/finance/cash-book`): opening/in/out/closing computed from cash income, cash expenses, sales/service cash payments, bank deposits/withdrawals and manual adjustments; branded cash-book PDF.
+- **Profit & Loss** (`/finance/pnl`): realtime from Sales, Service, AMC, Income and Expenses — no duplicated calculation.
+- **Finance dashboard** (`/finance/dashboard`): today's collection/expense, cash-in-hand, bank balance, month profit/expense, vendor payable, upcoming payments + monthly/income-vs-expense/category/top-vendor series.
+- **Reports**: `expenses`, `income`, `vendors`, `bank`, `pnl`, `gst` added to the export architecture (PDF/Excel/CSV) — surfaced as per-tab Export menus.
+- **Notifications**: `generate()` adds vendor-payment-due/overdue and low/negative cash-balance candidates (uses `CashbookService`; respects `notifyPayment` + `financeEnabled`).
+- **Company Settings**: `financeEnabled`, `expensePrefix`/`vendorPrefix`/`incomePrefix`/`bankPrefix`, `financeGstRate`, `financialYearStartMonth`, `openingCash`/`openingBank`, `lowCashThreshold`/`largeExpenseThreshold` (+ Settings → Finance tab).
+- **Global search** extended: expense/income/vendor numbers, references and vendor names.
+- **Frontend** `Finance` section (nav + `/finance`): KPI strip + Expenses/Income/Vendors/Bank/Cash Book/P&L tabs, create dialogs, vendor ledger dialog, cash-book day view + manual adjustment, P&L breakdown. Responsive + native-aware PDFs.
+- Security: Owner/Manager/Accountant full; Sales Executive + Technician read-only.
+- Tests: `finance.e2e-spec.ts` (12) + `finance.helpers.spec.ts`. **75 unit + 117 e2e + 9 web** green.
+
+## [0.9.0] — 2026-08-01
+Module 8 — Warranty & AMC. See `docs/modules/8-warranty-amc.md`.
+
+### Added
+- **New models** `Warranty` (with typed JSON `coverage`), `WarrantyClaim`, `FreeService`, `AmcPlan`, `AmcVisit` + enums `WarrantyStatus`/`WarrantyClaimStatus`/`FreeServiceStatus`/`AmcPlanType`/`AmcStatus`. Indexes on `(companyId, status|endDate|customerId)`, `unitId`, `(companyId, claimNumber|amcNumber)` unique. New sequence series (`WR`/`AMC`/`CLM`) via the existing `SequenceService`.
+- **Warranty API** (`/warranties`): list/detail (coverage, free services, claims, AMC, timeline), create (auto-seeds standard coverage + 3 free services and resolves the customer from the vehicle's booking), `POST /generate` (idempotent backfill for delivered vehicles), update coverage/notes/status, cancel, `PATCH /free-service/:id`, dashboard KPIs, branded **warranty certificate PDF**.
+- **Claims API** (`/warranty-claims`): raise, list/filter, approve/reject/complete (a completed claim flips the warranty to `CLAIMED`); auto dealer-cost = claim − OEM recovery; de-duplicated WARRANTY notifications on approve/reject.
+- **AMC API** (`/amc`): create, list/filter, detail with visits, record visit (decrements remaining visits), branded **AMC agreement PDF**.
+- **Reports**: `warranty` + `amc` added to the export architecture (PDF/Excel/CSV) — surfaced as an Export menu on the Warranty page.
+- **Notifications**: `generate()` now sources warranty expiry (90/60/30/7d/expired) from the `Warranty` table, plus AMC expiring/exhausted and free-service-due candidates.
+- **Company Settings**: `warrantyEnabled`, `amcEnabled`, `warrantyReminderDays` (+ `warrantyPrefix`/`amcPrefix`/`claimPrefix`).
+- **Global search** extended: warranty/AMC/claim numbers, battery number (added to unit + warranty search).
+- **Frontend** `Warranty & AMC` section (nav + `/warranty`): KPI strip, Warranties/Claims/AMC tabs with search/filter/pagination, warranty detail dialog (coverage, free services, claims with approve/reject/complete, timeline, certificate), AMC detail dialog (visits + record-visit + agreement), create dialogs. Responsive + native-aware PDF handoff. Customer timelines gain warranty/claim/AMC events automatically.
+- Security: Owner/Manager full; Technician (Service Advisor) warranty + AMC + claims; Sales Executive read-only.
+- Tests: `warranty.e2e-spec.ts` (12) + `warranty.helpers.spec.ts`. **69 unit + 105 e2e + 9 web** green.
+
+## [0.8.0] — 2026-07-31
+Module 7 — Notifications & Reminders. See `docs/modules/7-notifications.md`.
+
+### Added
+- **Company-scoped `Notification`** model (restructured from the unused recipient-scoped one): `type` (Delivery/Payment/Service/Inventory/Customer/Warranty/System), `priority` (Critical/High/Medium/Low), `message`, `dedupeKey`, `archivedAt`, `expiresAt`; indexes on `(companyId, readAt|type|priority|createdAt)`, `expiresAt`, and unique `(companyId, dedupeKey)`.
+- **Notifications API** (all roles, company-scoped): `GET /notifications` (filter by type/priority/unread/archived, `q` search, date range, pagination), `GET /notifications/unread-count`, `POST /notifications/refresh` (auto-generate, de-duplicated), `POST /notifications` (manual), `PATCH /:id/read`, `PATCH /read-all`, `PATCH /:id/archive`, `DELETE /:id`.
+- **Auto-generation** from live data (delivery overdue/today/docs, outstanding payments, service due/overdue, warranty 90/60/30/7d/expired, low/out-of-stock, customer follow-ups) with stable `dedupeKey` de-duplication — the seam a future cron/queue/push will reuse.
+- **Bell + drawer** in the top bar: live unread badge, search, category + unread filter chips, infinite scroll, Today/Yesterday/Earlier grouping, priority colours + category icons, mark-read/all, archive, delete. Portaled to `document.body`; responsive (full-width mobile) + Android back-close + safe-area.
+- **Settings → Notifications**: per-category toggles (`notifyDelivery/Payment/Service/Inventory/Warranty`) + `desktopNotifications`; existing email/SMS/WhatsApp flags kept as future channels.
+- Tests: `notifications.e2e-spec.ts` (generation, dedupe, filters, read/unread, search, archive, delete, authz). 64 unit + 93 e2e + 9 web green.
+
+## [0.7.0] — 2026-07-31
+Module 6 — Reports & Analytics. See `docs/modules/6-reports.md`.
+
+### Added
+- **Reports API** (`/reports/*`, Owner + Manager): `overview` (dealership KPIs + revenue trend + payment mix), `sales` (bookings/delivered/cancelled/revenue, monthly, sales-by-model, rows), `customers` (new/repeat/growth/top buyers), `inventory` (stock, valuation, low stock, intake), `payments` (by mode, 14-day daily collection, outstanding, rows). Optional `from`/`to` date range; Service reports reuse Module 5's `/service/reports`.
+- **Export** `GET /reports/:type/export?format=pdf|excel|csv`. `ExportService` gained CSV (UTF-8 BOM) and its PDF now uses the **branded letterhead + Unicode font** (₹ renders); Excel keeps the navy header.
+- **Reports page** (`/reports`) — tabbed (Overview/Sales/Customers/Inventory/Payments/Service) with a date-range picker + presets, tone-coded KPI cards, charts (`BarChart`, new `HBarList`/`DailyBars`), scrollable tables and PDF/Excel/CSV buttons. Responsive + Android-compatible; nav item enabled. Optional `tone` added to `StatCard` (backward-compatible).
+- Tests: `export.service.spec.ts` (CSV) + `reports.e2e-spec.ts` (payload shapes, DB cross-checks, custom range, exports, authorization). 64 unit + 86 e2e + 9 web green.
+
+### Performance
+- Every metric is an aggregate/groupBy/count or one targeted raw-SQL join (company-scoped) — no N+1; fanned out with `Promise.all` over existing indexes.
+
+### Android (Capacitor) readiness
+Built and ran the app on an Android 13 emulator; verified back button, status bar, splash, keyboard, safe areas, drawer, dialogs, orientation, offline/online, touch, and PDF handling. Fixes (all native-only — desktop web is unchanged):
+- Added Capacitor plugins **App, StatusBar, Keyboard, SplashScreen** + a native init (`lib/native.ts`, no-op on web): hardware **back button** now closes an open dialog/drawer, walks history, and only exits at the root; **status bar** icons follow the theme (dark on light / light on dark); **splash** hidden on mount; **keyboard** uses native resize.
+- **PDF download/view/print** now work on Android: added **Filesystem + Share** so the PDF is written to cache and handed to the OS share/open sheet (view, save to Files/Drive, print). The web `<a download>`/`window.open`/`window.print` paths are unchanged on desktop.
+- **Networking**: set `server.androidScheme: 'http'` (fixes WebView mixed-content blocking of the API) and allowed the Capacitor WebView origins in the API CORS **in non-production only** (desktop `localhost:5173` unchanged).
+- **Camera**: declared `CAMERA` permission so the inventory VIN scanner works on device.
+- Ships a signed (debug-keystore) APK for device testing.
+
+### Responsive / mobile
+- Full responsive audit across 360/390/412/768/1280/1440 — **zero horizontal overflow, no clipped content** on every page. Desktop UX unchanged.
+- Fixed clipped stat-card labels on Customers (mobile grid `grid-cols-3` → `grid-cols-2`).
+- Fixed clipped currency in the dashboard Business Overview on tablet (grid `sm:grid-cols-4` → `lg:grid-cols-4`, so 4-up only where the sidebar leaves room).
+- Dialogs now inset from screen edges on mobile (`w-[calc(100%-2rem)]`); they already scrolled internally within `max-h-[90vh]`. Desktop width (`max-w-lg`) unchanged.
+- **Capacitor safe areas**: added `viewport-fit=cover` and `env(safe-area-inset-*)` insets (top on the header + mobile drawer, bottom on main content + the sticky settings save-bar) so nothing sits under the status bar, notch, or Android nav bar. Insets are 0 in normal browsers, so web/desktop is unaffected.
+
+### PDF infrastructure
+- **Unicode font**: registered DejaVu Sans (Regular + Bold, bundled at `api/src/common/pdf/fonts/`, copied to `dist` via nest-cli assets) and replaced Helvetica across every PDF. **₹, −, ·, ×, ✓ and all UTF-8 now render correctly** (Helvetica lacked the ₹ glyph). Layouts unchanged.
+- **Dynamic letterhead**: PDF branding is no longer hardcoded — a new `PdfBrandService` resolves the letterhead from **Company Settings** (logo, business name, dealer line, address, phones, email, website, GSTIN, tagline) as the single source of truth for all six generators. Uploaded company logo is used when present, else the bundled default.
+- Added `dealerName`, `website`, `tagline` to `CompanySetting` (+ migration, seed, Zod/DTO, Settings UI fields); `phone` now holds multiple comma-separated numbers.
+- Verified by rendering Tax Invoice, Quotation, Service Bill, Inspection Report (Job Card/Estimate share the same helper): correct ₹, single-page, logo undistorted, values sourced from settings. 62 unit + 78 e2e + 9 web tests green.
+
+### Branding
+- New AZAD EV lion-shield logo applied app-wide: favicon, sidebar, login (full logo), Android launcher icons + splash, and the shared `BrandMark`. Oversized source PNGs (13k px / 12–22 MB) optimized to web sizes.
+- **Dashboard** welcome area shows the full logo inline in the header's empty left space (responsive, hidden < md, no loss of usable workspace).
+- **PDF branding** — every generated PDF (Quotation, Tax Invoice, Job Card, Service Estimate, Service Bill, Inspection Report) now shares a branded A4 letterhead and footer via `common/pdf/brand.ts` (logo embedded as base64 so it works regardless of runtime cwd). Header: full logo + AZAD EV POINT + "Authorized Dealer – COMPTECH Electric Vehicles" + phones + POWERING TOMORROW + document meta (GSTIN preserved on tax invoices). Footer: "Thank you for choosing AZAD EV POINT" / POWERING TOMORROW / "Computer-generated document". Logo scaled by width only (no distortion); footer anchored above the bottom margin so single-page documents stay one page. Existing layouts/pagination preserved; 62 unit + 78 e2e + 9 web tests still green.
+
+## [Production Hardening] — 2026-07-28
+Senior-architect hardening pass over all shipped modules before Module 6 — no new business features. Full findings, benchmarks, and risk assessment in `docs/PRODUCTION-READINESS.md` (score 92/100, zero critical). Verified against a running instance and a 100k-row benchmark.
+
+### Security
+- **Production config guard**: the API refuses to boot when `NODE_ENV=production` if JWT secrets are the example values, the access/refresh secrets match, secrets are < 32 chars, or `SEED_OWNER_PASSWORD` is the seeded default (`env.ts`, +6 unit tests).
+- **Strict auth rate limits**: login 10/min, refresh 20/min per IP (global 120/min unchanged); throttling skipped under `NODE_ENV=test`.
+- **Refresh session revoked on password change** — a leaked refresh token can no longer outlive the change.
+- `main.ts` now binds the validated `API_PORT` and only mounts Swagger (`/api/docs`) outside production.
+
+### Reliability
+- **React `ErrorBoundary`** wraps the app: a render error shows a recoverable fallback instead of a blank page.
+
+### Ops / Deployment
+- **Verified** `scripts/backup.sh` + `scripts/restore.sh` (compressed `pg_dump`, 14-day retention, single-transaction restore; strips Prisma's `?schema=` param that libpq rejects). Backup→restore round-trip validated.
+- Added `api/Dockerfile`, `deploy/nginx.conf` (HTTPS-ready), systemd units (`azad-api`, nightly `azad-backup.timer`), and `docs/DEPLOYMENT.md` runbook with a go-live checklist.
+
+### Notes
+- Documented one open MAJOR (unauthenticated UUID-keyed file serving — LAN-safe, fix before public/multi-tenant hosting) and a MINOR `pg_trgm` search-index recommendation for >200k units. No regressions: 62 unit + 78 e2e + 9 web all green; 0 lint warnings; 0 TS errors.
+
+## [0.6.0] — 2026-07-25
+Module 5 — Service & After-Sales Management. See `docs/modules/5-service.md`.
+
+### Added
+- **Service job cards**: rich `ServiceJob` (type FREE_1/2/3·PAID·WARRANTY·REPAIR·INSPECTION, priority, 9-stage workshop status flow with transition guards, check-in/out + delivery stamps, multiple complaints, notes) with `JC…` codes from Company Settings.
+- **Vehicle inspection** (12-item checklist, GOOD/NEEDS_ATTENTION/REPLACED), **spare-parts inventory** (`SparePart`, SKU, min-stock, auto stock decrement on use + restore on removal), **labour catalogue** (`LabourItem`, seeded), **service billing** (parts + labour − discount + GST, payments → PENDING/PARTIAL/PAID), **warranty** validation (vehicle + part, days remaining), **technician assignment** and **customer feedback**.
+- **Free-service tracking** driven by six configurable `CompanySetting` interval fields (500/30, 3000/90, 6000/180).
+- **PDFs**: job card, estimate, service bill, inspection report (`GET /service/jobs/:id/pdf/:doc`, repeatable).
+- **Reports**: `GET /service/reports` — daily, technician performance, revenue, warranty claims, repeat complaints, top replaced parts (all aggregate/groupBy).
+- **Integrations**: customer timeline (8 service events) + Service tab; dashboard `service` block (7 widgets) + populated `serviceDueToday`; global search over job card/complaint/technician; activity log on all mutations; tenant-scoped + soft-delete.
+- **Frontend**: Service list, workshop command-center detail page, Spare Parts management, Service Reports, dashboard widgets, free-service settings, nav entries.
+- Tests: `service-jobs.bill.spec.ts` (unit) + `service.e2e-spec.ts` (17 e2e). Totals: **56 unit + 78 e2e**.
+
+### Role matrix
+- Owner: full · Manager: full (settings read-only) · Technician: assigned jobs only · Sales Executive: read-only.
+
+### Fixed
+- **Invoice download/print.** Generating an invoice hid the button with no way to obtain the PDF. Added `GET /bookings/:id/invoice/pdf` — an idempotent, side-effect-free re-render of the immutable Sale (never regenerates the number or duplicates the record). The booking detail page now shows **View invoice / Download PDF / Print** whenever a Sale exists (persists across refresh) and only shows **Generate invoice** when none does. Download uses an Axios `responseType: 'blob'`; print loads the PDF into a hidden iframe (`printBlob`); view opens it in a new tab (`openBlob`). Regression e2e: PDF blocked before generation (400), duplicate generation rejected (409, single Sale row), repeatable downloads return real `%PDF-` bytes with `Content-Disposition: attachment`.
 
 ## [Company Settings Framework] — 2026-07-25
 A reusable, strongly-typed company-configuration system every module reads from (not a simple settings table). One company = one `CompanySetting` row. See `docs/modules/settings.md`.

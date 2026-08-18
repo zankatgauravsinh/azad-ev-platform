@@ -86,3 +86,16 @@
     font-feature-settings: 'rlig' 1, 'calt' 1;
   }
 }
+
+/*
+ * Capacitor / notch safe areas. `env(safe-area-inset-*)` resolves to 0 in normal
+ * browsers (so desktop/tablet web is unchanged) and to the device insets when
+ * wrapped in Capacitor with viewport-fit=cover. These add padding, so they only
+ * belong on elements without existing padding on that side.
+ */
+@layer utilities {
+  .pt-safe { padding-top: env(safe-area-inset-top); }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+  .pl-safe { padding-left: env(safe-area-inset-left); }
+  .pr-safe { padding-right: env(safe-area-inset-right); }
+}

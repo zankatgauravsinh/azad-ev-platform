@@ -226,7 +226,12 @@ export class CustomersService {
         deliveredAt: d.deliveredAt.toISOString(),
         vin: d.sale.unit.vin,
       })),
-      service: service.map((s) => ({ ...s, createdAt: s.createdAt.toISOString() })),
+      service: service.map((s) => ({
+        id: s.id, code: s.code, status: s.status, type: s.type, priority: s.priority,
+        total: s.total.toString(), technician: s.technician?.name ?? null,
+        complaint: s.complaints.map((c) => c.description).join('; '),
+        createdAt: s.createdAt.toISOString(),
+      })),
       warranty: warrantySales.map((s) => this.toWarranty(s)),
     };
   }

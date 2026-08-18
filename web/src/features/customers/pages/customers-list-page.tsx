@@ -100,7 +100,7 @@ export function CustomersListPage(): JSX.Element {
         actions={<Button onClick={() => { setEditCustomer(undefined); setFormOpen(true); }}><Plus className="h-4 w-4" /> Add customer</Button>}
       />
 
-      <div className="mb-6 grid grid-cols-3 gap-3 sm:grid-cols-3 lg:grid-cols-9">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-9">
         {tiles.map((t) => (
           <StatCard key={t.status} label={t.label} value={t.value} loading={!stats} active={status === t.status} onClick={() => { setStatus(t.status); setPage(1); }} />
         ))}

@@ -8,8 +8,7 @@ import { apiErrorMessage } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { BrandMark } from '@/components/brand/brand-mark';
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 
 export function LoginPage(): JSX.Element {
   const { login } = useAuth();
@@ -40,8 +39,7 @@ export function LoginPage(): JSX.Element {
     <div className="flex min-h-screen items-center justify-center bg-secondary/40 p-4">
       <Card className="w-full max-w-sm shadow-lg">
         <CardHeader className="items-center text-center">
-          <BrandMark className="mb-2 h-12 w-12" />
-          <CardTitle className="text-xl">AZAD EV POINT</CardTitle>
+          <img src="/logo.png" alt="AZAD EV" className="mb-2 h-auto w-48" />
           <CardDescription>Sign in to the showroom dashboard</CardDescription>
         </CardHeader>
         <CardContent>

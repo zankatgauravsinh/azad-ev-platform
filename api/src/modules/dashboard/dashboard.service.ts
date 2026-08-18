@@ -9,7 +9,9 @@ import {
   type DashboardSummary,
   type RecentActivityItem,
   type ReminderItem,
+  type ServiceDashboard,
   type TodaysWork,
+  type UpcomingFreeService,
 } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
@@ -33,20 +35,21 @@ export class DashboardService {
     // Raw SQL bypasses the Prisma tenant middleware, so scope it explicitly.
     const company = this.tenant.requireCompanyId();
 
-    const [todaysWork, businessOverview, recentActivity, reminders, charts] = await Promise.all([
+    const [todaysWork, businessOverview, service, recentActivity, reminders, charts] = await Promise.all([
       this.todaysWork(todayStart, todayEnd, company),
       this.businessOverview(todayStart, todayEnd, monthStart),
+      this.service(todayStart, todayEnd, company),
       this.recentActivity(),
       this.reminders(todayStart, company),
       this.charts(company),
     ]);
 
-    return { todaysWork, businessOverview, recentActivity, reminders, charts, generatedAt: now.toISOString() };
+    return { todaysWork, businessOverview, service, recentActivity, reminders, charts, generatedAt: now.toISOString() };
   }
 
   // ── Section 1: Today's work ─────────────────────────────
   private async todaysWork(todayStart: Date, todayEnd: Date, company: string): Promise<TodaysWork> {
-    const [deliveries, followUps, pending, pendingFinance, pendingInsurance, lowInv, overdue] = await Promise.all([
+    const [deliveries, followUps, pending, pendingFinance, pendingInsurance, lowInv, overdue, serviceDue] = await Promise.all([
       this.prisma.booking.count({ where: { status: { not: 'CANCELLED' }, actualDelivery: null, expectedDelivery: { gte: todayStart, lt: todayEnd } } }),
       this.prisma.customerFollowUp.count({ where: { status: 'PENDING', dueAt: { gte: todayStart, lt: todayEnd } } }),
       this.prisma.$queryRaw<{ count: number; balance: bigint }[]>`
@@ -61,6 +64,7 @@ export class DashboardService {
         LEFT JOIN (SELECT v."modelId", COUNT(*) c FROM "InventoryUnit" u JOIN "ScooterVariant" v ON v.id = u."variantId" WHERE u.status = 'AVAILABLE' AND u."deletedAt" IS NULL AND u."companyId" = ${company} GROUP BY v."modelId") a ON a."modelId" = m.id
         WHERE m."isActive" = true AND m."companyId" = ${company} AND COALESCE(a.c, 0) <= ${LOW_STOCK}`,
       this.prisma.booking.count({ where: { status: { not: 'CANCELLED' }, actualDelivery: null, expectedDelivery: { lt: todayStart } } }),
+      this.prisma.serviceJob.count({ where: { status: { notIn: ['DELIVERED', 'CANCELLED'] }, scheduledDate: { gte: todayStart, lt: todayEnd } } }),
     ]);
 
     return {
@@ -69,10 +73,74 @@ export class DashboardService {
       pendingPayments: { count: Number(pending[0]?.count ?? 0), amount: (pending[0]?.balance ?? 0n).toString() },
       pendingFinanceApprovals: pendingFinance,
       pendingInsurance,
-      serviceDueToday: 0, // Service module (Module 5) will populate this.
+      serviceDueToday: serviceDue,
       lowInventory: Number(lowInv[0]?.count ?? 0),
       overdueBookings: overdue,
     };
+  }
+
+  // ── Section: Service control center ─────────────────────
+  private async service(todayStart: Date, todayEnd: Date, company: string): Promise<ServiceDashboard> {
+    const OPEN = { notIn: ['DELIVERED', 'CANCELLED'] as ('DELIVERED' | 'CANCELLED')[] };
+    const [todaysServices, overdueServices, readyForDelivery, pendingQualityCheck, lowParts, workload, techs] = await Promise.all([
+      this.prisma.serviceJob.count({ where: { status: OPEN, scheduledDate: { gte: todayStart, lt: todayEnd } } }),
+      this.prisma.serviceJob.count({ where: { status: OPEN, expectedDelivery: { lt: todayStart } } }),
+      this.prisma.serviceJob.count({ where: { status: 'READY' } }),
+      this.prisma.serviceJob.count({ where: { status: 'QUALITY_CHECK' } }),
+      this.prisma.$queryRaw<{ count: number }[]>`SELECT COUNT(*)::int AS count FROM "SparePart" WHERE "deletedAt" IS NULL AND "companyId" = ${company} AND quantity <= "minStock"`,
+      this.prisma.serviceJob.groupBy({ by: ['technicianId'], where: { status: OPEN, technicianId: { not: null } }, _count: { _all: true } }),
+      this.prisma.user.findMany({ where: { role: 'TECHNICIAN' }, select: { id: true, name: true } }),
+    ]);
+    const loadMap = new Map(workload.map((w) => [w.technicianId, w._count._all]));
+    return {
+      todaysServices,
+      overdueServices,
+      readyForDelivery,
+      pendingQualityCheck,
+      lowPartsStock: Number(lowParts[0]?.count ?? 0),
+      technicianWorkload: techs.map((t) => ({ technicianId: t.id, name: t.name, openJobs: loadMap.get(t.id) ?? 0 })).sort((a, b) => b.openJobs - a.openJobs),
+      upcomingFreeServices: await this.upcomingFreeServices(),
+    };
+  }
+
+  /**
+   * Free-service reminders: for each delivered vehicle, the next free service
+   * (1st/2nd/3rd) that has not yet been done and whose due date (delivery +
+   * configured interval days) falls within the reminder window.
+   */
+  private async upcomingFreeServices(): Promise<UpcomingFreeService[]> {
+    const settings = await this.prisma.companySetting.findFirst();
+    if (!settings) return []; // a company without configured settings has no reminders yet
+    const windowDays = settings.serviceReminderDays;
+    const now = Date.now();
+    const horizon = now + windowDays * 86_400_000;
+    const intervals: { type: 'FREE_1' | 'FREE_2' | 'FREE_3'; label: string; days: number }[] = [
+      { type: 'FREE_1', label: '1st Free Service', days: settings.freeService1Days },
+      { type: 'FREE_2', label: '2nd Free Service', days: settings.freeService2Days },
+      { type: 'FREE_3', label: '3rd Free Service', days: settings.freeService3Days },
+    ];
+    const delivered = await this.prisma.booking.findMany({
+      where: { status: { not: 'CANCELLED' }, actualDelivery: { not: null } },
+      select: {
+        actualDelivery: true,
+        customer: { select: { id: true, name: true } },
+        unit: { select: { id: true, vin: true, serviceJobs: { select: { type: true } } } },
+      },
+      orderBy: { actualDelivery: 'desc' },
+      take: 200,
+    });
+    const out: UpcomingFreeService[] = [];
+    for (const b of delivered) {
+      if (!b.actualDelivery) continue;
+      const doneTypes = new Set(b.unit.serviceJobs.map((s) => s.type));
+      const next = intervals.find((i) => !doneTypes.has(i.type));
+      if (!next) continue;
+      const due = b.actualDelivery.getTime() + next.days * 86_400_000;
+      if (due <= horizon) {
+        out.push({ customerId: b.customer.id, customer: b.customer.name, vin: b.unit.vin, service: next.label, dueDate: new Date(due).toISOString() });
+      }
+    }
+    return out.sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 10);
   }
 
   // ── Section 2: Business overview ────────────────────────

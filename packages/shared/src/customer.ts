@@ -210,7 +210,7 @@ export interface CustomerRelated {
   bookings: { id: string; code: string; status: string; createdAt: string }[];
   payments: { id: string; amount: string; mode: string; context: string; paidAt: string }[];
   deliveries: { id: string; saleId: string; deliveredAt: string; vin: string }[];
-  service: { id: string; code: string; status: string; complaint: string; createdAt: string }[];
+  service: { id: string; code: string; status: string; type: string; priority: string; total: string; technician: string | null; complaint: string; createdAt: string }[];
   warranty: WarrantyDto[];
 }
 export interface FollowUpReminders {

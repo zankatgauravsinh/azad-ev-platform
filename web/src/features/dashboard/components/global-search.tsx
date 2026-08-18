@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Bike, ClipboardList, FileText, Search, User } from 'lucide-react';
+import { Bike, ClipboardList, FileText, Search, ShieldCheck, User, Wallet, Wrench } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,7 +26,7 @@ export function GlobalSearch(): JSX.Element {
   useEffect(() => { if (!open) setQ(''); }, [open]);
 
   const go = (href: string): void => { setOpen(false); navigate(href); };
-  const empty = data && data.customers.length + data.units.length + data.bookings.length + data.invoices.length === 0;
+  const empty = data && data.customers.length + data.units.length + data.bookings.length + data.invoices.length + data.serviceJobs.length + data.warranties.length + data.amc.length + data.expenses.length + data.vendors.length + data.income.length === 0;
 
   return (
     <>
@@ -50,6 +50,12 @@ export function GlobalSearch(): JSX.Element {
                 <Group title="Vehicles" icon={Bike} rows={data.units.map((u) => ({ id: u.id, main: u.vin, sub: `${u.model} · ${u.status}`, href: `/inventory/${u.id}` }))} onGo={go} />
                 <Group title="Bookings" icon={ClipboardList} rows={data.bookings.map((b) => ({ id: b.id, main: b.code, sub: `${b.customer} · ${b.status}`, href: `/bookings/${b.id}` }))} onGo={go} />
                 <Group title="Invoices" icon={FileText} rows={data.invoices.map((s) => ({ id: s.id, main: s.invoiceNumber, sub: s.customer, href: '/bookings' }))} onGo={go} />
+                <Group title="Service" icon={Wrench} rows={data.serviceJobs.map((j) => ({ id: j.id, main: j.code, sub: `${j.customer} · ${j.status}`, href: `/service/${j.id}` }))} onGo={go} />
+                <Group title="Warranties" icon={ShieldCheck} rows={data.warranties.map((w) => ({ id: w.id, main: w.warrantyNumber, sub: `${w.customer} · ${w.status}`, href: '/warranty' }))} onGo={go} />
+                <Group title="AMC" icon={ShieldCheck} rows={data.amc.map((a) => ({ id: a.id, main: a.amcNumber, sub: `${a.customer} · ${a.status}`, href: '/warranty' }))} onGo={go} />
+                <Group title="Expenses" icon={Wallet} rows={data.expenses.map((e) => ({ id: e.id, main: e.expenseNumber, sub: e.category, href: '/finance' }))} onGo={go} />
+                <Group title="Vendors" icon={Wallet} rows={data.vendors.map((v) => ({ id: v.id, main: v.vendorNumber, sub: v.name, href: '/finance' }))} onGo={go} />
+                <Group title="Income" icon={Wallet} rows={data.income.map((i) => ({ id: i.id, main: i.incomeNumber, sub: i.source, href: '/finance' }))} onGo={go} />
               </div>
             )}
           </div>

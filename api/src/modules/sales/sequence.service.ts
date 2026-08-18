@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
-type SequenceKind = 'quotation' | 'booking' | 'invoice' | 'receipt' | 'service';
+type SequenceKind = 'quotation' | 'booking' | 'invoice' | 'receipt' | 'service' | 'warranty' | 'amc' | 'claim' | 'expense' | 'vendor' | 'income' | 'bank';
 
 // Which CompanySetting prefix + InvoiceSetting counter each document series uses.
 const FIELDS: Record<SequenceKind, { prefix: keyof Prisma.CompanySettingUpdateInput; counter: keyof Prisma.InvoiceSettingUpdateInput }> = {
@@ -11,6 +11,13 @@ const FIELDS: Record<SequenceKind, { prefix: keyof Prisma.CompanySettingUpdateIn
   invoice: { prefix: 'invoicePrefix', counter: 'nextInvoiceNumber' },
   receipt: { prefix: 'receiptPrefix', counter: 'nextReceiptNumber' },
   service: { prefix: 'jobCardPrefix', counter: 'nextServiceNumber' },
+  warranty: { prefix: 'warrantyPrefix', counter: 'nextWarrantyNumber' },
+  amc: { prefix: 'amcPrefix', counter: 'nextAmcNumber' },
+  claim: { prefix: 'claimPrefix', counter: 'nextClaimNumber' },
+  expense: { prefix: 'expensePrefix', counter: 'nextExpenseNumber' },
+  vendor: { prefix: 'vendorPrefix', counter: 'nextVendorNumber' },
+  income: { prefix: 'incomePrefix', counter: 'nextIncomeNumber' },
+  bank: { prefix: 'bankPrefix', counter: 'nextBankNumber' },
 };
 
 /**

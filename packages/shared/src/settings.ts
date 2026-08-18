@@ -21,11 +21,14 @@ export const updateCompanySettingsSchema = z
     // Business
     businessName: z.string().trim().min(1, 'Business name is required').max(120).optional(),
     legalName: optionalText(120),
+    dealerName: optionalText(150),
     address: optionalText(300),
     city: optionalText(80),
     state: optionalText(80),
-    phone: z.string().trim().max(20).optional(),
+    phone: z.string().trim().max(80).optional(),
     email: z.string().trim().email('Invalid email').or(z.literal('')).optional(),
+    website: optionalText(150),
+    tagline: z.string().trim().max(60).optional(),
     // Localization
     currency: z.enum(CURRENCIES).optional(),
     timezone: z.string().trim().min(1).max(64).optional(),
@@ -45,6 +48,28 @@ export const updateCompanySettingsSchema = z
     // Sales / Service
     defaultWarrantyMonths: z.coerce.number().int().min(0).max(240).optional(),
     serviceReminderDays: z.coerce.number().int().min(0).max(365).optional(),
+    // Warranty & AMC (Module 8)
+    warrantyEnabled: z.boolean().optional(),
+    amcEnabled: z.boolean().optional(),
+    warrantyReminderDays: z.coerce.number().int().min(1).max(365).optional(),
+    // Finance (Module 9)
+    financeEnabled: z.boolean().optional(),
+    expensePrefix: prefix('Expense prefix').optional(),
+    vendorPrefix: prefix('Vendor prefix').optional(),
+    incomePrefix: prefix('Income prefix').optional(),
+    bankPrefix: prefix('Bank prefix').optional(),
+    financeGstRate: z.coerce.number().min(0).max(100).optional(),
+    financialYearStartMonth: z.coerce.number().int().min(1).max(12).optional(),
+    openingCash: z.coerce.number().int().min(0).optional(),
+    openingBank: z.coerce.number().int().min(0).optional(),
+    lowCashThreshold: z.coerce.number().int().min(0).optional(),
+    largeExpenseThreshold: z.coerce.number().int().min(0).optional(),
+    freeService1Km: z.coerce.number().int().min(0).max(100000).optional(),
+    freeService1Days: z.coerce.number().int().min(0).max(3650).optional(),
+    freeService2Km: z.coerce.number().int().min(0).max(100000).optional(),
+    freeService2Days: z.coerce.number().int().min(0).max(3650).optional(),
+    freeService3Km: z.coerce.number().int().min(0).max(100000).optional(),
+    freeService3Days: z.coerce.number().int().min(0).max(3650).optional(),
     // Branding
     primaryColor: hexColor.optional(),
     secondaryColor: hexColor.optional(),
@@ -52,6 +77,12 @@ export const updateCompanySettingsSchema = z
     workingDays: z.array(z.enum(WEEKDAYS)).max(7).optional(),
     workingHours: z.string().trim().regex(/^\d{2}:\d{2}-\d{2}:\d{2}$/, 'Use HH:MM-HH:MM').optional(),
     // Notifications
+    notifyDelivery: z.boolean().optional(),
+    notifyPayment: z.boolean().optional(),
+    notifyService: z.boolean().optional(),
+    notifyInventory: z.boolean().optional(),
+    notifyWarranty: z.boolean().optional(),
+    desktopNotifications: z.boolean().optional(),
     emailEnabled: z.boolean().optional(),
     smsEnabled: z.boolean().optional(),
     whatsappEnabled: z.boolean().optional(),
@@ -72,11 +103,14 @@ export interface CompanySettingsDto {
   id: string;
   businessName: string;
   legalName: string;
+  dealerName: string | null;
   address: string | null;
   city: string;
   state: string;
   phone: string | null;
   email: string | null;
+  website: string | null;
+  tagline: string;
   currency: string;
   timezone: string;
   language: string;
@@ -92,6 +126,26 @@ export interface CompanySettingsDto {
   jobCardPrefix: string;
   defaultWarrantyMonths: number;
   serviceReminderDays: number;
+  warrantyEnabled: boolean;
+  amcEnabled: boolean;
+  warrantyReminderDays: number;
+  financeEnabled: boolean;
+  expensePrefix: string;
+  vendorPrefix: string;
+  incomePrefix: string;
+  bankPrefix: string;
+  financeGstRate: number;
+  financialYearStartMonth: number;
+  openingCash: string;
+  openingBank: string;
+  lowCashThreshold: string;
+  largeExpenseThreshold: string;
+  freeService1Km: number;
+  freeService1Days: number;
+  freeService2Km: number;
+  freeService2Days: number;
+  freeService3Km: number;
+  freeService3Days: number;
   companyLogo: string | null;
   companyLogoUrl: string | null;
   favicon: string | null;
@@ -100,6 +154,12 @@ export interface CompanySettingsDto {
   secondaryColor: string;
   workingDays: string[];
   workingHours: string;
+  notifyDelivery: boolean;
+  notifyPayment: boolean;
+  notifyService: boolean;
+  notifyInventory: boolean;
+  notifyWarranty: boolean;
+  desktopNotifications: boolean;
   emailEnabled: boolean;
   smsEnabled: boolean;
   whatsappEnabled: boolean;

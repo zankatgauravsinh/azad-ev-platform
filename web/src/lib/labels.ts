@@ -8,6 +8,8 @@ import {
   PaymentStatus,
   QuotationStatus,
   Role,
+  ServicePriority,
+  ServiceStatus,
   UnitStatus,
 } from '@azad/shared';
 
@@ -16,6 +18,7 @@ const ROLE_LABELS: Record<Role, string> = {
   [Role.MANAGER]: 'Manager',
   [Role.SALES_EXECUTIVE]: 'Sales Executive',
   [Role.TECHNICIAN]: 'Technician',
+  [Role.ACCOUNTANT]: 'Accountant',
 };
 
 export function roleLabel(role: Role): string {
@@ -115,6 +118,27 @@ const INSURANCE_TONE: Record<InsuranceStatus, BadgeTone> = {
   [InsuranceStatus.CANCELLED]: 'destructive',
 };
 export const insuranceTone = (s: InsuranceStatus): BadgeTone => INSURANCE_TONE[s] ?? 'muted';
+
+const SERVICE_TONE: Record<ServiceStatus, BadgeTone> = {
+  [ServiceStatus.BOOKED]: 'muted',
+  [ServiceStatus.CHECKED_IN]: 'info',
+  [ServiceStatus.DIAGNOSIS]: 'info',
+  [ServiceStatus.WAITING_FOR_PARTS]: 'warning',
+  [ServiceStatus.REPAIRING]: 'accent',
+  [ServiceStatus.QUALITY_CHECK]: 'warning',
+  [ServiceStatus.READY]: 'success',
+  [ServiceStatus.DELIVERED]: 'success',
+  [ServiceStatus.CANCELLED]: 'destructive',
+};
+export const serviceTone = (s: ServiceStatus): BadgeTone => SERVICE_TONE[s] ?? 'muted';
+
+const SERVICE_PRIORITY_TONE: Record<ServicePriority, BadgeTone> = {
+  [ServicePriority.LOW]: 'muted',
+  [ServicePriority.MEDIUM]: 'info',
+  [ServicePriority.HIGH]: 'warning',
+  [ServicePriority.EMERGENCY]: 'destructive',
+};
+export const servicePriorityTone = (s: ServicePriority): BadgeTone => SERVICE_PRIORITY_TONE[s] ?? 'muted';
 
 export const titleCase = (s: string): string =>
   s.toLowerCase().split('_').map((w) => w[0]?.toUpperCase() + w.slice(1)).join(' ');

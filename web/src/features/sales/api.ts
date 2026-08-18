@@ -130,4 +130,5 @@ export const salesApi = {
   scheduleDelivery: async (id: string, input: ScheduleDeliveryInput): Promise<BookingDto> => (await apiClient.post(`/bookings/${id}/schedule-delivery`, input)).data,
   deliver: async (id: string): Promise<BookingDto> => (await apiClient.post(`/bookings/${id}/deliver`, {})).data,
   generateInvoice: async (id: string): Promise<BookingDto> => (await apiClient.post(`/bookings/${id}/invoice`, {})).data,
+  invoicePdf: async (id: string): Promise<Blob> => (await apiClient.get(`/bookings/${id}/invoice/pdf`, { responseType: 'blob' })).data,
 };

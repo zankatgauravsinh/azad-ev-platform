@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import {
   addPaymentSchema,
   cancelBookingSchema,
@@ -130,5 +131,16 @@ export class BookingsController {
   @ApiResponse({ status: 409, description: 'An invoice already exists' })
   invoice(@Param('id') id: string, @CurrentUser('id') userId: string) {
     return this.bookings.generateInvoice(id, userId);
+  }
+
+  @Get(':id/invoice/pdf')
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOperation({ summary: 'Download the generated invoice as a PDF (repeatable; never regenerates)' })
+  @ApiResponse({ status: 400, description: 'No invoice has been generated yet' })
+  async invoicePdf(@Param('id') id: string, @Res() res: Response): Promise<void> {
+    const { buffer, filename } = await this.bookings.invoicePdf(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
   }
 }

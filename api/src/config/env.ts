@@ -24,6 +24,32 @@ export const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
+/** Placeholder values shipped in .env.example — must never reach production. */
+const INSECURE_DEFAULTS = {
+  JWT_ACCESS_SECRET: 'change-me-access-secret-in-production',
+  JWT_REFRESH_SECRET: 'change-me-refresh-secret-in-production',
+  SEED_OWNER_PASSWORD: 'Azad@12345',
+} as const;
+
+/**
+ * In production the app must refuse to boot with example secrets, reused
+ * access/refresh secrets, or the seeded owner password — these are the most
+ * common real-world deployment mistakes.
+ */
+function assertProductionHardening(env: Env): void {
+  if (env.NODE_ENV !== 'production') return;
+  const errors: string[] = [];
+  if (env.JWT_ACCESS_SECRET === INSECURE_DEFAULTS.JWT_ACCESS_SECRET) errors.push('JWT_ACCESS_SECRET is still the example value');
+  if (env.JWT_REFRESH_SECRET === INSECURE_DEFAULTS.JWT_REFRESH_SECRET) errors.push('JWT_REFRESH_SECRET is still the example value');
+  if (env.JWT_ACCESS_SECRET === env.JWT_REFRESH_SECRET) errors.push('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must differ');
+  if (env.JWT_ACCESS_SECRET.length < 32) errors.push('JWT_ACCESS_SECRET must be at least 32 characters in production');
+  if (env.JWT_REFRESH_SECRET.length < 32) errors.push('JWT_REFRESH_SECRET must be at least 32 characters in production');
+  if (env.SEED_OWNER_PASSWORD === INSECURE_DEFAULTS.SEED_OWNER_PASSWORD) errors.push('SEED_OWNER_PASSWORD is still the example value');
+  if (errors.length > 0) {
+    throw new Error(`Insecure production configuration:\n${errors.map((e) => `  - ${e}`).join('\n')}`);
+  }
+}
+
 export function validateEnv(raw: Record<string, unknown>): Env {
   const parsed = envSchema.safeParse(raw);
   if (!parsed.success) {
@@ -32,5 +58,6 @@ export function validateEnv(raw: Record<string, unknown>): Env {
       .join('\n');
     throw new Error(`Invalid environment configuration:\n${issues}`);
   }
+  assertProductionHardening(parsed.data);
   return parsed.data;
 }

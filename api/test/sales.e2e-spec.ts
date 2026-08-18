@@ -13,6 +13,7 @@ describe('Sales domain (e2e)', () => {
   let unitId: string;
   let variantId: string;
   let bookingId: string;
+  let invoiceNumber: string;
   const stamp = Date.now().toString().slice(-8);
   const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
   const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
@@ -111,14 +112,47 @@ describe('Sales domain (e2e)', () => {
     await http().post(`/api/v1/bookings/${bookingId}/deliver`).set('Authorization', auth()).send({}).expect(400);
   });
 
+  it('blocks invoice PDF download before the invoice is generated (400)', async () => {
+    await http().get(`/api/v1/bookings/${bookingId}/invoice/pdf`).set('Authorization', auth()).expect(400);
+  });
+
   it('generates the invoice (booking → Converted) then delivers (unit → Delivered)', async () => {
     const invoiced = await http().post(`/api/v1/bookings/${bookingId}/invoice`).set('Authorization', auth()).send({}).expect(201);
     expect(invoiced.body.status).toBe('CONVERTED');
     expect(invoiced.body.sale.invoiceNumber).toBeTruthy();
+    invoiceNumber = invoiced.body.sale.invoiceNumber;
 
     await http().post(`/api/v1/bookings/${bookingId}/deliver`).set('Authorization', auth()).send({}).expect(201);
     const unit = await http().get(`/api/v1/inventory/units/${unitId}`).set('Authorization', auth()).expect(200);
     expect(unit.body.status).toBe('DELIVERED');
+  });
+
+  it('generating the invoice a second time is rejected (409) — no duplicate, number immutable', async () => {
+    await http().post(`/api/v1/bookings/${bookingId}/invoice`).set('Authorization', auth()).send({}).expect(409);
+    const booking = await http().get(`/api/v1/bookings/${bookingId}`).set('Authorization', auth()).expect(200);
+    expect(booking.body.sale.invoiceNumber).toBe(invoiceNumber);
+    const sales = await prisma.sale.count({ where: { bookingId } });
+    expect(sales).toBe(1);
+  });
+
+  it('downloads the invoice PDF (attachment headers, real PDF bytes)', async () => {
+    const res = await http().get(`/api/v1/bookings/${bookingId}/invoice/pdf`).set('Authorization', auth()).buffer(true).expect(200);
+    expect(res.headers['content-type']).toContain('application/pdf');
+    expect(res.headers['content-disposition']).toContain('attachment');
+    expect(res.headers['content-disposition']).toContain(invoiceNumber.replace(/\//g, '-'));
+    expect(res.body.length).toBeGreaterThan(500);
+    expect(res.body.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('downloads the invoice PDF repeatedly without regenerating (same number, still one Sale)', async () => {
+    for (let i = 0; i < 3; i += 1) {
+      const res = await http().get(`/api/v1/bookings/${bookingId}/invoice/pdf`).set('Authorization', auth()).buffer(true).expect(200);
+      expect(res.body.subarray(0, 5).toString()).toBe('%PDF-');
+    }
+    // A page refresh re-reads the booking: the invoice actions persist and the record is unchanged.
+    const refreshed = await http().get(`/api/v1/bookings/${bookingId}`).set('Authorization', auth()).expect(200);
+    expect(refreshed.body.sale.invoiceNumber).toBe(invoiceNumber);
+    expect(await prisma.sale.count({ where: { bookingId } })).toBe(1);
   });
 
   it('generates the full customer timeline for the pipeline', async () => {

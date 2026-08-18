@@ -1,0 +1,10 @@
+# Nightly trigger for azad-backup.service (02:30 local, with catch-up if missed).
+[Unit]
+Description=Run AZAD EV POINT database backup nightly
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

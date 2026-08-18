@@ -16,8 +16,14 @@ import { UploadsModule } from './uploads/uploads.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { SalesModule } from './modules/sales/sales.module';
+import { ServiceModule } from './modules/service/service.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { ReportsModule } from './modules/reports/reports.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { WarrantyModule } from './modules/warranty/warranty.module';
+import { FinanceModule } from './modules/finance/finance.module';
 import { CompanySettingsModule } from './modules/settings/company-settings.module';
+import { PdfBrandModule } from './common/pdf/pdf-brand.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -27,7 +33,11 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
   imports: [
     AppConfigModule,
     TenantModule,
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60_000, limit: 120 }],
+      // Rate limiting would make the serial e2e suite (many logins from one IP) flaky.
+      skipIf: () => process.env.NODE_ENV === 'test',
+    }),
     PrismaModule,
     StorageModule,
     ExportModule,
@@ -39,8 +49,14 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     InventoryModule,
     CustomersModule,
     SalesModule,
+    ServiceModule,
     DashboardModule,
+    ReportsModule,
+    NotificationsModule,
+    WarrantyModule,
+    FinanceModule,
     CompanySettingsModule,
+    PdfBrandModule,
   ],
   providers: [
     // Order matters: authenticate → throttle → authorize.
