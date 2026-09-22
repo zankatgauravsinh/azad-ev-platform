@@ -144,6 +144,13 @@ export class CustomersService {
 
   async remove(id: string, userId: string): Promise<void> {
     const customer = await this.getById(id);
+    const active = await this.repo.activeRelationCounts(id);
+    if (active.bookings > 0 || active.serviceJobs > 0) {
+      const parts: string[] = [];
+      if (active.bookings > 0) parts.push(`${active.bookings} open booking(s)`);
+      if (active.serviceJobs > 0) parts.push(`${active.serviceJobs} open service job(s)`);
+      throw new ConflictException(`Cannot delete ${customer.name}: ${parts.join(' and ')} still active — close or cancel them first`);
+    }
     await this.repo.softDelete(id);
     await this.activityLog.record({
       actorId: userId,
