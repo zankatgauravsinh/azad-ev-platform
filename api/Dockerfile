@@ -19,6 +19,9 @@ RUN npm run build --workspace @azad/shared
 COPY api api
 RUN npx prisma generate --schema api/prisma/schema.prisma \
  && npm run build --workspace api
+# Drop dev deps for a lean runtime. The `prisma` CLI is a runtime dependency
+# (not a devDependency), so it survives this prune and the boot-time
+# `prisma migrate deploy` below can run.
 RUN npm prune --omit=dev
 
 # ---------- runtime ----------
