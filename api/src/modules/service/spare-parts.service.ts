@@ -81,8 +81,12 @@ export class SparePartsService {
   async adjustStock(id: string, delta: number, reason: string | undefined, userId: string): Promise<SparePartDto> {
     const part = await this.prisma.sparePart.findFirst({ where: { id } });
     if (!part) throw new NotFoundException('Spare part not found');
-    if (part.quantity + delta < 0) throw new BadRequestException('Stock cannot go negative');
-    const updated = await this.prisma.sparePart.update({ where: { id }, data: { quantity: { increment: delta }, updatedById: userId } });
+    // Atomic guarded adjustment: for a decrement, only apply if enough stock remains,
+    // so concurrent adjustments can't drive quantity below zero.
+    const guard = delta < 0 ? { quantity: { gte: -delta } } : {};
+    const adjusted = await this.prisma.sparePart.updateMany({ where: { id, ...guard }, data: { quantity: { increment: delta }, updatedById: userId } });
+    if (adjusted.count !== 1) throw new BadRequestException('Stock cannot go negative');
+    const updated = await this.prisma.sparePart.findFirstOrThrow({ where: { id } });
     await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'SparePart', entityId: id, summary: `Stock ${delta >= 0 ? '+' : ''}${delta} for ${part.name}${reason ? ` (${reason})` : ''}` });
     return this.toDto(updated);
   }

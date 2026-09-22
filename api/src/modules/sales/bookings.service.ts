@@ -403,12 +403,20 @@ export class BookingsService {
 
   /** Allocate a specific VIN to a booking — the unit must be AVAILABLE (prevents double allocation). */
   private async allocateUnit(tx: Tx, unitId: string, bookingCode: string, userId: string, _customerId: string): Promise<void> {
-    const unit = await tx.inventoryUnit.findFirst({ where: { id: unitId } });
-    if (!unit) throw new NotFoundException('Scooter not found');
-    if (unit.status !== UnitStatus.AVAILABLE) {
+    // Atomic claim: flip AVAILABLE → BOOKED in one guarded write so two concurrent
+    // bookings can't both grab the same unit (count === 1 means we won the race).
+    const claimed = await tx.inventoryUnit.updateMany({
+      where: { id: unitId, status: UnitStatus.AVAILABLE },
+      data: { status: UnitStatus.BOOKED, updatedById: userId },
+    });
+    if (claimed.count !== 1) {
+      const unit = await tx.inventoryUnit.findFirst({ where: { id: unitId }, select: { vin: true, status: true } });
+      if (!unit) throw new NotFoundException('Scooter not found');
       throw new ConflictException(`Scooter ${unit.vin} is not available (currently ${unit.status})`);
     }
-    await this.transitionUnit(tx, unitId, UnitStatus.BOOKED, userId, `Allocated to booking ${bookingCode}`);
+    await tx.inventoryEvent.create({
+      data: { unitId, fromStatus: UnitStatus.AVAILABLE, toStatus: UnitStatus.BOOKED, note: `Allocated to booking ${bookingCode}`, createdById: userId },
+    });
   }
 
   private async releaseUnit(tx: Tx, unitId: string, userId: string, note: string): Promise<void> {

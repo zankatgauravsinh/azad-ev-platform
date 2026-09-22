@@ -274,12 +274,13 @@ export class ServiceJobsService {
       if (dto.sparePartId) {
         const part = await tx.sparePart.findFirst({ where: { id: dto.sparePartId } });
         if (!part) throw new NotFoundException('Spare part not found');
-        if (part.quantity < dto.qty) throw new BadRequestException(`Only ${part.quantity} of ${part.name} in stock`);
         name = name || part.name;
         if (!dto.unitCost) unitCost = part.cost;
         if (!dto.unitPrice) unitPrice = part.sellingPrice;
         if (part.warrantyMonths > 0) warranty = true;
-        await tx.sparePart.update({ where: { id: part.id }, data: { quantity: { decrement: dto.qty }, updatedById: actor.id } });
+        // Atomic guarded decrement so concurrent consumption can't drive stock negative.
+        const decremented = await tx.sparePart.updateMany({ where: { id: part.id, quantity: { gte: dto.qty } }, data: { quantity: { decrement: dto.qty }, updatedById: actor.id } });
+        if (decremented.count !== 1) throw new BadRequestException(`Only ${part.quantity} of ${part.name} in stock`);
       }
       await tx.servicePart.create({ data: { serviceJobId: id, sparePartId: dto.sparePartId ?? null, name, qty: dto.qty, unitCost, unitPrice, warranty, createdById: actor.id, updatedById: actor.id } });
       await this.recompute(tx, id);
