@@ -132,11 +132,15 @@ export class DeliveryService {
 
     const delivery = await this.prisma.delivery.findFirst({ where: { sale: { bookingId } }, select: { id: true } });
     if (delivery) {
-      await this.prisma.delivery.update({
-        where: { id: delivery.id },
-        data: { notes: dto.notes ?? null, overrideReason: dto.overrideReason ?? null, updatedById: userId },
+      // Capture the handover (notes, override reason, checklist) atomically so a
+      // failure never leaves a half-recorded handover on an already-delivered unit.
+      await this.prisma.$transaction(async (tx) => {
+        await tx.delivery.update({
+          where: { id: delivery.id },
+          data: { notes: dto.notes ?? null, overrideReason: dto.overrideReason ?? null, updatedById: userId },
+        });
+        if (dto.checklist) await this.writeChecklist(delivery.id, dto.checklist, userId, tx);
       });
-      if (dto.checklist) await this.writeChecklist(delivery.id, dto.checklist, userId);
     }
     return this.detail(bookingId);
   }
@@ -203,10 +207,10 @@ export class DeliveryService {
       WHERE b."deletedAt" IS NULL AND b."companyId" = ${company} AND b.status IN ('CONFIRMED', 'CONVERTED')`;
   }
 
-  private async writeChecklist(deliveryId: string, dto: Partial<DeliveryChecklistDto>, userId: string): Promise<void> {
+  private async writeChecklist(deliveryId: string, dto: Partial<DeliveryChecklistDto>, userId: string, db: PrismaService | Prisma.TransactionClient = this.prisma): Promise<void> {
     const data: Record<string, boolean | string> = { updatedById: userId };
     for (const key of DELIVERY_CHECKLIST_ITEMS) if (dto[key] !== undefined) data[key] = dto[key] as boolean;
-    await this.prisma.deliveryChecklist.update({ where: { deliveryId }, data });
+    await db.deliveryChecklist.update({ where: { deliveryId }, data });
   }
 
   private async getBookingOrThrow(bookingId: string): Promise<BookingDetailRow> {
