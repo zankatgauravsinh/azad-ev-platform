@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   buildPageMeta,
@@ -147,11 +147,11 @@ export class WarrantyService {
     if (!unit) throw new NotFoundException('Vehicle not found');
 
     const existing = await this.prisma.warranty.findFirst({ where: { unitId: dto.unitId, status: { not: 'CANCELLED' } } });
-    if (existing) throw new NotFoundException('This vehicle already has an active warranty');
+    if (existing) throw new ConflictException('This vehicle already has an active warranty');
 
     const booking = unit.bookings[0] ?? null;
     const customerId = dto.customerId ?? booking?.customerId;
-    if (!customerId) throw new NotFoundException('Customer could not be resolved for this vehicle');
+    if (!customerId) throw new BadRequestException('Customer could not be resolved for this vehicle — provide a customer or link a booking');
 
     const settings = await this.prisma.companySetting.findFirst();
     const periodMonths = dto.periodMonths ?? settings?.defaultWarrantyMonths ?? 36;

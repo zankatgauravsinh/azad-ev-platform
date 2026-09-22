@@ -101,6 +101,9 @@ export class AmcService {
   async recordVisit(id: string, dto: CreateAmcVisitInput, userId: string): Promise<AmcVisitDto> {
     const plan = await this.getRowOrThrow(id);
     if (plan.status !== 'ACTIVE') throw new BadRequestException('AMC plan is not active');
+    if (dto.coveredUnderAmc && plan.visitsUsed >= plan.visitsIncluded) {
+      throw new BadRequestException('All included AMC visits have already been used');
+    }
 
     const visit = await this.prisma.$transaction(async (tx) => {
       const count = await tx.amcVisit.count({ where: { amcPlanId: id } });

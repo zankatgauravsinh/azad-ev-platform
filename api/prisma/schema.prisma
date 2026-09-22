@@ -1596,6 +1596,7 @@ model AmcVisit {
   createdById String?
   createdAt   DateTime @default(now())
 
+  @@unique([amcPlanId, visitNumber])
   @@index([amcPlanId])
   @@index([companyId, visitDate])
 }
