@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   NotificationPriority,
@@ -88,6 +88,9 @@ export class WarrantyClaimsService {
     const company = this.tenant.requireCompanyId();
     const warranty = await this.prisma.warranty.findFirst({ where: { id: dto.warrantyId }, include: warrantyInclude });
     if (!warranty) throw new NotFoundException('Warranty not found');
+    if (warranty.status === 'EXPIRED' || warranty.status === 'CANCELLED') {
+      throw new BadRequestException(`Cannot raise a claim: warranty ${warranty.warrantyNumber} is ${warranty.status.toLowerCase()}`);
+    }
 
     const claimCost = BigInt(dto.claimCost);
     const manufacturerClaimAmount = BigInt(dto.manufacturerClaimAmount);
@@ -132,6 +135,11 @@ export class WarrantyClaimsService {
   async updateStatus(id: string, dto: UpdateClaimStatusInput, userId: string): Promise<WarrantyClaimDto> {
     const company = this.tenant.requireCompanyId();
     const existing = await this.getRowOrThrow(id);
+    // COMPLETED and REJECTED are terminal — re-editing them would re-fire
+    // notifications and re-flip the warranty status inconsistently.
+    if (existing.status === 'COMPLETED' || existing.status === 'REJECTED') {
+      throw new BadRequestException(`Claim ${existing.claimNumber} is already ${existing.status.toLowerCase()} and cannot change`);
+    }
     const data: Prisma.WarrantyClaimUpdateInput = { status: dto.status, updatedById: userId };
     if (dto.diagnosis !== undefined) data.diagnosis = dto.diagnosis;
     const claimCost = dto.claimCost !== undefined ? BigInt(dto.claimCost) : existing.claimCost;
@@ -143,11 +151,14 @@ export class WarrantyClaimsService {
     }
     if (dto.status === 'COMPLETED') data.completionDate = new Date();
 
-    const updated = await this.prisma.warrantyClaim.update({ where: { id }, data, include: claimInclude });
-    // A completed claim marks the warranty as CLAIMED (it has been drawn on).
-    if (dto.status === 'COMPLETED') {
-      await this.prisma.warranty.updateMany({ where: { id: existing.warrantyId, status: 'ACTIVE' }, data: { status: 'CLAIMED' } });
-    }
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const u = await tx.warrantyClaim.update({ where: { id }, data, include: claimInclude });
+      // A completed claim marks the warranty as CLAIMED (it has been drawn on).
+      if (dto.status === 'COMPLETED') {
+        await tx.warranty.updateMany({ where: { id: existing.warrantyId, status: 'ACTIVE' }, data: { status: 'CLAIMED' } });
+      }
+      return u;
+    });
     await this.timeline.record({
       customerId: updated.warranty.customerId,
       type: 'WARRANTY',
