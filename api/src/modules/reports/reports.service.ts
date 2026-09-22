@@ -16,9 +16,9 @@ import { TenantContext } from '../../tenant/tenant-context.service';
 import { ExportService, type ExportData } from '../../export/export.service';
 import { PnlService } from '../finance/pnl.service';
 import { fillMonths } from '../dashboard/chart-utils';
-import { formatInr } from '../../common/utils/money';
+import { formatInr, formatInrExact } from '../../common/utils/money';
 
-const inr = (paise: string): string => formatInr(BigInt(paise));
+const inr = (paise: string): string => formatInrExact(BigInt(paise));
 const day = (iso: string): string => new Date(iso).toLocaleDateString('en-IN');
 
 interface Bucket {

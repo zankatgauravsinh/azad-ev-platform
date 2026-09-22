@@ -14,6 +14,19 @@ const inr = new Intl.NumberFormat('en-IN', {
   maximumFractionDigits: 0,
 });
 
+const inrExact = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/** Rounded to whole rupees — for compact UI text, notifications and log summaries. */
 export function formatInr(paise: bigint | number): string {
   return inr.format(paiseToRupees(paise));
+}
+
+/** Paise-precise (₹0.00) — for financial documents and exports where line items must reconcile. */
+export function formatInrExact(paise: bigint | number): string {
+  return inrExact.format(paiseToRupees(paise));
 }

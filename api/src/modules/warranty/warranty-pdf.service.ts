@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import type { AmcPlanDetailDto, FreeServiceDto, WarrantyCoverageLine, WarrantyRecordDto } from '@azad/shared';
-import { formatInr } from '../../common/utils/money';
+import { formatInrExact } from '../../common/utils/money';
 import { drawBrandHeader, drawBrandFooter, useBrandFonts, NAVY, TEAL, GOLD, FONT_BODY, FONT_BOLD, type PdfBrand } from '../../common/pdf/brand';
 
 export interface CertificateInput {
@@ -77,7 +77,7 @@ export class WarrantyPdfService {
         ['Visits Included', String(a.visitsIncluded)],
         ['Visits Used', String(a.visitsUsed)],
         ['Visits Remaining', String(a.visitsRemaining)],
-        ['Contract Value', formatInr(BigInt(a.price))],
+        ['Contract Value', formatInrExact(BigInt(a.price))],
       ]);
 
       if (a.visits.length) {
