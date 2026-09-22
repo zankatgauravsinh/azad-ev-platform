@@ -94,6 +94,16 @@ export class RecurringExpensesService {
     const due = active.filter((t) => t.lastRunYear !== year || t.lastRunMonth !== month);
     let created = 0;
     for (const t of due) {
+      // Atomically claim the template for this month BEFORE creating, so two
+      // concurrent runs (a scheduled job and a manual trigger, or a double
+      // click) can never both generate the same month's expense. Optimistic
+      // lock on the exact lastRun values we read: Prisma emits `IS NULL` for a
+      // never-run row, so the guard matches correctly and only one run wins.
+      const claimed = await this.prisma.recurringExpense.updateMany({
+        where: { id: t.id, lastRunYear: t.lastRunYear, lastRunMonth: t.lastRunMonth },
+        data: { lastRunYear: year, lastRunMonth: month },
+      });
+      if (claimed.count !== 1) continue; // another run already claimed it this month
       const lastDay = new Date(year, month, 0).getDate();
       const expenseDate = new Date(year, month - 1, Math.min(t.dayOfMonth, lastDay));
       try {
@@ -110,10 +120,12 @@ export class RecurringExpensesService {
           },
           userId,
         );
-        await this.prisma.recurringExpense.update({ where: { id: t.id }, data: { lastRunYear: year, lastRunMonth: month } });
         created += 1;
       } catch {
-        // Month may be closed, or another run raced us — skip this template.
+        // Month closed or a transient failure — release the claim so a later run retries.
+        await this.prisma.recurringExpense
+          .updateMany({ where: { id: t.id }, data: { lastRunYear: t.lastRunYear, lastRunMonth: t.lastRunMonth } })
+          .catch(() => undefined);
       }
     }
     return { created };
