@@ -127,7 +127,8 @@ export class ServiceJobsService {
       this.prisma.serviceJob.findMany({ where, orderBy: { [query.sort]: query.order }, skip: (query.page - 1) * query.pageSize, take: query.pageSize, include }),
       this.prisma.serviceJob.count({ where }),
     ]);
-    const data = await Promise.all(rows.map((r) => this.toDto(r)));
+    const warranties = await this.warranty.vehicleWarranties(rows.map((r) => r.unitId));
+    const data = await Promise.all(rows.map((r) => this.toDto(r, warranties.get(r.unitId))));
     return { data, meta: buildPageMeta(query.page, query.pageSize, total) };
   }
 
@@ -408,8 +409,8 @@ export class ServiceJobsService {
     };
   }
 
-  private async toDto(job: JobWithRelations): Promise<ServiceJobDto> {
-    const warranty = await this.warranty.vehicleWarranty(job.unitId);
+  private async toDto(job: JobWithRelations, precomputedWarranty?: ServiceJobDto['warrantyStatus']['vehicle']): Promise<ServiceJobDto> {
+    const warranty = precomputedWarranty ?? (await this.warranty.vehicleWarranty(job.unitId));
     return {
       id: job.id, code: job.code, type: job.type, priority: job.priority, status: job.status,
       underWarranty: job.underWarranty, odometerKm: job.odometerKm,
