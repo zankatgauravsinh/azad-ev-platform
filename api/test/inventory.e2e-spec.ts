@@ -159,14 +159,17 @@ describe('Inventory (e2e)', () => {
       .attach('file', PNG_1PX, { filename: 'unit.png', contentType: 'image/png' })
       .expect(201);
 
-    const { id: photoId, fileKey } = upload.body;
+    const { id: photoId, fileKey, url } = upload.body;
     expect(fileKey).toBeTruthy();
     expect(existsSync(uploadPath(fileKey))).toBe(true);
 
-    // Served publicly by key
+    // Served via the signed URL the API returned…
+    expect(url).toContain('sig=');
+    await request(app.getHttpServer()).get(url).expect(200);
+    // …but an unsigned key is rejected.
     await request(app.getHttpServer())
       .get(`/api/v1/uploads/${encodeURIComponent(fileKey)}`)
-      .expect(200);
+      .expect(403);
 
     await request(app.getHttpServer())
       .delete(`/api/v1/inventory/units/${unitId}/photos/${photoId}`)
