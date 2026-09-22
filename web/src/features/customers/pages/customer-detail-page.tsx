@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, MessageSquarePlus, Pencil, RefreshCw, Trash2, User } from 'lucide-react';
+import { ArrowLeft, Eye, MessageSquarePlus, Pencil, RefreshCw, Trash2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
@@ -21,6 +21,11 @@ import { CustomerTimeline } from '../components/customer-timeline';
 import { FollowUpsPanel } from '../components/follow-ups-panel';
 import { NotesPanel } from '../components/notes-panel';
 import { DocumentsPanel } from '../components/documents-panel';
+import { PaymentDetailDialog } from '../components/payment-detail-dialog';
+import { BookingDetailDialog } from '@/features/sales/components/booking-detail-dialog';
+import { ServiceJobDetailDialog } from '@/features/service/components/service-job-detail-dialog';
+import { DeliveryDetailDialog } from '@/features/delivery/components/delivery-detail-dialog';
+import { WarrantyDetailDialog } from '@/features/warranty/components/warranty-detail-dialog';
 
 export function CustomerDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -118,11 +123,11 @@ export function CustomerDetailPage(): JSX.Element {
 
         <TabsContent value="timeline"><Card><CardContent className="p-6"><CustomerTimeline customerId={customer.id} /></CardContent></Card></TabsContent>
         <TabsContent value="documents"><Card><CardContent className="p-6"><DocumentsPanel customerId={customer.id} /></CardContent></Card></TabsContent>
-        <TabsContent value="bookings"><RelatedList customerId={customer.id} kind="bookings" /></TabsContent>
-        <TabsContent value="payments"><RelatedList customerId={customer.id} kind="payments" /></TabsContent>
-        <TabsContent value="deliveries"><RelatedList customerId={customer.id} kind="deliveries" /></TabsContent>
-        <TabsContent value="service"><RelatedList customerId={customer.id} kind="service" /></TabsContent>
-        <TabsContent value="warranty"><RelatedList customerId={customer.id} kind="warranty" /></TabsContent>
+        <TabsContent value="bookings"><RelatedList customerId={customer.id} customerName={customer.name} kind="bookings" /></TabsContent>
+        <TabsContent value="payments"><RelatedList customerId={customer.id} customerName={customer.name} kind="payments" /></TabsContent>
+        <TabsContent value="deliveries"><RelatedList customerId={customer.id} customerName={customer.name} kind="deliveries" /></TabsContent>
+        <TabsContent value="service"><RelatedList customerId={customer.id} customerName={customer.name} kind="service" /></TabsContent>
+        <TabsContent value="warranty"><RelatedList customerId={customer.id} customerName={customer.name} kind="warranty" /></TabsContent>
         <TabsContent value="notes"><Card><CardContent className="p-6"><NotesPanel customerId={customer.id} /></CardContent></Card></TabsContent>
         <TabsContent value="activity"><ActivityLog customerId={customer.id} /></TabsContent>
       </Tabs>
@@ -144,8 +149,14 @@ function Info({ label, value, className }: { label: string; value: string; class
   );
 }
 
-function RelatedList({ customerId, kind }: { customerId: string; kind: 'bookings' | 'payments' | 'deliveries' | 'service' | 'warranty' }): JSX.Element {
+type RelatedPayment = NonNullable<ReturnType<typeof useCustomerRelated>['data']>['payments'][number];
+
+function RelatedList({ customerId, customerName, kind }: { customerId: string; customerName: string; kind: 'bookings' | 'payments' | 'deliveries' | 'service' | 'warranty' }): JSX.Element {
   const { data, isLoading } = useCustomerRelated(customerId);
+  // One of these holds the record being viewed in a popup; the user stays on this page.
+  const [viewId, setViewId] = useState<string | null>(null);
+  const [viewPayment, setViewPayment] = useState<RelatedPayment | null>(null);
+
   if (isLoading) return <Skeleton className="h-24 w-full" />;
   const items = data?.[kind] ?? [];
   if (items.length === 0) {
@@ -154,22 +165,31 @@ function RelatedList({ customerId, kind }: { customerId: string; kind: 'bookings
   }
   return (
     <div className="space-y-2">
-      {kind === 'bookings' && data!.bookings.map((b) => <Row key={b.id} left={`Booking ${b.code}`} sub={b.status} right={new Date(b.createdAt).toLocaleDateString('en-IN')} />)}
-      {kind === 'payments' && data!.payments.map((p) => <Row key={p.id} left={formatPaise(p.amount)} sub={`${p.context} · ${p.mode}`} right={new Date(p.paidAt).toLocaleDateString('en-IN')} />)}
-      {kind === 'deliveries' && data!.deliveries.map((d) => <Row key={d.id} left={`VIN ${d.vin}`} sub="Delivered" right={new Date(d.deliveredAt).toLocaleDateString('en-IN')} />)}
-      {kind === 'service' && data!.service.map((s) => <Row key={s.id} left={s.code} sub={s.complaint} right={s.status} />)}
+      {kind === 'bookings' && data!.bookings.map((b) => <Row key={b.id} left={`Booking ${b.code}`} sub={b.status} right={new Date(b.createdAt).toLocaleDateString('en-IN')} onView={() => setViewId(b.id)} />)}
+      {kind === 'payments' && data!.payments.map((p) => <Row key={p.id} left={formatPaise(p.amount)} sub={`${p.context} · ${p.mode}`} right={new Date(p.paidAt).toLocaleDateString('en-IN')} onView={() => setViewPayment(p)} />)}
+      {kind === 'deliveries' && data!.deliveries.map((d) => <Row key={d.id} left={`VIN ${d.vin}`} sub="Delivered" right={new Date(d.deliveredAt).toLocaleDateString('en-IN')} onView={d.bookingId ? () => setViewId(d.bookingId) : undefined} />)}
+      {kind === 'service' && data!.service.map((s) => <Row key={s.id} left={s.code} sub={s.complaint} right={s.status} onView={() => setViewId(s.id)} />)}
       {kind === 'warranty' && data!.warranty.map((w) => (
-        <Row key={w.unitId} left={`${w.model} ${w.variant} · ${w.vin}`} sub={w.warrantyExpiry ? `Expires ${new Date(w.warrantyExpiry).toLocaleDateString('en-IN')}` : 'No warranty data'} right={<Badge variant={w.active ? 'success' : 'muted'}>{w.active ? 'Active' : 'Expired'}</Badge>} />
+        <Row key={w.unitId} left={`${w.model} ${w.variant} · ${w.vin}`} sub={w.warrantyExpiry ? `Expires ${new Date(w.warrantyExpiry).toLocaleDateString('en-IN')}` : 'No warranty data'} right={<Badge variant={w.active ? 'success' : 'muted'}>{w.active ? 'Active' : 'Expired'}</Badge>} onView={w.warrantyId ? () => setViewId(w.warrantyId) : undefined} />
       ))}
+
+      {kind === 'bookings' && <BookingDetailDialog id={viewId} onOpenChange={(o) => !o && setViewId(null)} />}
+      {kind === 'service' && <ServiceJobDetailDialog id={viewId} onOpenChange={(o) => !o && setViewId(null)} />}
+      {kind === 'deliveries' && <DeliveryDetailDialog id={viewId} onOpenChange={(o) => !o && setViewId(null)} />}
+      {kind === 'warranty' && <WarrantyDetailDialog id={viewId} onOpenChange={(o) => !o && setViewId(null)} />}
+      {kind === 'payments' && <PaymentDetailDialog payment={viewPayment} customerName={customerName} onOpenChange={(o) => !o && setViewPayment(null)} />}
     </div>
   );
 }
 
-function Row({ left, sub, right }: { left: string; sub: string; right: React.ReactNode }): JSX.Element {
+function Row({ left, sub, right, onView }: { left: string; sub: string; right: React.ReactNode; onView?: () => void }): JSX.Element {
   return (
-    <Card><CardContent className="flex items-center justify-between p-4 text-sm">
+    <Card><CardContent className="flex items-center justify-between gap-3 p-4 text-sm">
       <div className="min-w-0"><p className="font-medium">{left}</p><p className="truncate text-muted-foreground">{sub}</p></div>
-      <div className="shrink-0 text-muted-foreground">{right}</div>
+      <div className="flex shrink-0 items-center gap-3">
+        <span className="text-muted-foreground">{right}</span>
+        {onView && <Button size="sm" variant="outline" onClick={onView}><Eye className="h-4 w-4" /> View</Button>}
+      </div>
     </CardContent></Card>
   );
 }

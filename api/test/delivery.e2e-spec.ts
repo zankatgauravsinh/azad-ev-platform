@@ -205,6 +205,26 @@ describe('Delivery (e2e)', () => {
       expect(unit.body.status).toBe('DELIVERED');
     });
 
+    it('surfaces delivery bookingId, payment context and warrantyId in the customer related payload', async () => {
+      // Issue a formal warranty so the customer warranty tab can open its detail dialog.
+      const warranty = await http().post('/api/v1/warranties').set('Authorization', auth(ownerToken))
+        .send({ unitId: pUnitId, customerId: pCustomerId, periodMonths: 24 }).expect(201);
+      const related = await http().get(`/api/v1/customers/${pCustomerId}/related`).set('Authorization', auth(ownerToken)).expect(200);
+
+      expect(related.body.bookings.some((b: { id: string }) => b.id === pBookingId)).toBe(true);
+      // Payment carries booking + invoice context for the payment popup.
+      const pay = related.body.payments[0];
+      expect(pay.bookingId).toBe(pBookingId);
+      expect(pay.bookingCode).toBeTruthy();
+      expect(pay.invoiceNumber).toBeTruthy();
+      expect(pay.receiptNumber).toBeTruthy();
+      // Delivery carries the bookingId the delivery dialog is keyed by.
+      expect(related.body.deliveries[0].bookingId).toBe(pBookingId);
+      // Warranty carries the record id the warranty dialog opens with.
+      const war = related.body.warranty.find((w: { unitId: string }) => w.unitId === pUnitId);
+      expect(war.warrantyId).toBe(warranty.body.warranty.id);
+    });
+
     it('keeps the outstanding balance visible after delivery and leaves payment history untouched', async () => {
       const detail = await http().get(`/api/v1/deliveries/${pBookingId}`).set('Authorization', auth(ownerToken)).expect(200);
       expect(detail.body.booking.balance).toBe(String(outstanding));

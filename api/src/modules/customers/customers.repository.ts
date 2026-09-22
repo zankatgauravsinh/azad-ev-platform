@@ -118,7 +118,12 @@ export class CustomersRepository {
         ],
       },
       orderBy: { paidAt: 'desc' },
-      select: { id: true, amount: true, mode: true, context: true, paidAt: true },
+      select: {
+        id: true, amount: true, mode: true, context: true, paidAt: true, receiptNumber: true, reference: true,
+        booking: { select: { id: true, code: true, sale: { select: { invoiceNumber: true } } } },
+        sale: { select: { bookingId: true, invoiceNumber: true } },
+        serviceJob: { select: { id: true, code: true } },
+      },
     });
   }
 
@@ -126,7 +131,16 @@ export class CustomersRepository {
     return this.prisma.delivery.findMany({
       where: { sale: { customerId } },
       orderBy: { deliveredAt: 'desc' },
-      select: { id: true, saleId: true, deliveredAt: true, sale: { select: { unit: { select: { vin: true } } } } },
+      select: { id: true, saleId: true, deliveredAt: true, sale: { select: { bookingId: true, unit: { select: { vin: true } } } } },
+    });
+  }
+
+  /** Formal warranty records for the customer's units → lets the UI open the warranty detail dialog. */
+  warrantyRecords(customerId: string) {
+    return this.prisma.warranty.findMany({
+      where: { customerId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, unitId: true },
     });
   }
 

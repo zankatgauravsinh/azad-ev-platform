@@ -197,6 +197,8 @@ export interface CustomerDocumentDto {
   createdAt: string;
 }
 export interface WarrantyDto {
+  /** Id of the formal Warranty record for this unit, if one has been issued (null = computed coverage only). */
+  warrantyId: string | null;
   unitId: string;
   vin: string;
   model: string;
@@ -208,8 +210,22 @@ export interface WarrantyDto {
 }
 export interface CustomerRelated {
   bookings: { id: string; code: string; status: string; createdAt: string }[];
-  payments: { id: string; amount: string; mode: string; context: string; paidAt: string }[];
-  deliveries: { id: string; saleId: string; deliveredAt: string; vin: string }[];
+  payments: {
+    id: string;
+    amount: string;
+    mode: string;
+    context: string;
+    paidAt: string;
+    receiptNumber: string | null;
+    reference: string | null;
+    /** Related-record context so a payment can be opened with its booking/invoice/service linkage. */
+    bookingId: string | null;
+    bookingCode: string | null;
+    invoiceNumber: string | null;
+    serviceJobId: string | null;
+    serviceCode: string | null;
+  }[];
+  deliveries: { id: string; bookingId: string | null; saleId: string; deliveredAt: string; vin: string }[];
   service: { id: string; code: string; status: string; type: string; priority: string; total: string; technician: string | null; complaint: string; createdAt: string }[];
   warranty: WarrantyDto[];
 }
