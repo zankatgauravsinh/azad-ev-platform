@@ -29,6 +29,7 @@ import { CustomerTimelineService } from '../customers/customer-timeline.service'
 import { SequenceService } from './sequence.service';
 import { SalesPdfService } from './sales-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
+import { MonthlyClosingService } from '../finance/monthly-closing.service';
 import { computeTotal, sumAccessories } from './pricing';
 
 type Tx = Prisma.TransactionClient;
@@ -57,6 +58,7 @@ export class BookingsService {
     private readonly activityLog: ActivityLogService,
     private readonly pdf: SalesPdfService,
     private readonly pdfBrand: PdfBrandService,
+    private readonly closing: MonthlyClosingService,
   ) {}
 
   // ── Reads ──────────────────────────────────────────────
@@ -214,6 +216,8 @@ export class BookingsService {
   async addPayment(id: string, dto: AddPaymentInput, userId: string) {
     const booking = await this.getById(id);
     if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot add a payment to a cancelled booking');
+    // A payment dated in a closed month would silently change that month's collected total.
+    await this.closing.assertOpen(dto.paidAt ?? new Date());
     const payment = await this.prisma.$transaction((tx) => this.insertPayment(tx, id, dto, userId, booking.customerId));
     return payment;
   }

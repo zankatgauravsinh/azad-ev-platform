@@ -33,6 +33,7 @@ import { SequenceService } from '../sales/sequence.service';
 import { WarrantyService } from './warranty.service';
 import { ServicePdfService, type ServiceDocType } from './service-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
+import { MonthlyClosingService } from '../finance/monthly-closing.service';
 
 type Tx = Prisma.TransactionClient;
 export interface Actor {
@@ -72,6 +73,7 @@ export class ServiceJobsService {
     private readonly warranty: WarrantyService,
     private readonly pdf: ServicePdfService,
     private readonly pdfBrand: PdfBrandService,
+    private readonly closing: MonthlyClosingService,
   ) {}
 
   // ── PDF (repeatable; reads the persisted job) ──────────
@@ -354,6 +356,8 @@ export class ServiceJobsService {
 
   async addPayment(id: string, dto: ServicePaymentInput, actor: Actor): Promise<ServiceJobDto> {
     const job = await this.load(id, actor);
+    // Don't let a payment land in a month that finance has already closed.
+    await this.closing.assertOpen(new Date());
     await this.prisma.$transaction(async (tx) => {
       const receiptNumber = await this.sequence.next('receipt', tx);
       await tx.payment.create({ data: { receiptNumber, context: PaymentContext.SERVICE, serviceJobId: id, amount: BigInt(dto.amount), mode: dto.mode, reference: dto.reference ?? null, receivedById: actor.id, paidAt: new Date(), createdById: actor.id, updatedById: actor.id } });

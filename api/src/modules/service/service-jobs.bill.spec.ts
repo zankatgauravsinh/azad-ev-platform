@@ -7,6 +7,7 @@ import type { ActivityLogService } from '../../activity-log/activity-log.service
 import type { WarrantyService } from './warranty.service';
 import type { ServicePdfService } from './service-pdf.service';
 import type { PdfBrandService } from '../../common/pdf/pdf-brand.service';
+import type { MonthlyClosingService } from '../finance/monthly-closing.service';
 
 describe('ServiceJobsService.bill (billing calculations)', () => {
   const service = new ServiceJobsService(
@@ -17,6 +18,7 @@ describe('ServiceJobsService.bill (billing calculations)', () => {
     {} as WarrantyService,
     {} as ServicePdfService,
     {} as PdfBrandService,
+    {} as MonthlyClosingService,
   );
 
   it('reports PENDING when the bill is zero', () => {
