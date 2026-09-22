@@ -76,9 +76,15 @@ export class PnlService {
       { label: 'Service revenue', amount: String(serviceRevenue) },
       { label: 'AMC revenue', amount: String(amcRevenue) },
     ];
+    // P&L uses net amounts only — GST is a liability / recoverable credit, not
+    // revenue or expense (it is reported separately by gstSummary). Service and AMC
+    // are already counted above (payments / AmcPlan), so exclude those sources from
+    // the manual income ledger to avoid double counting.
+    const COUNTED_ELSEWHERE = new Set<string>(['SERVICE', 'AMC']);
     let otherIncomeTotal = 0n;
     for (const g of incomeBySource) {
-      const amt = (g._sum.amount ?? 0n) + (g._sum.gstAmount ?? 0n);
+      if (COUNTED_ELSEWHERE.has(g.source)) continue;
+      const amt = g._sum.amount ?? 0n;
       otherIncomeTotal += amt;
       income.push({ label: this.incomeLabel(g.source), amount: String(amt) });
     }
@@ -86,13 +92,13 @@ export class PnlService {
     const categoryNames = await this.prisma.expenseCategory.findMany({ where: { id: { in: expenseByCategory.map((e) => e.categoryId) } }, select: { id: true, name: true } });
     const nameOf = new Map(categoryNames.map((c) => [c.id, c.name]));
     const expenses: ProfitLossLine[] = expenseByCategory
-      .map((e) => ({ label: nameOf.get(e.categoryId) ?? 'Other', amount: String((e._sum.amount ?? 0n) + (e._sum.gstAmount ?? 0n)), _n: (e._sum.amount ?? 0n) + (e._sum.gstAmount ?? 0n) }))
+      .map((e) => ({ label: nameOf.get(e.categoryId) ?? 'Other', _n: e._sum.amount ?? 0n }))
       .sort((a, b) => Number(b._n - a._n))
-      .map(({ label, amount }) => ({ label, amount }));
+      .map(({ label, _n }) => ({ label, amount: String(_n) }));
 
     const totalIncome = salesRevenue + serviceRevenue + amcRevenue + otherIncomeTotal;
     const totalExpense = sumBig(expenses.map((e) => BigInt(e.amount)));
-    const costOfGoods = (cogs._sum.amount ?? 0n) + (cogs._sum.gstAmount ?? 0n);
+    const costOfGoods = cogs._sum.amount ?? 0n;
 
     return {
       range: { from: from.toISOString(), to: to.toISOString() },
