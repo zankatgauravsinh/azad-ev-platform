@@ -19,6 +19,7 @@ import {
   createCustomerSchema,
   createFollowUpSchema,
   createNoteSchema,
+  DOCUMENT_TYPES,
   listCustomersQuerySchema,
   logInteractionSchema,
   Role,
@@ -245,7 +246,9 @@ export class CustomersController {
     @CurrentUser('id') userId: string,
   ) {
     this.assertFile(file);
-    return this.customers.addDocument(id, file, (type ?? 'OTHER').toUpperCase(), userId);
+    const docType = (type ?? 'OTHER').toUpperCase();
+    if (!(DOCUMENT_TYPES as readonly string[]).includes(docType)) throw new BadRequestException('Invalid document type');
+    return this.customers.addDocument(id, file, docType, userId);
   }
 
   @Patch(':id/documents/:docId')
