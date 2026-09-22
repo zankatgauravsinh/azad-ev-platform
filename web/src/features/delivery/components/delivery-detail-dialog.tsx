@@ -96,7 +96,7 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
             </dl>
 
             {b.status === 'AWAITING_PAYMENT' && (
-              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">Balance of {formatPaise(b.balance)} is pending — collect payment before delivering.</p>
+              <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">Outstanding balance of {formatPaise(b.balance)}. Delivery can still proceed — this amount stays tracked as due.</p>
             )}
 
             {/* Not yet delivered → schedule + complete */}
@@ -116,7 +116,7 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
                 <div className="space-y-1"><Label>Notes</Label><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional handover notes" /></div>
                 <div className="space-y-1"><Label>Override reason (delivering with pending docs)</Label><Input value={override} onChange={(e) => setOverride(e.target.value)} placeholder="Optional" /></div>
                 {canWrite && (
-                  <Button onClick={doComplete} disabled={complete.isPending || b.status === 'AWAITING_PAYMENT'}>
+                  <Button onClick={doComplete} disabled={complete.isPending}>
                     <CheckCircle2 className="h-4 w-4" /> Complete delivery
                   </Button>
                 )}

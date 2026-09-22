@@ -148,4 +148,76 @@ describe('Delivery (e2e)', () => {
     await http().get('/api/v1/deliveries').set('Authorization', auth(techToken)).expect(403);
     await http().get('/api/v1/deliveries').expect(401);
   });
+
+  // A vehicle can be handed over while the customer still owes money — the balance
+  // stays tracked and no auto-adjustment clears it.
+  describe('partial-payment delivery', () => {
+    let pUnitId = '';
+    let pCustomerId = '';
+    let pBookingId = '';
+    const outstanding = 9_500_000; // total 10,500,000 − 1,000,000 advance
+
+    beforeAll(async () => {
+      const models = await http().get('/api/v1/inventory/models').set('Authorization', auth(ownerToken)).expect(200);
+      const unit = await http().post('/api/v1/inventory/units').set('Authorization', auth(ownerToken))
+        .send({ modelId: models.body[0].id, variant: `DLVP-${stamp}`, colour: 'Red', vin: `DLVVINP${stamp}`, motorNumber: `DLVPM${stamp}`, batteryNumber: `DLVPB${stamp}` }).expect(201);
+      pUnitId = unit.body.id;
+      const customer = await http().post('/api/v1/customers').set('Authorization', auth(ownerToken)).send({ name: 'Partial Pay Customer', phone: `94${stamp}` }).expect(201);
+      pCustomerId = customer.body.id;
+      // Booking with only the advance paid — balance remains outstanding at invoice time.
+      const booking = await http().post('/api/v1/bookings').set('Authorization', auth(ownerToken))
+        .send({ customerId: pCustomerId, unitId: pUnitId, exShowroom: 10000000, rto: 500000, advanceAmount: 1000000 }).expect(201);
+      pBookingId = booking.body.id;
+      expect(Number(booking.body.paymentSummary.balance)).toBe(outstanding);
+      await http().post(`/api/v1/bookings/${pBookingId}/invoice`).set('Authorization', auth(ownerToken)).send({}).expect(201);
+    });
+
+    afterAll(async () => {
+      try {
+        await prisma.$executeRaw`DELETE FROM "Delivery" WHERE "saleId" IN (SELECT id FROM "Sale" WHERE "bookingId" = ${pBookingId})`;
+        await prisma.$executeRaw`DELETE FROM "Payment" WHERE "bookingId" = ${pBookingId}`;
+        await prisma.$executeRaw`DELETE FROM "Sale" WHERE "bookingId" = ${pBookingId}`;
+        await prisma.$executeRaw`DELETE FROM "Booking" WHERE id = ${pBookingId}`;
+        await prisma.$executeRaw`DELETE FROM "InventoryUnit" WHERE id = ${pUnitId}`;
+        await prisma.$executeRaw`DELETE FROM "Customer" WHERE id = ${pCustomerId}`;
+      } catch {
+        /* best-effort */
+      }
+    });
+
+    it('shows the invoiced-but-unpaid booking as AWAITING_PAYMENT with the balance', async () => {
+      const list = await http().get('/api/v1/deliveries?pageSize=100').set('Authorization', auth(ownerToken)).expect(200);
+      const row = list.body.data.find((r: { bookingId: string }) => r.bookingId === pBookingId);
+      expect(row.status).toBe('AWAITING_PAYMENT');
+      expect(row.balance).toBe(String(outstanding));
+    });
+
+    it('completes delivery despite the outstanding balance (→ DELIVERED, unit Delivered, balance kept)', async () => {
+      const res = await http().post(`/api/v1/deliveries/${pBookingId}/complete`).set('Authorization', auth(ownerToken))
+        .send({ notes: `Partial-pay handover ${stamp}`, checklist: { keys: true, invoice: true } }).expect(201);
+      expect(res.body.booking.status).toBe('DELIVERED');
+      expect(res.body.delivery).not.toBeNull();
+      // Balance is untouched — no auto-adjustment cleared it.
+      expect(res.body.booking.balance).toBe(String(outstanding));
+      expect(res.body.booking.paid).toBe('1000000');
+
+      const unit = await http().get(`/api/v1/inventory/units/${pUnitId}`).set('Authorization', auth(ownerToken)).expect(200);
+      expect(unit.body.status).toBe('DELIVERED');
+    });
+
+    it('keeps the outstanding balance visible after delivery and leaves payment history untouched', async () => {
+      const detail = await http().get(`/api/v1/deliveries/${pBookingId}`).set('Authorization', auth(ownerToken)).expect(200);
+      expect(detail.body.booking.balance).toBe(String(outstanding));
+      // No auto-adjustment was created to clear the balance — only the original advance remains.
+      const payments = await http().get(`/api/v1/bookings/${pBookingId}/payments`).set('Authorization', auth(ownerToken)).expect(200);
+      expect(payments.body).toHaveLength(1);
+      expect(payments.body[0].amount).toBe('1000000');
+    });
+
+    it('produces a delivery note for a partial-payment delivery', async () => {
+      const res = await http().get(`/api/v1/deliveries/${pBookingId}/note.pdf`).set('Authorization', auth(ownerToken)).buffer().parse(binaryParser).expect(200);
+      expect(res.headers['content-type']).toContain('application/pdf');
+      expect((res.body as Buffer).length).toBeGreaterThan(1000);
+    });
+  });
 });

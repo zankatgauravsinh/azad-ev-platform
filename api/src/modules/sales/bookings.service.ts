@@ -277,8 +277,9 @@ export class BookingsService {
   async markDelivered(id: string, dto: MarkDeliveredInput, userId: string) {
     const booking = await this.getById(id);
     if (!booking.sale) throw new BadRequestException('Generate the invoice before delivering');
-    const summary = this.paymentSummary(booking);
-    if (summary.status !== PaymentStatus.PAID) throw new BadRequestException(`Balance of ${(Number(summary.balance) / 100).toFixed(2)} is pending`);
+    // A partial (or nil) payment does NOT block delivery — the unpaid balance
+    // stays tracked as outstanding via the booking's payments, and no automatic
+    // adjustment is made to clear it. Only the invoice-exists guard remains.
     const deliveredAt = dto.actualDelivery ?? new Date();
     await this.prisma.$transaction(async (tx) => {
       await this.transitionUnit(tx, booking.unitId, UnitStatus.DELIVERED, userId, `Delivered on booking ${booking.code}`);

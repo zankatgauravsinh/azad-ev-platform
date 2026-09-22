@@ -78,7 +78,7 @@ export class DeliveryController {
 
   @Post(':bookingId/complete')
   @ApiParam({ name: 'bookingId', format: 'uuid' })
-  @ApiOperation({ summary: 'Complete the delivery (requires invoice + zero balance); captures the handover checklist' })
+  @ApiOperation({ summary: 'Complete the delivery (requires an invoice; a partial/outstanding balance is allowed); captures the handover checklist' })
   complete(@Param('bookingId') bookingId: string, @Body(new ZodValidationPipe(completeDeliverySchema)) dto: CompleteDeliveryInput, @CurrentUser('id') userId: string) {
     return this.delivery.complete(bookingId, dto, userId);
   }

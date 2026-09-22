@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import { DELIVERY_CHECKLIST_ITEMS, type DeliveryDetailDto } from '@azad/shared';
+import { formatInrExact } from '../../common/utils/money';
 import { drawBrandHeader, drawBrandFooter, useBrandFonts, NAVY, TEAL, GOLD, FONT_BODY, FONT_BOLD, type PdfBrand } from '../../common/pdf/brand';
 
 const LABELS: Record<string, string> = {
@@ -53,6 +54,16 @@ export class DeliveryPdfService {
         doc.fillColor(TEAL).font(FONT_BOLD).text('✓', x, y, { continued: true }).fillColor('#222').font(FONT_BODY).text(`  ${LABELS[k] ?? k}`);
       });
       doc.y = y + 22;
+
+      // Payment summary — shows the outstanding balance so a partial-payment delivery is accurate.
+      const balance = BigInt(b.balance);
+      this.section(doc, left, 'Payment summary');
+      this.grid(doc, left, right, [
+        ['Invoice total', formatInrExact(BigInt(b.total))],
+        ['Amount paid', formatInrExact(BigInt(b.paid))],
+        ['Balance outstanding', formatInrExact(balance)],
+        ['Status', balance > 0n ? 'Balance outstanding — to be collected' : 'Paid in full'],
+      ]);
 
       if (detail.delivery?.notes) {
         this.section(doc, left, 'Notes');

@@ -126,8 +126,9 @@ export class DeliveryService {
   async complete(bookingId: string, dto: CompleteDeliveryInput, userId: string): Promise<DeliveryDetailDto> {
     const b = await this.getBookingOrThrow(bookingId);
     if (b.actualDelivery) throw new BadRequestException('This vehicle is already delivered');
-    // Delegates all guards (invoice generated + zero balance), the unit → Delivered transition,
-    // the Delivery + checklist creation, timeline and audit — no logic duplicated here.
+    // Delegates all guards (invoice must exist; a partial balance is allowed), the
+    // unit → Delivered transition, the Delivery + checklist creation, timeline and
+    // audit — no logic duplicated here.
     await this.bookings.markDelivered(bookingId, { actualDelivery: dto.actualDelivery }, userId);
 
     const delivery = await this.prisma.delivery.findFirst({ where: { sale: { bookingId } }, select: { id: true } });
