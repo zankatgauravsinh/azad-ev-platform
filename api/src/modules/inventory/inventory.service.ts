@@ -261,6 +261,14 @@ export class InventoryService {
     if (!canTransitionUnit(unit.status as UnitStatus, dto.toStatus)) {
       throw new BadRequestException(`Cannot change status from ${unit.status} to ${dto.toStatus}`);
     }
+    // A BOOKED unit belongs to a live booking; manually re-statusing it here would
+    // orphan that booking (and could re-open the unit for a second sale).
+    if (unit.status === UnitStatus.BOOKED) {
+      const active = await this.repo.activeBooking(id);
+      if (active) {
+        throw new ConflictException(`Scooter ${unit.vin} is reserved by booking ${active.code} — cancel or complete that booking first`);
+      }
+    }
     const updated = await this.repo.transaction(async (tx) => {
       const u = await this.repo.updateUnit(id, { status: dto.toStatus, updatedById: userId }, tx);
       await this.repo.addEvent(

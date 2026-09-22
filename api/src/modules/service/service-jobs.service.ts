@@ -217,6 +217,13 @@ export class ServiceJobsService {
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.serviceJob.update({ where: { id }, data });
+      // Cancelling a job returns any consumed spare-part stock to inventory.
+      if (dto.status === ServiceStatus.CANCELLED) {
+        const parts = await tx.servicePart.findMany({ where: { serviceJobId: id, sparePartId: { not: null } }, select: { sparePartId: true, qty: true } });
+        for (const p of parts) {
+          await tx.sparePart.updateMany({ where: { id: p.sparePartId as string }, data: { quantity: { increment: p.qty }, updatedById: actor.id } });
+        }
+      }
       const event = STATUS_EVENT[dto.status];
       if (event) await this.timeline.record({ customerId: job.customerId, type: event.type, title: `${event.title} (${job.code})`, entityType: 'ServiceJob', entityId: id, actorId: actor.id }, tx);
     });

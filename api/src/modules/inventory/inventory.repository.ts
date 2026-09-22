@@ -35,6 +35,14 @@ export class InventoryRepository {
     return this.prisma.inventoryUnit.findFirst({ where: { id }, include: this.unitInclude });
   }
 
+  /** A live (confirmed/invoiced, not yet delivered) booking holding this unit, if any. */
+  activeBooking(unitId: string) {
+    return this.prisma.booking.findFirst({
+      where: { unitId, status: { in: ['CONFIRMED', 'CONVERTED'] }, actualDelivery: null },
+      select: { id: true, code: true },
+    });
+  }
+
   findDetail(id: string) {
     return this.prisma.inventoryUnit.findFirst({
       where: { id },
