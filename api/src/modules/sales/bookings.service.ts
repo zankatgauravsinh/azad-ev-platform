@@ -226,32 +226,40 @@ export class BookingsService {
   // ── Finance ────────────────────────────────────────────
   async upsertFinance(id: string, dto: UpsertFinanceInput, userId: string) {
     const booking = await this.getById(id);
+    if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot update finance on a cancelled booking');
     const wasApproved = booking.finance?.status === FinanceStatus.APPROVED;
-    const finance = await this.prisma.financeDetail.upsert({
-      where: { bookingId: id },
-      create: { bookingId: id, financeCompany: dto.financeCompany, downPayment: BigInt(dto.downPayment), loanAmount: BigInt(dto.loanAmount), emiAmount: BigInt(dto.emiAmount), tenureMonths: dto.tenureMonths, interestRate: dto.interestRate, disbursedAmount: BigInt(dto.disbursedAmount), status: dto.status, createdById: userId, updatedById: userId },
-      update: { financeCompany: dto.financeCompany, downPayment: BigInt(dto.downPayment), loanAmount: BigInt(dto.loanAmount), emiAmount: BigInt(dto.emiAmount), tenureMonths: dto.tenureMonths, interestRate: dto.interestRate, disbursedAmount: BigInt(dto.disbursedAmount), status: dto.status, updatedById: userId },
+    const finance = await this.prisma.$transaction(async (tx) => {
+      const detail = await tx.financeDetail.upsert({
+        where: { bookingId: id },
+        create: { bookingId: id, financeCompany: dto.financeCompany, downPayment: BigInt(dto.downPayment), loanAmount: BigInt(dto.loanAmount), emiAmount: BigInt(dto.emiAmount), tenureMonths: dto.tenureMonths, interestRate: dto.interestRate, disbursedAmount: BigInt(dto.disbursedAmount), status: dto.status, createdById: userId, updatedById: userId },
+        update: { financeCompany: dto.financeCompany, downPayment: BigInt(dto.downPayment), loanAmount: BigInt(dto.loanAmount), emiAmount: BigInt(dto.emiAmount), tenureMonths: dto.tenureMonths, interestRate: dto.interestRate, disbursedAmount: BigInt(dto.disbursedAmount), status: dto.status, updatedById: userId },
+      });
+      await tx.booking.update({ where: { id }, data: { financeRequired: true, updatedById: userId } });
+      if (dto.status === FinanceStatus.APPROVED && !wasApproved) {
+        await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.FINANCE_APPROVED, title: `Finance approved (${dto.financeCompany})`, entityType: 'Booking', entityId: id, actorId: userId }, tx);
+      }
+      return detail;
     });
-    await this.prisma.booking.update({ where: { id }, data: { financeRequired: true, updatedById: userId } });
-    if (dto.status === FinanceStatus.APPROVED && !wasApproved) {
-      await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.FINANCE_APPROVED, title: `Finance approved (${dto.financeCompany})`, entityType: 'Booking', entityId: id, actorId: userId });
-    }
     return finance;
   }
 
   // ── Insurance ──────────────────────────────────────────
   async upsertInsurance(id: string, dto: UpsertInsuranceInput, userId: string) {
     const booking = await this.getById(id);
+    if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot update insurance on a cancelled booking');
     const isNew = !booking.insurance;
-    const insurance = await this.prisma.insuranceDetail.upsert({
-      where: { bookingId: id },
-      create: { bookingId: id, provider: dto.provider, policyNumber: dto.policyNumber ?? null, premium: BigInt(dto.premium), startDate: dto.startDate ?? null, endDate: dto.endDate ?? null, status: dto.status, createdById: userId, updatedById: userId },
-      update: { provider: dto.provider, policyNumber: dto.policyNumber ?? null, premium: BigInt(dto.premium), startDate: dto.startDate ?? null, endDate: dto.endDate ?? null, status: dto.status, updatedById: userId },
+    const insurance = await this.prisma.$transaction(async (tx) => {
+      const detail = await tx.insuranceDetail.upsert({
+        where: { bookingId: id },
+        create: { bookingId: id, provider: dto.provider, policyNumber: dto.policyNumber ?? null, premium: BigInt(dto.premium), startDate: dto.startDate ?? null, endDate: dto.endDate ?? null, status: dto.status, createdById: userId, updatedById: userId },
+        update: { provider: dto.provider, policyNumber: dto.policyNumber ?? null, premium: BigInt(dto.premium), startDate: dto.startDate ?? null, endDate: dto.endDate ?? null, status: dto.status, updatedById: userId },
+      });
+      await tx.booking.update({ where: { id }, data: { insuranceRequired: true, updatedById: userId } });
+      if (isNew) {
+        await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.INSURANCE_ADDED, title: `Insurance added (${dto.provider})`, entityType: 'Booking', entityId: id, actorId: userId }, tx);
+      }
+      return detail;
     });
-    await this.prisma.booking.update({ where: { id }, data: { insuranceRequired: true, updatedById: userId } });
-    if (isNew) {
-      await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.INSURANCE_ADDED, title: `Insurance added (${dto.provider})`, entityType: 'Booking', entityId: id, actorId: userId });
-    }
     return insurance;
   }
 
