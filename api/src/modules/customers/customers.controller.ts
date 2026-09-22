@@ -310,7 +310,7 @@ export class CustomersController {
   }
 
   @Delete(':id/notes/:noteId')
-  @Roles(...READ_ROLES)
+  @Roles(...WRITE_ROLES)
   @HttpCode(204)
   async removeNote(
     @Param('id') id: string,

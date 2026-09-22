@@ -13,6 +13,11 @@ WorkingDirectory=/opt/azad-ev/app
 # Secrets live in an environment file readable only by the service user (chmod 600).
 EnvironmentFile=/opt/azad-ev/app/.env
 Environment=NODE_ENV=production
+# Apply pending migrations before boot so a deploy with new migrations never
+# starts against a stale schema. Invokes the local prisma CLI directly (no npx,
+# which would need a home cache blocked by ProtectHome). A failure here aborts
+# the start, leaving the previous version running.
+ExecStartPre=/usr/bin/node node_modules/prisma/build/index.js migrate deploy --schema api/prisma/schema.prisma
 ExecStart=/usr/bin/node api/dist/main.js
 Restart=always
 RestartSec=3

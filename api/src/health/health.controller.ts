@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../common/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,6 +18,10 @@ export class HealthController {
     } catch {
       db = 'down';
     }
-    return { status: 'ok', db, timestamp: new Date().toISOString() };
+    const body = { status: db === 'up' ? 'ok' : 'degraded', db, timestamp: new Date().toISOString() };
+    // Reflect DB failure in the HTTP status so load balancers and uptime
+    // monitors mark the instance unhealthy instead of seeing a 200.
+    if (db === 'down') throw new ServiceUnavailableException(body);
+    return body;
   }
 }
