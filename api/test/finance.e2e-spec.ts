@@ -189,10 +189,14 @@ describe('Finance & Expenses (e2e)', () => {
     const draft = await http().post('/api/v1/expenses').set('Authorization', auth(accountantToken))
       .send({ categoryId, amount: 20000, status: 'DRAFT', paid: false, description: `draft ${stamp}` }).expect(201);
     expect(draft.body.status).toBe('DRAFT');
+    // A non-approved expense cannot be settled.
+    await http().post(`/api/v1/expenses/${draft.body.id}/settle`).set('Authorization', auth(accountantToken)).expect(400);
     const submitted = await http().post(`/api/v1/expenses/${draft.body.id}/submit`).set('Authorization', auth(accountantToken)).expect(201);
     expect(submitted.body.status).toBe('PENDING');
     const approved = await http().patch(`/api/v1/expenses/${draft.body.id}/status`).set('Authorization', auth(ownerToken)).send({ status: 'APPROVED' }).expect(200);
     expect(approved.body.status).toBe('APPROVED');
+    // Financial fields freeze after approval.
+    await http().patch(`/api/v1/expenses/${draft.body.id}`).set('Authorization', auth(ownerToken)).send({ amount: 99999 }).expect(400);
   });
 
   it('creates a recurring template and generates this month’s expense idempotently', async () => {
