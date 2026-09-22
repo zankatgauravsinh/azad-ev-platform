@@ -4,7 +4,8 @@ build/
 .env
 .env.local
 *.log
-uploads/
+# Runtime file storage (STORAGE_LOCAL_DIR); anchored so it never matches src/uploads.
+/api/uploads/
 coverage/
 .DS_Store
 api/prisma/*.db
