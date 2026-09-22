@@ -241,13 +241,13 @@ describe('Finance & Expenses (e2e)', () => {
     expect(ok.body.status).toBe('APPROVED');
   });
 
-  it('enforces permissions (accountant finance-only, sales read-only, anon blocked)', async () => {
+  it('enforces permissions (accountant finance-only, sales fully blocked, anon blocked)', async () => {
     // Accountant can write finance…
     await http().post('/api/v1/expenses').set('Authorization', auth(accountantToken)).send({ categoryId, amount: 5000, description: `acc ${stamp}` }).expect(201);
     // …but not other modules (finance-only).
     await http().get('/api/v1/customers').set('Authorization', auth(accountantToken)).expect(403);
-    // Sales can read finance but not write.
-    await http().get('/api/v1/expenses').set('Authorization', auth(salesToken)).expect(200);
+    // Sales cannot see finance data at all (read or write).
+    await http().get('/api/v1/expenses').set('Authorization', auth(salesToken)).expect(403);
     await http().post('/api/v1/expenses').set('Authorization', auth(salesToken)).send({ categoryId, amount: 100 }).expect(403);
     await http().post('/api/v1/vendors').set('Authorization', auth(salesToken)).send({ name: 'x' }).expect(403);
     // Anonymous blocked.
