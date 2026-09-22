@@ -399,7 +399,29 @@ export class ReportsService {
         return this.pnlExport(input);
       case 'gst':
         return this.gstExport(input);
+      case 'deliveries':
+        return this.deliveriesExport(input);
     }
+  }
+
+  private async deliveriesExport(input: ReportRangeInput): Promise<ExportData> {
+    const { from, to } = this.range(input);
+    const rows = await this.prisma.booking.findMany({
+      where: { actualDelivery: { gte: from, lte: to } },
+      include: {
+        customer: { select: { name: true, phone: true } },
+        unit: { select: { vin: true, variant: { select: { name: true, model: { select: { name: true } } } } } },
+        sale: { select: { invoiceNumber: true } },
+        deliveryExecutive: { select: { name: true } },
+      },
+      orderBy: { actualDelivery: 'desc' },
+      take: 5000,
+    });
+    return {
+      title: 'Delivery Report',
+      columns: [{ header: 'Booking', width: 2 }, { header: 'Delivered', width: 2 }, { header: 'Customer', width: 3 }, { header: 'Vehicle', width: 3 }, { header: 'VIN', width: 2 }, { header: 'Invoice', width: 2 }, { header: 'Executive', width: 2 }],
+      rows: rows.map((b) => [b.code, day(b.actualDelivery!.toISOString()), b.customer.name, `${b.unit.variant.model.name} ${b.unit.variant.name}`, b.unit.vin, b.sale?.invoiceNumber ?? '—', b.deliveryExecutive?.name ?? '—']),
+    };
   }
 
   private range(input: ReportRangeInput): { from: Date; to: Date } {

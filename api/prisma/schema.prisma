@@ -1015,13 +1015,20 @@ model Delivery {
 }
 
 model DeliveryChecklist {
-  id         String   @id @default(uuid())
-  deliveryId String   @unique
-  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
-  helmet     Boolean  @default(false)
-  charger    Boolean  @default(false)
-  keys       Boolean  @default(false)
-  documents  Boolean  @default(false)
+  id                String   @id @default(uuid())
+  deliveryId        String   @unique
+  delivery          Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  helmet            Boolean  @default(false)
+  charger           Boolean  @default(false)
+  keys              Boolean  @default(false)
+  documents         Boolean  @default(false)
+  // Extended handover / pre-delivery inspection items
+  insurance         Boolean  @default(false)
+  rcBook            Boolean  @default(false)
+  invoice           Boolean  @default(false)
+  warrantyCard      Boolean  @default(false)
+  charged           Boolean  @default(false)
+  accessoriesFitted Boolean  @default(false)
 
   createdById String?
   updatedById String?

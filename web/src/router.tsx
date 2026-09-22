@@ -21,6 +21,7 @@ import { SettingsPage } from '@/features/settings/pages/settings-page';
 import { ReportsPage } from '@/features/reports/pages/reports-page';
 import { WarrantyPage } from '@/features/warranty/pages/warranty-page';
 import { FinancePage } from '@/features/finance/pages/finance-page';
+import { DeliveryPage } from '@/features/delivery/pages/delivery-page';
 
 export const router = createBrowserRouter([
   {
@@ -48,6 +49,7 @@ export const router = createBrowserRouter([
           { path: '/service/reports', element: <ServiceReportsPage /> },
           { path: '/service/:id', element: <ServiceDetailPage /> },
           { path: '/warranty', element: <WarrantyPage /> },
+          { path: '/delivery', element: <DeliveryPage /> },
           { path: '/finance', element: <FinancePage /> },
           { path: '/reports', element: <ReportsPage /> },
           { path: '/settings', element: <SettingsPage /> },

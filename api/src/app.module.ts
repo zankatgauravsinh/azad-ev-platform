@@ -22,6 +22,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { WarrantyModule } from './modules/warranty/warranty.module';
 import { FinanceModule } from './modules/finance/finance.module';
+import { DeliveryModule } from './modules/delivery/delivery.module';
 import { CompanySettingsModule } from './modules/settings/company-settings.module';
 import { PdfBrandModule } from './common/pdf/pdf-brand.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
@@ -55,6 +56,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     NotificationsModule,
     WarrantyModule,
     FinanceModule,
+    DeliveryModule,
     CompanySettingsModule,
     PdfBrandModule,
   ],

@@ -112,9 +112,12 @@ export function ReportsPage(): JSX.Element {
       </CardContent></Card>
 
       <Tabs defaultValue="overview">
-        <TabsList className="flex-wrap">
-          {['overview', 'sales', 'customers', 'inventory', 'payments', 'service'].map((t) => <TabsTrigger key={t} value={t}>{titleCase(t)}</TabsTrigger>)}
-        </TabsList>
+        {/* Horizontal scroll strip so tabs never wrap/overlap on narrow screens. */}
+        <div className="overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <TabsList className="w-max">
+            {['overview', 'sales', 'customers', 'inventory', 'payments', 'service'].map((t) => <TabsTrigger key={t} value={t}>{titleCase(t)}</TabsTrigger>)}
+          </TabsList>
+        </div>
 
         {/* Overview */}
         <TabsContent value="overview" className="space-y-6">

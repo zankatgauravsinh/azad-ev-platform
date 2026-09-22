@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { MonthlyPoint } from './dashboard';
 
 /** Report categories that support tabular export. */
-export const REPORT_TYPES = ['sales', 'customers', 'inventory', 'payments', 'warranty', 'amc', 'expenses', 'income', 'vendors', 'bank', 'pnl', 'gst'] as const;
+export const REPORT_TYPES = ['sales', 'customers', 'inventory', 'payments', 'warranty', 'amc', 'expenses', 'income', 'vendors', 'bank', 'pnl', 'gst', 'deliveries'] as const;
 export type ReportType = (typeof REPORT_TYPES)[number];
 
 export const EXPORT_FORMATS = ['pdf', 'excel', 'csv'] as const;
