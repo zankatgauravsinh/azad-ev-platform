@@ -24,7 +24,7 @@ export interface AccessoryRef {
   id: string;
   name: string;
   sellPrice: string;
-  costPrice: string;
+  avgCost: string;
   isPart: boolean;
 }
 export interface CustomerRef {

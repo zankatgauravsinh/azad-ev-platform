@@ -613,9 +613,16 @@ model Accessory {
   companyId String  @default("")
   name      String
   sku       String? @unique
+  category  String?
   sellPrice BigInt  @default(0)
-  costPrice BigInt  @default(0)
-  stockQty  Int     @default(0)
+  /// Weighted-average moving cost (system-maintained by purchases / opening stock only — never user-set).
+  avgCost   BigInt  @default(0)
+  /// Physical quantity in stock.
+  onHand    Int     @default(0)
+  /// Quantity committed to confirmed, undelivered bookings. Available = onHand - reserved.
+  reserved  Int     @default(0)
+  /// Reorder level for low-stock alerts.
+  minStock  Int     @default(0)
   isPart    Boolean @default(false)
   isActive  Boolean @default(true)
 
@@ -627,6 +634,8 @@ model Accessory {
   bookingAccessories   BookingAccessory[]
   quotationAccessories QuotationAccessory[]
   saleAccessories      SaleAccessory[]
+  purchaseItems        AccessoryPurchaseItem[]
+  movements            AccessoryStockMovement[]
 
   @@index([isPart])
   @@index([companyId])
@@ -905,7 +914,10 @@ model SaleAccessory {
   accessoryId String
   accessory   Accessory @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
   qty         Int       @default(1)
+  /// Selling price charged per unit (snapshot at delivery).
   unitPrice   BigInt    @default(0)
+  /// Weighted-average cost per unit at the moment of sale — the COGS basis.
+  costAtSale  BigInt    @default(0)
 
   createdById String?
   updatedById String?
@@ -913,6 +925,81 @@ model SaleAccessory {
   updatedAt   DateTime @updatedAt
 
   @@index([saleId])
+}
+
+/// Kinds of accessory stock movement recorded in the audit ledger.
+enum AccessoryMovementType {
+  OPENING
+  PURCHASE_IN
+  SALE_OUT
+  ADJUSTMENT
+  RESERVE
+  RELEASE
+}
+
+/// Accessory purchase (stock-in) header — supplier invoice. Reuses Vendor.
+model AccessoryPurchase {
+  id             String   @id @default(uuid())
+  companyId      String   @default("")
+  purchaseNumber String
+  vendorId       String?
+  vendor         Vendor?  @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  purchaseDate   DateTime @default(now())
+  notes          String?
+  subtotal       BigInt   @default(0)
+  gstAmount      BigInt   @default(0)
+  total          BigInt   @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items AccessoryPurchaseItem[]
+
+  @@unique([companyId, purchaseNumber])
+  @@index([companyId])
+  @@index([vendorId])
+}
+
+model AccessoryPurchaseItem {
+  id          String            @id @default(uuid())
+  purchaseId  String
+  purchase    AccessoryPurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  accessoryId String
+  accessory   Accessory         @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
+  quantity    Int
+  /// Ex-GST unit cost — the basis for weighted-average costing.
+  unitCost    BigInt            @default(0)
+  gstAmount   BigInt            @default(0)
+  lineTotal   BigInt            @default(0)
+
+  @@index([purchaseId])
+  @@index([accessoryId])
+}
+
+/// Immutable audit ledger of every accessory stock movement.
+/// OPENING/PURCHASE_IN/SALE_OUT/ADJUSTMENT change onHand; RESERVE/RELEASE change reserved.
+model AccessoryStockMovement {
+  id            String                @id @default(uuid())
+  companyId     String                @default("")
+  accessoryId   String
+  accessory     Accessory             @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
+  type          AccessoryMovementType
+  quantity      Int
+  /// Cost per unit captured at this movement (purchase/opening cost, or avgCost snapshot on SALE_OUT).
+  unitCost      BigInt                @default(0)
+  onHandAfter   Int                   @default(0)
+  reservedAfter Int                   @default(0)
+  refType       String?
+  refId         String?
+  note          String?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([companyId])
+  @@index([accessoryId, createdAt])
 }
 
 model FinanceDetail {
@@ -1697,8 +1784,9 @@ model Vendor {
   status       VendorStatus @default(ACTIVE)
   notes        String?
 
-  expenses  Expense[]
-  recurring RecurringExpense[]
+  expenses           Expense[]
+  recurring          RecurringExpense[]
+  accessoryPurchases AccessoryPurchase[]
 
   createdById String?
   updatedById String?

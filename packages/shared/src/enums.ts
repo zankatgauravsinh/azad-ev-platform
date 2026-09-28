@@ -451,6 +451,18 @@ export const FinancePayMethod = {
 export type FinancePayMethod = (typeof FinancePayMethod)[keyof typeof FinancePayMethod];
 export const FINANCE_PAY_METHODS = Object.values(FinancePayMethod);
 
+/** Kinds of accessory stock movement in the audit ledger. */
+export const AccessoryMovementType = {
+  OPENING: 'OPENING',
+  PURCHASE_IN: 'PURCHASE_IN',
+  SALE_OUT: 'SALE_OUT',
+  ADJUSTMENT: 'ADJUSTMENT',
+  RESERVE: 'RESERVE',
+  RELEASE: 'RELEASE',
+} as const;
+export type AccessoryMovementType = (typeof AccessoryMovementType)[keyof typeof AccessoryMovementType];
+export const ACCESSORY_MOVEMENT_TYPES = Object.values(AccessoryMovementType);
+
 export const IncomeSource = {
   ACCESSORIES: 'ACCESSORIES',
   INSURANCE_COMMISSION: 'INSURANCE_COMMISSION',

@@ -5,6 +5,7 @@ export * from './api';
 export * from './inventory';
 export * from './customer';
 export * from './sales';
+export * from './accessories';
 export * from './service';
 export * from './dashboard';
 export * from './settings';
