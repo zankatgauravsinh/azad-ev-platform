@@ -451,6 +451,27 @@ export const FinancePayMethod = {
 export type FinancePayMethod = (typeof FinancePayMethod)[keyof typeof FinancePayMethod];
 export const FINANCE_PAY_METHODS = Object.values(FinancePayMethod);
 
+/** Post-delivery vehicle return lifecycle. */
+export const ReturnStatus = {
+  REQUESTED: 'REQUESTED',
+  INSPECTION: 'INSPECTION',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+  COMPLETED: 'COMPLETED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type ReturnStatus = (typeof ReturnStatus)[keyof typeof ReturnStatus];
+export const RETURN_STATUSES = Object.values(ReturnStatus);
+
+/** Where a returned unit goes once the return completes. */
+export const ReturnDisposition = {
+  AVAILABLE: 'AVAILABLE',
+  IN_SERVICE: 'IN_SERVICE',
+  SCRAP: 'SCRAP',
+} as const;
+export type ReturnDisposition = (typeof ReturnDisposition)[keyof typeof ReturnDisposition];
+export const RETURN_DISPOSITIONS = Object.values(ReturnDisposition);
+
 /** Kinds of accessory stock movement in the audit ledger. */
 export const AccessoryMovementType = {
   OPENING: 'OPENING',

@@ -38,6 +38,8 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   'RecurringExpense', 'MonthlyClosing', 'ExpenseAttachment',
   // Accessory inventory (child AccessoryPurchaseItem is scoped via its parent purchase)
   'AccessoryPurchase', 'AccessoryStockMovement',
+  // Vehicle return
+  'VehicleReturn', 'CreditNote', 'Refund',
 ]);
 
 @Injectable()
