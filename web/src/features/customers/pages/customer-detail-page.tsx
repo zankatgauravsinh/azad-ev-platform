@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Eye, MessageSquarePlus, Pencil, RefreshCw, Trash2, User } from 'lucide-react';
+import { ArrowLeft, Eye, MessageSquarePlus, Pencil, RefreshCw, Trash2, Undo2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
@@ -72,6 +72,7 @@ export function CustomerDetailPage(): JSX.Element {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => navigate(`/returns?customerId=${customer.id}`)}><Undo2 className="h-4 w-4" /> Returns</Button>
           <Button variant="outline" onClick={() => setLogOpen(true)}><MessageSquarePlus className="h-4 w-4" /> Log</Button>
           <Button variant="outline" onClick={() => setStatusOpen(true)}><RefreshCw className="h-4 w-4" /> Status</Button>
           <Button variant="outline" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" /> Edit</Button>

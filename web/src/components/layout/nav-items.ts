@@ -13,6 +13,7 @@ import {
   BarChart3,
   Settings,
   Home,
+  Undo2,
   type LucideIcon,
 } from 'lucide-react';
 import type { Role } from '@azad/shared';
@@ -40,6 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Quotations', to: '/quotations', icon: IndianRupee, enabled: true, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
   { label: 'Bookings', to: '/bookings', icon: ClipboardList, enabled: true, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
   { label: 'Delivery', to: '/delivery', icon: Bike, enabled: true, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
+  { label: 'Returns', to: '/returns', icon: Undo2, enabled: true, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
   { label: 'Service', to: '/service', icon: Wrench, enabled: true, roles: ['OWNER', 'MANAGER', 'TECHNICIAN'] },
   { label: 'Spare Parts', to: '/service/spare-parts', icon: Package, enabled: true, roles: ['OWNER', 'MANAGER', 'TECHNICIAN'] },
   { label: 'Warranty & AMC', to: '/warranty', icon: ShieldCheck, enabled: true, roles: ['OWNER', 'MANAGER', 'TECHNICIAN', 'SALES_EXECUTIVE'] },
