@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import type { MonthlyPoint } from './dashboard';
+import { RETURN_STATUSES, RETURN_DISPOSITIONS, type ReturnStatus, type ReturnDisposition } from './enums';
 
 /** Report categories that support tabular export. */
-export const REPORT_TYPES = ['sales', 'customers', 'inventory', 'payments', 'warranty', 'amc', 'expenses', 'income', 'vendors', 'bank', 'pnl', 'gst', 'deliveries'] as const;
+export const REPORT_TYPES = ['sales', 'customers', 'inventory', 'payments', 'warranty', 'amc', 'expenses', 'income', 'vendors', 'bank', 'pnl', 'gst', 'deliveries', 'returns'] as const;
 export type ReportType = (typeof REPORT_TYPES)[number];
 
 export const EXPORT_FORMATS = ['pdf', 'excel', 'csv'] as const;
@@ -113,4 +114,46 @@ export interface PaymentsReport {
   byMode: NamedAmount[];
   daily: DailyPoint[];
   rows: PaymentReportRow[];
+}
+
+// ── Vehicle returns report ────────────────────────────────
+export const returnsReportQuerySchema = reportRangeSchema.extend({
+  status: z.enum(RETURN_STATUSES as [ReturnStatus, ...ReturnStatus[]]).optional(),
+  disposition: z.enum(RETURN_DISPOSITIONS as [ReturnDisposition, ...ReturnDisposition[]]).optional(),
+  customerId: z.string().uuid().optional(),
+  unitId: z.string().uuid().optional(),
+  saleId: z.string().uuid().optional(),
+});
+export type ReturnsReportQuery = z.infer<typeof returnsReportQuerySchema>;
+
+export interface ReturnReportRow {
+  returnNumber: string;
+  requestedDate: string;
+  completedDate: string | null;
+  customer: string;
+  invoiceNumber: string | null;
+  bookingCode: string;
+  vin: string;
+  status: ReturnStatus;
+  reason: string;
+  /** null until inspected. */
+  inspectionOk: boolean | null;
+  approvedBy: string | null;
+  disposition: ReturnDisposition | null;
+  saleTotal: string;
+  amountPaid: string;
+  deduction: string;
+  /** Sum of refunds for this return (0 before completion). */
+  refundAmount: string;
+  creditNoteNumber: string | null;
+  refundNumber: string | null;
+}
+export interface ReturnsReport {
+  range: ReportRange;
+  kpis: ReportKpi[];
+  byStatus: { status: ReturnStatus; count: number }[];
+  byDisposition: { disposition: ReturnDisposition; count: number }[];
+  /** Returns raised per month in range (returns-by-period). */
+  byMonth: MonthlyPoint[];
+  rows: ReturnReportRow[];
 }

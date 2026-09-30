@@ -14,6 +14,7 @@ import {
   type Paginated,
   type RefundDto,
   type RejectReturnInput,
+  type ReturnDisposition,
   type VehicleReturnDto,
 } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -32,6 +33,33 @@ const include = {
   refunds: { orderBy: { refundedAt: 'desc' } },
 } satisfies Prisma.VehicleReturnInclude;
 type ReturnRow = Prisma.VehicleReturnGetPayload<{ include: typeof include }>;
+
+/**
+ * Everything the future accessory-restock implementation (accessory workstream Group 6)
+ * receives from a completed vehicle return. It will reverse the returned vehicle's accessory
+ * stock-out inside the completion transaction using these references + disposition.
+ *
+ * NOT YET KNOWABLE in Group 6 of the return workstream: the specific returned-accessory line
+ * references. `SaleAccessory` is only populated once accessory Group 6 (delivery stock-out)
+ * ships; until then this context cannot enumerate which accessories were sold with the
+ * vehicle, so the seam stays a no-op and the future impl must resolve accessory lines itself
+ * (e.g. from SaleAccessory-by-saleId once available).
+ */
+export interface AccessoryRestockContext {
+  returnId: string;
+  saleId: string;
+  bookingId: string;
+  unitId: string;
+  disposition: ReturnDisposition;
+}
+
+/** Pure builder for the seam's context (kept separate so the contract is unit-testable). */
+export function accessoryRestockContext(
+  ret: { id: string; saleId: string; bookingId: string; unitId: string },
+  disposition: ReturnDisposition,
+): AccessoryRestockContext {
+  return { returnId: ret.id, saleId: ret.saleId, bookingId: ret.bookingId, unitId: ret.unitId, disposition };
+}
 
 /**
  * Vehicle return workflow (Group 3): request → inspection → approval, plus reject/cancel.
@@ -249,8 +277,8 @@ export class ReturnsService {
       // Void the vehicle's formal warranty record(s).
       await tx.warranty.updateMany({ where: { unitId: row.unitId, status: { not: 'CANCELLED' } }, data: { status: 'CANCELLED' } });
 
-      // Group 6 seam — reverse accessory stock-out on return. No-op until accessory Group 6.
-      await this.restockReturnedAccessories(row, tx);
+      // Accessory-restock seam — reverse accessory stock-out on return. No-op until accessory Group 6.
+      await this.restockReturnedAccessories(accessoryRestockContext(row, dto.disposition), tx);
     });
 
     await this.audit(userId, ActivityAction.STATUS_CHANGE, id, `Return ${row.returnNumber} completed → ${dto.disposition} (credit note issued${refundDue > 0n ? `, refund ${refundDue}` : ''})`);
@@ -258,11 +286,13 @@ export class ReturnsService {
   }
 
   /**
-   * Accessory-restock seam for the return-completion transaction. When accessory Group 6
-   * (delivery stock-out via SaleAccessory) lands, reverse that stock-out here — stock IN +
-   * an AccessoryStockMovement inside this same `tx`. Intentionally a no-op for now.
+   * Accessory-restock seam for the return-completion transaction. Intentionally a NO-OP.
+   * When the accessory workstream's Group 6 (delivery stock-out via SaleAccessory) lands,
+   * the reversal goes here — stock IN + an AccessoryStockMovement inside this same `tx`,
+   * driven by {@link AccessoryRestockContext}. Group 6 of the *return* workstream only
+   * defines and wires this seam; it changes no accessory stock, tables or accounting.
    */
-  private async restockReturnedAccessories(_ret: ReturnRow, _tx: Prisma.TransactionClient): Promise<void> {
+  private async restockReturnedAccessories(_ctx: AccessoryRestockContext, _tx: Prisma.TransactionClient): Promise<void> {
     // No accessory stock is affected by vehicle returns yet.
   }
 

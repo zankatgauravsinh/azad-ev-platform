@@ -5,6 +5,12 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 
+function binaryParser(res: request.Response, cb: (err: Error | null, body: Buffer) => void): void {
+  const chunks: Buffer[] = [];
+  (res as unknown as NodeJS.ReadableStream).on('data', (c: Buffer) => chunks.push(Buffer.from(c)));
+  (res as unknown as NodeJS.ReadableStream).on('end', () => cb(null, Buffer.concat(chunks)));
+}
+
 /**
  * Vehicle return workflow (Group 3) e2e — state machine, permissions, self-approval
  * block and audit. No financial completion is exercised (Group 4).
@@ -408,6 +414,107 @@ describe('Vehicle Returns (e2e)', () => {
       await complete(r2, { disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(201);
       const after = await pnl();
       expect(BigInt(before.grossProfit) - BigInt(after.grossProfit)).toBe(11500000n);
+    });
+  });
+
+  // ─────────────── Group 6 — return reports / dashboard / export ───────────────
+  describe('return reports', () => {
+    interface Row { returnNumber: string; status: string; disposition: string | null; saleTotal: string; amountPaid: string; deduction: string; refundAmount: string; creditNoteNumber: string | null; refundNumber: string | null }
+    interface Rep { kpis: { label: string; value: string }[]; byStatus: { status: string; count: number }[]; byDisposition: { disposition: string; count: number }[]; byMonth: unknown[]; rows: Row[] }
+    const report = async (token: string, qs = ''): Promise<Rep> =>
+      (await http().get(`/api/v1/reports/returns${qs}`).set('Authorization', auth(token)).expect(200)).body;
+
+    let sA: Awaited<ReturnType<typeof makeDeliveredSale>>;
+    let sB: Awaited<ReturnType<typeof makeDeliveredSale>>;
+    let bDto: { returnNumber: string; creditNote: { creditNoteNumber: string }; refunds: { refundNumber: string }[] };
+
+    beforeAll(async () => {
+      // sA: full paid → AVAILABLE, no deduction (refund 10,500,000).
+      sA = await makeDeliveredSale(`RA${stamp}`);
+      const ra = await makeApprovedReturn(sA.saleId);
+      await http().post(`/api/v1/returns/${ra}/complete`).set('Authorization', auth(ownerToken)).send({ disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(201);
+      // sB: partial paid (advance 1,000,000) → SCRAP with deduction 300,000 (refund 700,000).
+      sB = await makeDeliveredSale(`RB${stamp}`, false);
+      const rb = await makeApprovedReturn(sB.saleId);
+      bDto = (await http().post(`/api/v1/returns/${rb}/complete`).set('Authorization', auth(ownerToken)).send({ disposition: 'SCRAP', deductionAmount: 300000, deductionReason: 'damage', refundMethod: 'CASH' }).expect(201)).body;
+    });
+
+    it('reports a completed return with financials straight from the records (no recompute, no dup rows)', async () => {
+      const r = await report(ownerToken, `?saleId=${sA.saleId}`);
+      expect(r.rows).toHaveLength(1); // no duplicate rows despite 1 credit note + 1 refund
+      const row = r.rows[0]!;
+      expect(row.status).toBe('COMPLETED');
+      expect(row.disposition).toBe('AVAILABLE');
+      expect(row.saleTotal).toBe('10500000');
+      expect(row.amountPaid).toBe('10500000');
+      expect(row.deduction).toBe('0');
+      expect(row.refundAmount).toBe('10500000');
+      expect(row.creditNoteNumber).toBeTruthy();
+      expect(row.refundNumber).toBeTruthy();
+    });
+
+    it('financial values match the underlying Return/CreditNote/Refund records', async () => {
+      const r = await report(ownerToken, `?saleId=${sB.saleId}`);
+      const row = r.rows[0]!;
+      expect(row.refundAmount).toBe('700000'); // paid 1,000,000 − deduction 300,000
+      expect(row.deduction).toBe('300000');
+      expect(row.disposition).toBe('SCRAP');
+      expect(row.creditNoteNumber).toBe(bDto.creditNote.creditNoteNumber);
+      expect(row.refundNumber).toBe(bDto.refunds[0]!.refundNumber);
+      // Cross-check against the raw records.
+      const cn = await prisma.creditNote.findFirstOrThrow({ where: { saleId: sB.saleId } });
+      const rf = await prisma.refund.findFirstOrThrow({ where: { saleId: sB.saleId } });
+      expect(row.creditNoteNumber).toBe(cn.creditNoteNumber);
+      expect(BigInt(row.refundAmount)).toBe(rf.amount);
+    });
+
+    it('summary counts, disposition counts and refund/deduction totals are correct (per filter)', async () => {
+      const a = await report(ownerToken, `?saleId=${sA.saleId}`);
+      expect(a.byStatus.find((s) => s.status === 'COMPLETED')?.count).toBe(1);
+      expect(a.byDisposition.find((d) => d.disposition === 'AVAILABLE')?.count).toBe(1);
+      expect(a.byDisposition.find((d) => d.disposition === 'SCRAP')?.count).toBe(0);
+      expect(a.kpis.find((k) => k.label === 'Total returns')?.value).toBe('1');
+      expect(a.kpis.find((k) => k.label === 'Completed')?.value).toBe('1');
+
+      const b = await report(ownerToken, `?saleId=${sB.saleId}`);
+      expect(b.byDisposition.find((d) => d.disposition === 'SCRAP')?.count).toBe(1);
+      expect(b.kpis.find((k) => k.label === 'Scrapped')?.value).toBe('1');
+      expect(Array.isArray(b.byMonth)).toBe(true);
+    });
+
+    it('server-side filters work (status, disposition)', async () => {
+      expect((await report(ownerToken, `?saleId=${sA.saleId}&status=COMPLETED`)).rows).toHaveLength(1);
+      expect((await report(ownerToken, `?saleId=${sA.saleId}&status=REQUESTED`)).rows).toHaveLength(0);
+      expect((await report(ownerToken, `?saleId=${sB.saleId}&disposition=SCRAP`)).rows).toHaveLength(1);
+      expect((await report(ownerToken, `?saleId=${sB.saleId}&disposition=AVAILABLE`)).rows).toHaveLength(0);
+    });
+
+    it('exports CSV honouring the same filters', async () => {
+      const res = await http().get(`/api/v1/reports/returns/export?format=csv&saleId=${sB.saleId}`).set('Authorization', auth(ownerToken)).buffer().parse(binaryParser).expect(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      const csv = (res.body as Buffer).toString();
+      expect(csv).toContain(bDto.returnNumber);
+      expect(csv).toContain('SCRAP');
+      // Filtered to sB only — sA's return must not appear.
+      const rowsA = await report(ownerToken, `?saleId=${sA.saleId}`);
+      expect(csv).not.toContain(rowsA.rows[0]!.returnNumber);
+    });
+
+    it('exports Excel', async () => {
+      const res = await http().get(`/api/v1/reports/returns/export?format=excel&saleId=${sB.saleId}`).set('Authorization', auth(ownerToken)).buffer().parse(binaryParser).expect(200);
+      expect(res.headers['content-type']).toContain('spreadsheetml');
+      expect((res.body as Buffer).length).toBeGreaterThan(1000);
+    });
+
+    it('is finance-report permissioned: SALES cannot access it', async () => {
+      await http().get('/api/v1/reports/returns').set('Authorization', auth(salesToken)).expect(403);
+      await http().get(`/api/v1/reports/returns/export?format=csv&saleId=${sB.saleId}`).set('Authorization', auth(salesToken)).expect(403);
+    });
+
+    it('accessory-restock seam: completing returns changes no accessory stock/records', async () => {
+      // The seam is a no-op; the accessory redesign is untouched, so no movements exist at all.
+      expect(await prisma.accessoryStockMovement.count()).toBe(0);
+      expect(await prisma.accessoryPurchase.count()).toBe(0);
     });
   });
 });

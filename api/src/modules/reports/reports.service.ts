@@ -1,16 +1,23 @@
 import { Injectable } from '@nestjs/common';
-import { BookingStatus, PaymentContext, UnitStatus, LeadStatus } from '@azad/shared';
+import { BookingStatus, PaymentContext, UnitStatus, LeadStatus, RETURN_STATUSES, RETURN_DISPOSITIONS } from '@azad/shared';
 import type {
   CustomersReport,
   ExportFormat,
   InventoryReport,
   OverviewReport,
   PaymentsReport,
+  ReportKpi,
   ReportRange,
   ReportRangeInput,
   ReportType,
+  ReturnDisposition,
+  ReturnReportRow,
+  ReturnStatus,
+  ReturnsReport,
+  ReturnsReportQuery,
   SalesReport,
 } from '@azad/shared';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { ExportService, type ExportData } from '../../export/export.service';
@@ -335,7 +342,136 @@ export class ReportsService {
   }
 
   // ── Export (PDF / Excel / CSV) ─────────────────────────
-  async export(type: ReportType, format: ExportFormat, input: ReportRangeInput): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+  // ── Vehicle returns report ─────────────────────────────
+  /**
+   * Returns report + summary (tenant-scoped like every other report). Financial figures come
+   * straight from the Return/CreditNote/Refund records (Group 4/5) — nothing is recalculated:
+   * refundAmount = Σ Refund, deduction = Return.deductionAmount, saleTotal = Sale.total,
+   * amountPaid = Σ payments (advance + sale). Breakdowns are computed from the filtered rows.
+   */
+  async returns(query: ReturnsReportQuery): Promise<ReturnsReport> {
+    const { from, to } = this.range(query);
+    const rows = await this.returnRows(query);
+
+    const byStatus = RETURN_STATUSES.map((status) => ({ status, count: rows.filter((r) => r.status === status).length }));
+    const completed = rows.filter((r) => r.status === 'COMPLETED');
+    const byDisposition = RETURN_DISPOSITIONS.map((disposition) => ({ disposition, count: completed.filter((r) => r.disposition === disposition).length }));
+    const totalRefund = rows.reduce((a, r) => a + BigInt(r.refundAmount), 0n);
+    const totalDeduction = rows.reduce((a, r) => a + BigInt(r.deduction), 0n);
+    const disp = (d: ReturnDisposition): number => byDisposition.find((x) => x.disposition === d)?.count ?? 0;
+
+    const monthly = new Map<string, number>();
+    for (const r of rows) {
+      const key = r.requestedDate.slice(0, 7);
+      monthly.set(key, (monthly.get(key) ?? 0) + 1);
+    }
+    const byMonth = fillMonths([...monthly].map(([month, count]) => ({ month, amount: 0n, count })), to);
+
+    const kpis: ReportKpi[] = [
+      { label: 'Total returns', value: String(rows.length) },
+      { label: 'Completed', value: String(completed.length) },
+      { label: 'Total refunds', value: inr(String(totalRefund)) },
+      { label: 'Total deductions', value: inr(String(totalDeduction)) },
+      { label: 'Returned → Available', value: String(disp('AVAILABLE')), tone: 'positive' },
+      { label: 'Returned → In service', value: String(disp('IN_SERVICE')) },
+      { label: 'Scrapped', value: String(disp('SCRAP')), tone: disp('SCRAP') > 0 ? 'warning' : 'default' },
+    ];
+
+    return { range: { from: from.toISOString(), to: to.toISOString() }, kpis, byStatus, byDisposition, byMonth, rows };
+  }
+
+  /** Row builder shared by the report and its export, so both always match exactly. */
+  private async returnRows(query: ReturnsReportQuery): Promise<ReturnReportRow[]> {
+    const { from, to } = this.range(query);
+    const where: Prisma.VehicleReturnWhereInput = { requestedAt: { gte: from, lte: to } };
+    if (query.status) where.status = query.status;
+    if (query.disposition) where.disposition = query.disposition;
+    if (query.customerId) where.customerId = query.customerId;
+    if (query.unitId) where.unitId = query.unitId;
+    if (query.saleId) where.saleId = query.saleId;
+
+    const returns = await this.prisma.vehicleReturn.findMany({
+      where,
+      include: {
+        sale: { select: { invoiceNumber: true, total: true } },
+        booking: { select: { code: true } },
+        unit: { select: { vin: true } },
+        customer: { select: { name: true } },
+        creditNote: { select: { creditNoteNumber: true } },
+        refunds: { select: { refundNumber: true, amount: true } },
+      },
+      orderBy: { requestedAt: 'desc' },
+      take: 5000,
+    });
+
+    // Batched amountPaid: a payment belongs to exactly one return (via its booking or sale).
+    const bToReturn = new Map(returns.map((r) => [r.bookingId, r.id]));
+    const sToReturn = new Map(returns.map((r) => [r.saleId, r.id]));
+    const pays = await this.prisma.payment.findMany({
+      where: { OR: [{ bookingId: { in: returns.map((r) => r.bookingId) } }, { saleId: { in: returns.map((r) => r.saleId) } }] },
+      select: { bookingId: true, saleId: true, amount: true },
+    });
+    const paidByReturn = new Map<string, bigint>();
+    for (const p of pays) {
+      let rid: string | undefined;
+      if (p.bookingId) rid = bToReturn.get(p.bookingId);
+      if (!rid && p.saleId) rid = sToReturn.get(p.saleId);
+      if (rid) paidByReturn.set(rid, (paidByReturn.get(rid) ?? 0n) + p.amount);
+    }
+
+    const names = await this.userNames(returns.map((r) => r.approvedById));
+
+    return returns.map((r) => ({
+      returnNumber: r.returnNumber,
+      requestedDate: r.requestedAt.toISOString(),
+      completedDate: r.completedAt?.toISOString() ?? null,
+      customer: r.customer.name,
+      invoiceNumber: r.sale.invoiceNumber,
+      bookingCode: r.booking.code,
+      vin: r.unit.vin,
+      status: r.status as ReturnStatus,
+      reason: r.reason,
+      inspectionOk: r.inspectionOk,
+      approvedBy: r.approvedById ? names.get(r.approvedById) ?? null : null,
+      disposition: r.disposition as ReturnDisposition | null,
+      saleTotal: r.sale.total.toString(),
+      amountPaid: (paidByReturn.get(r.id) ?? 0n).toString(),
+      deduction: r.deductionAmount.toString(),
+      refundAmount: r.refunds.reduce((a, f) => a + f.amount, 0n).toString(),
+      creditNoteNumber: r.creditNote?.creditNoteNumber ?? null,
+      refundNumber: r.refunds[0]?.refundNumber ?? null,
+    }));
+  }
+
+  private async userNames(ids: (string | null)[]): Promise<Map<string, string>> {
+    const unique = [...new Set(ids.filter((x): x is string => Boolean(x)))];
+    if (unique.length === 0) return new Map();
+    const users = await this.prisma.user.findMany({ where: { id: { in: unique } }, select: { id: true, name: true } });
+    return new Map(users.map((u) => [u.id, u.name]));
+  }
+
+  private async returnsExport(query: ReturnsReportQuery): Promise<ExportData> {
+    const rows = await this.returnRows(query);
+    return {
+      title: 'Vehicle Returns Report',
+      columns: [
+        { header: 'Return', width: 2 }, { header: 'Requested', width: 2 }, { header: 'Customer', width: 3 },
+        { header: 'Invoice', width: 2 }, { header: 'Booking', width: 2 }, { header: 'VIN', width: 2 },
+        { header: 'Status', width: 2 }, { header: 'Inspection', width: 1 }, { header: 'Approved by', width: 2 },
+        { header: 'Completed', width: 2 }, { header: 'Disposition', width: 2 }, { header: 'Sale total', width: 2 },
+        { header: 'Paid', width: 2 }, { header: 'Deduction', width: 2 }, { header: 'Refund', width: 2 },
+        { header: 'Credit note', width: 2 }, { header: 'Refund no.', width: 2 }, { header: 'Reason', width: 3 },
+      ],
+      rows: rows.map((r) => [
+        r.returnNumber, day(r.requestedDate), r.customer, r.invoiceNumber ?? '—', r.bookingCode, r.vin,
+        r.status, r.inspectionOk === null ? '—' : r.inspectionOk ? 'OK' : 'Issues', r.approvedBy ?? '—',
+        r.completedDate ? day(r.completedDate) : '—', r.disposition ?? '—', inr(r.saleTotal),
+        inr(r.amountPaid), inr(r.deduction), inr(r.refundAmount), r.creditNoteNumber ?? '—', r.refundNumber ?? '—', r.reason,
+      ]),
+    };
+  }
+
+  async export(type: ReportType, format: ExportFormat, input: ReturnsReportQuery): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
     const data = await this.buildExportData(type, input);
     const buffer =
       format === 'excel' ? await this.exporter.toExcel(data) : format === 'csv' ? this.exporter.toCsv(data) : await this.exporter.toPdf(data);
@@ -349,7 +485,7 @@ export class ReportsService {
     return { buffer, filename: `${type}-report-${new Date().toISOString().slice(0, 10)}.${ext}`, contentType };
   }
 
-  private async buildExportData(type: ReportType, input: ReportRangeInput): Promise<ExportData> {
+  private async buildExportData(type: ReportType, input: ReturnsReportQuery): Promise<ExportData> {
     switch (type) {
       case 'sales': {
         const r = await this.sales(input);
@@ -401,6 +537,8 @@ export class ReportsService {
         return this.gstExport(input);
       case 'deliveries':
         return this.deliveriesExport(input);
+      case 'returns':
+        return this.returnsExport(input);
     }
   }
 
