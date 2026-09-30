@@ -58,24 +58,32 @@ export class PnlService {
     const from = query.from ?? fy.from;
     const to = query.to ?? fy.to;
 
-    const [salesPayments, servicePayments, amc, incomeBySource, expenseByCategory, cogs] = await Promise.all([
+    const [salesPayments, servicePayments, amc, incomeBySource, expenseByCategory, cogs, salesReturns] = await Promise.all([
       this.prisma.payment.aggregate({ _sum: { amount: true }, where: { context: { in: ['SALE', 'BOOKING_ADVANCE'] }, paidAt: { gte: from, lte: to } } }),
       this.prisma.payment.aggregate({ _sum: { amount: true }, where: { context: 'SERVICE', paidAt: { gte: from, lte: to } } }),
       this.prisma.amcPlan.aggregate({ _sum: { price: true }, where: { createdAt: { gte: from, lte: to } } }),
       this.prisma.income.groupBy({ by: ['source'], _sum: { amount: true, gstAmount: true }, where: { incomeDate: { gte: from, lte: to } } }),
       this.prisma.expense.groupBy({ by: ['categoryId'], _sum: { amount: true, gstAmount: true }, where: { status: 'APPROVED', expenseDate: { gte: from, lte: to } } }),
       this.prisma.expense.aggregate({ _sum: { amount: true, gstAmount: true }, where: { status: 'APPROVED', expenseDate: { gte: from, lte: to }, category: { name: 'Vehicle Purchase' } } }),
+      // Vehicle-return reversal, cash basis: the Refund (money actually returned) reverses the
+      // revenue that was recognized when the customer paid. The CreditNote is the legal/GST
+      // document and is deliberately NOT summed here (that would double-count the reversal).
+      // An approved deduction stays as retained income by design (paid − deduction = refund).
+      // COGS is unchanged: the Vehicle-Purchase model is purchase-period based, not per-unit,
+      // so a return has no COGS reversal here — intentional, pending CA review.
+      this.prisma.refund.aggregate({ _sum: { amount: true }, where: { refundedAt: { gte: from, lte: to } } }),
     ]);
 
-    const salesRevenue = salesPayments._sum.amount ?? 0n;
+    const salesRevenueGross = salesPayments._sum.amount ?? 0n;
+    const returnsTotal = salesReturns._sum.amount ?? 0n;
+    const salesRevenue = salesRevenueGross - returnsTotal; // net of refunds (cash-basis reversal)
     const serviceRevenue = servicePayments._sum.amount ?? 0n;
     const amcRevenue = amc._sum.price ?? 0n;
 
-    const income: ProfitLossLine[] = [
-      { label: 'Sales revenue', amount: String(salesRevenue) },
-      { label: 'Service revenue', amount: String(serviceRevenue) },
-      { label: 'AMC revenue', amount: String(amcRevenue) },
-    ];
+    const income: ProfitLossLine[] = [{ label: 'Sales revenue', amount: String(salesRevenueGross) }];
+    if (returnsTotal > 0n) income.push({ label: 'Less: Sales returns (refunds)', amount: String(-returnsTotal) });
+    income.push({ label: 'Service revenue', amount: String(serviceRevenue) });
+    income.push({ label: 'AMC revenue', amount: String(amcRevenue) });
     // P&L uses net amounts only — GST is a liability / recoverable credit, not
     // revenue or expense (it is reported separately by gstSummary). Service and AMC
     // are already counted above (payments / AmcPlan), so exclude those sources from

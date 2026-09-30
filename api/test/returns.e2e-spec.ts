@@ -308,4 +308,106 @@ describe('Vehicle Returns (e2e)', () => {
         .send({ disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(201);
     });
   });
+
+  // ─────────────── Group 5 — return accounting (finance/P&L/GST) ───────────────
+  // Cash-basis reversal: the Refund (money actually returned) reverses recognized sales
+  // revenue; the CreditNote is the legal/GST document and is NOT summed into P&L. Per CA-
+  // deferred decisions: GST summary is left unchanged (Option A) and there is NO COGS
+  // reversal (the Vehicle-Purchase COGS model is purchase-period based, not per-unit) —
+  // both intentional and revisited after the CA specifies the GST/accounting treatment.
+  describe('return accounting', () => {
+    interface Pnl { income: { label: string; amount: string }[]; grossProfit: string; netProfit: string; costOfGoods: string }
+    const pnl = async (): Promise<Pnl> => (await http().get('/api/v1/finance/pnl').set('Authorization', auth(ownerToken)).expect(200)).body;
+    const gst = async () => (await http().get('/api/v1/finance/gst-summary').set('Authorization', auth(ownerToken)).expect(200)).body;
+    const dash = async () => (await http().get('/api/v1/finance/dashboard').set('Authorization', auth(ownerToken)).expect(200)).body;
+    const salesGross = (p: Pnl): bigint => BigInt(p.income.find((l) => l.label === 'Sales revenue')?.amount ?? '0');
+    const complete = (rid: string, body: Record<string, unknown>) =>
+      http().post(`/api/v1/returns/${rid}/complete`).set('Authorization', auth(ownerToken)).send(body);
+
+    it('full paid return: refund reverses revenue exactly once; gross sales & COGS unchanged', async () => {
+      const s = await makeDeliveredSale(`AF${stamp}`); // paid 10,500,000
+      const rid = await makeApprovedReturn(s.saleId);
+      const before = await pnl();
+      await complete(rid, { disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(201);
+      const after = await pnl();
+      // Gross profit and net profit each drop by exactly the refund — reversal counted once.
+      expect(BigInt(before.grossProfit) - BigInt(after.grossProfit)).toBe(10500000n);
+      expect(BigInt(before.netProfit) - BigInt(after.netProfit)).toBe(10500000n);
+      // Original payments untouched → gross "Sales revenue" line unchanged; COGS unchanged.
+      expect(salesGross(after)).toBe(salesGross(before));
+      expect(after.costOfGoods).toBe(before.costOfGoods);
+      // A "Sales returns (refunds)" line appears (negative).
+      const line = after.income.find((l) => l.label.includes('Sales returns'));
+      expect(line).toBeTruthy();
+      expect(BigInt(line!.amount)).toBeLessThan(0n);
+      // Exactly one credit note + one refund; no duplicates.
+      expect(await prisma.creditNote.count({ where: { saleId: s.saleId } })).toBe(1);
+      expect(await prisma.refund.count({ where: { saleId: s.saleId } })).toBe(1);
+    });
+
+    it('partial paid return: reversal equals the amount paid, NOT the credit-note face value', async () => {
+      const s = await makeDeliveredSale(`AP${stamp}`, false); // paid only advance 1,000,000
+      const rid = await makeApprovedReturn(s.saleId);
+      const before = await pnl();
+      await complete(rid, { disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(201);
+      const after = await pnl();
+      // Credit note total is 10,500,000 but only 1,000,000 was ever recognized as revenue.
+      // A refund-driven reversal proves the credit note is NOT double-counted into P&L.
+      expect(BigInt(before.grossProfit) - BigInt(after.grossProfit)).toBe(1000000n);
+    });
+
+    it('return with approved deduction: only (paid − deduction) is reversed; deduction stays as retained income', async () => {
+      const s = await makeDeliveredSale(`AD${stamp}`, false); // paid 1,000,000
+      const rid = await makeApprovedReturn(s.saleId);
+      const before = await pnl();
+      await complete(rid, { disposition: 'AVAILABLE', deductionAmount: 300000, deductionReason: 'usage', refundMethod: 'UPI' }).expect(201);
+      const after = await pnl();
+      // Refund = 700,000 → reversal 700,000; the 300,000 deduction remains as income (net drop 700k).
+      expect(BigInt(before.grossProfit) - BigInt(after.grossProfit)).toBe(700000n);
+    });
+
+    it('does not change the GST summary (Option A — credit-note GST recorded, not reported here)', async () => {
+      const s = await makeDeliveredSale(`AG${stamp}`);
+      const rid = await makeApprovedReturn(s.saleId);
+      const before = await gst();
+      await complete(rid, { disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(201);
+      const after = await gst();
+      expect(after.collected).toBe(before.collected);
+      expect(after.paid).toBe(before.paid);
+      expect(after.difference).toBe(before.difference);
+      // …but the reversal GST IS recorded on the credit note for the CA's later filing.
+      const cn = await prisma.creditNote.findFirstOrThrow({ where: { saleId: s.saleId } });
+      expect(cn.gstAmount).toBeGreaterThanOrEqual(0n);
+    });
+
+    it('CASH refund is a cash-out in cash-in-hand', async () => {
+      const s = await makeDeliveredSale(`AC${stamp}`);
+      const rid = await makeApprovedReturn(s.saleId);
+      const before = BigInt((await dash()).cashInHand);
+      await complete(rid, { disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'CASH' }).expect(201);
+      const after = BigInt((await dash()).cashInHand);
+      expect(before - after).toBe(10500000n);
+    });
+
+    it('non-cash (bank) refund reduces the bank balance', async () => {
+      const s = await makeDeliveredSale(`AB${stamp}`);
+      const rid = await makeApprovedReturn(s.saleId);
+      const before = BigInt((await dash()).bankBalance);
+      await complete(rid, { disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'BANK_TRANSFER' }).expect(201);
+      const after = BigInt((await dash()).bankBalance);
+      expect(before - after).toBe(10500000n);
+    });
+
+    it('multiple returns across different sales each reverse once (additive, no double count)', async () => {
+      const s1 = await makeDeliveredSale(`AM1${stamp}`, false); // refund 1,000,000
+      const s2 = await makeDeliveredSale(`AM2${stamp}`);        // refund 10,500,000
+      const r1 = await makeApprovedReturn(s1.saleId);
+      const r2 = await makeApprovedReturn(s2.saleId);
+      const before = await pnl();
+      await complete(r1, { disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(201);
+      await complete(r2, { disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(201);
+      const after = await pnl();
+      expect(BigInt(before.grossProfit) - BigInt(after.grossProfit)).toBe(11500000n);
+    });
+  });
 });
