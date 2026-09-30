@@ -463,6 +463,20 @@ export const ReturnStatus = {
 export type ReturnStatus = (typeof ReturnStatus)[keyof typeof ReturnStatus];
 export const RETURN_STATUSES = Object.values(ReturnStatus);
 
+/** Allowed return transitions (enforced server-side). REJECTED/CANCELLED/COMPLETED are terminal. */
+export const RETURN_STATUS_TRANSITIONS: Record<ReturnStatus, ReturnStatus[]> = {
+  REQUESTED: ['INSPECTION', 'REJECTED', 'CANCELLED'],
+  INSPECTION: ['APPROVED', 'REJECTED', 'CANCELLED'],
+  APPROVED: ['COMPLETED', 'CANCELLED'],
+  REJECTED: [],
+  COMPLETED: [],
+  CANCELLED: [],
+};
+export function canTransitionReturn(from: ReturnStatus, to: ReturnStatus): boolean {
+  return RETURN_STATUS_TRANSITIONS[from]?.includes(to) ?? false;
+}
+export const RETURN_TERMINAL_STATUSES: ReturnStatus[] = ['REJECTED', 'COMPLETED', 'CANCELLED'];
+
 /** Where a returned unit goes once the return completes. */
 export const ReturnDisposition = {
   AVAILABLE: 'AVAILABLE',

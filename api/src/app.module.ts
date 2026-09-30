@@ -25,6 +25,7 @@ import { FinanceModule } from './modules/finance/finance.module';
 import { DeliveryModule } from './modules/delivery/delivery.module';
 import { CompanySettingsModule } from './modules/settings/company-settings.module';
 import { PdfBrandModule } from './common/pdf/pdf-brand.module';
+import { ReturnsModule } from './modules/returns/returns.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -59,6 +60,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     DeliveryModule,
     CompanySettingsModule,
     PdfBrandModule,
+    ReturnsModule,
   ],
   providers: [
     // Order matters: authenticate → throttle → authorize.

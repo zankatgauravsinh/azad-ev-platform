@@ -31,6 +31,12 @@ export const rejectReturnSchema = z.object({
 });
 export type RejectReturnInput = z.infer<typeof rejectReturnSchema>;
 
+/** Withdraw a not-yet-completed return. */
+export const cancelReturnSchema = z.object({
+  reason: z.string().trim().max(500).optional(),
+});
+export type CancelReturnInput = z.infer<typeof cancelReturnSchema>;
+
 /**
  * Complete an approved return: issues the credit note + refund, dispositions the unit.
  * A non-zero deduction must carry a reason. Refund amount is computed server-side
