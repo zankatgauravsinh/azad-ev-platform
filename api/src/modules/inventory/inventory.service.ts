@@ -20,6 +20,7 @@ import {
   type ChangeUnitStatusInput,
   type ListUnitsQuery,
   type Paginated,
+  type ReturnDisposition,
   type UpdateUnitInput,
 } from '@azad/shared';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
@@ -302,6 +303,27 @@ export class InventoryService {
       metadata: { from: unit.status, to: dto.toStatus, note: dto.note ?? null },
     });
     return updated;
+  }
+
+  /**
+   * Completes a vehicle return's inventory effect: DELIVERED → RETURNED → disposition.
+   * Called ONLY from the return-completion transaction (the generic changeStatus API is
+   * deliberately locked out of RETURNED). Runs on the caller's transaction, so a failure
+   * anywhere in completion rolls this back too. SCRAP leaves the unit at RETURNED
+   * (non-sellable); AVAILABLE / IN_SERVICE re-stock it.
+   */
+  async applyReturnDisposition(unitId: string, disposition: ReturnDisposition, userId: string, tx: Prisma.TransactionClient): Promise<void> {
+    const unit = await tx.inventoryUnit.findFirst({ where: { id: unitId }, select: { id: true, status: true, vin: true } });
+    if (!unit) throw new NotFoundException('Scooter not found');
+    if (unit.status !== UnitStatus.DELIVERED) {
+      throw new ConflictException(`Scooter ${unit.vin} is ${unit.status}, not DELIVERED — cannot complete the return`);
+    }
+    await this.repo.updateUnit(unitId, { status: UnitStatus.RETURNED, updatedById: userId }, tx);
+    await this.repo.addEvent({ unitId, fromStatus: UnitStatus.DELIVERED, toStatus: UnitStatus.RETURNED, note: 'Vehicle return completed', createdById: userId }, tx);
+    if (disposition === 'AVAILABLE' || disposition === 'IN_SERVICE') {
+      await this.repo.updateUnit(unitId, { status: disposition as UnitStatus, updatedById: userId }, tx);
+      await this.repo.addEvent({ unitId, fromStatus: UnitStatus.RETURNED, toStatus: disposition as UnitStatus, note: `Return disposition: ${disposition}`, createdById: userId }, tx);
+    }
   }
 
   // ── Bulk CSV import ────────────────────────────────────

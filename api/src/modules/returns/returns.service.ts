@@ -6,6 +6,7 @@ import {
   ReturnStatus,
   buildPageMeta,
   type CancelReturnInput,
+  type CompleteReturnInput,
   type CreateReturnInput,
   type CreditNoteDto,
   type InspectReturnInput,
@@ -19,9 +20,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { SequenceService } from '../sales/sequence.service';
+import { InventoryService } from '../inventory/inventory.service';
+import { MonthlyClosingService } from '../finance/monthly-closing.service';
 
 const include = {
-  sale: { select: { id: true, invoiceNumber: true, total: true } },
+  sale: { select: { id: true, invoiceNumber: true, total: true, taxAmount: true } },
   booking: { select: { id: true, code: true, actualDelivery: true } },
   unit: { select: { id: true, vin: true } },
   customer: { select: { id: true, name: true } },
@@ -44,6 +47,8 @@ export class ReturnsService {
     private readonly tenant: TenantContext,
     private readonly sequence: SequenceService,
     private readonly activityLog: ActivityLogService,
+    private readonly inventory: InventoryService,
+    private readonly closing: MonthlyClosingService,
   ) {}
 
   async list(query: ListReturnsQuery): Promise<Paginated<VehicleReturnDto>> {
@@ -157,6 +162,108 @@ export class ReturnsService {
     if (updated.count !== 1) throw new ConflictException('The return changed state — reload and try again');
     await this.audit(userId, ActivityAction.STATUS_CHANGE, id, `Return ${row.returnNumber} cancelled${dto.reason ? `: ${dto.reason}` : ''}`);
     return this.get(id);
+  }
+
+  /**
+   * Finalize an APPROVED return (OWNER/MANAGER): issue the full-sale CreditNote, record the
+   * Refund (amountPaid − deduction, when > 0), disposition the unit (DELIVERED → RETURNED →
+   * disposition via the dedicated internal transition), void the warranty, and mark COMPLETED.
+   * Everything runs in one transaction and is idempotent — a status-guarded claim means a
+   * second attempt (or any mid-way failure) leaves no duplicate CreditNote/Refund and never
+   * leaves the vehicle incorrectly returned. Original Sale/Booking/Payment rows are untouched.
+   * Deeper P&L/GST treatment is Group 5; accessory restock is a Group 6 seam (no-op here).
+   */
+  async complete(id: string, dto: CompleteReturnInput, userId: string): Promise<VehicleReturnDto> {
+    const row = await this.loadOrThrow(id);
+    this.assertStatus(row, ReturnStatus.APPROVED, 'complete');
+    // Completion is dated now — respect a closed month.
+    await this.closing.assertOpen(new Date());
+
+    const paidAgg = await this.prisma.payment.aggregate({ _sum: { amount: true }, where: { OR: [{ bookingId: row.bookingId }, { saleId: row.saleId }] } });
+    const amountPaid = paidAgg._sum.amount ?? 0n;
+    const deduction = BigInt(dto.deductionAmount);
+    if (deduction < 0n) throw new BadRequestException('Deduction cannot be negative');
+    if (deduction > amountPaid) throw new BadRequestException('Deduction cannot exceed the amount the customer paid — that would leave an unexplained balance');
+    const refundDue = amountPaid - deduction;
+
+    const saleTotal = row.sale.total;
+    const gst = row.sale.taxAmount ?? 0n; // structural capture for the credit note; P&L/GST integration is Group 5
+
+    await this.prisma.$transaction(async (tx) => {
+      // Idempotency lock: claim the completion. A concurrent/second attempt (status no longer
+      // APPROVED) matches 0 rows and aborts before any CreditNote/Refund/unit change.
+      const claimed = await tx.vehicleReturn.updateMany({
+        where: { id, status: ReturnStatus.APPROVED },
+        data: {
+          status: ReturnStatus.COMPLETED,
+          disposition: dto.disposition,
+          deductionAmount: deduction,
+          deductionReason: dto.deductionReason ?? null,
+          completedById: userId,
+          completedAt: new Date(),
+          updatedById: userId,
+        },
+      });
+      if (claimed.count !== 1) throw new ConflictException('This return is no longer awaiting completion');
+
+      // Full-sale credit note (invoice reversal). Amounts recorded; P&L/GST wiring is Group 5.
+      const creditNoteNumber = await this.sequence.next('creditNote', tx);
+      await tx.creditNote.create({
+        data: {
+          creditNoteNumber,
+          returnId: id,
+          saleId: row.saleId,
+          amount: saleTotal - gst,
+          gstAmount: gst,
+          total: saleTotal,
+          reason: `Return ${row.returnNumber}: ${row.reason}`,
+          issuedById: userId,
+          createdById: userId,
+          updatedById: userId,
+        },
+      });
+
+      // Refund only when money is actually due back.
+      if (refundDue > 0n) {
+        const refundNumber = await this.sequence.next('refund', tx);
+        await tx.refund.create({
+          data: {
+            refundNumber,
+            returnId: id,
+            saleId: row.saleId,
+            customerId: row.customerId,
+            amount: refundDue,
+            method: dto.refundMethod,
+            reference: dto.refundReference ?? null,
+            note: dto.note ?? null,
+            refundedById: userId,
+            createdById: userId,
+            updatedById: userId,
+          },
+        });
+      }
+
+      // Vehicle disposition via the dedicated internal transition (generic API is locked out).
+      await this.inventory.applyReturnDisposition(row.unitId, dto.disposition, userId, tx);
+
+      // Void the vehicle's formal warranty record(s).
+      await tx.warranty.updateMany({ where: { unitId: row.unitId, status: { not: 'CANCELLED' } }, data: { status: 'CANCELLED' } });
+
+      // Group 6 seam — reverse accessory stock-out on return. No-op until accessory Group 6.
+      await this.restockReturnedAccessories(row, tx);
+    });
+
+    await this.audit(userId, ActivityAction.STATUS_CHANGE, id, `Return ${row.returnNumber} completed → ${dto.disposition} (credit note issued${refundDue > 0n ? `, refund ${refundDue}` : ''})`);
+    return this.get(id);
+  }
+
+  /**
+   * Accessory-restock seam for the return-completion transaction. When accessory Group 6
+   * (delivery stock-out via SaleAccessory) lands, reverse that stock-out here — stock IN +
+   * an AccessoryStockMovement inside this same `tx`. Intentionally a no-op for now.
+   */
+  private async restockReturnedAccessories(_ret: ReturnRow, _tx: Prisma.TransactionClient): Promise<void> {
+    // No accessory stock is affected by vehicle returns yet.
   }
 
   // ── internals ──

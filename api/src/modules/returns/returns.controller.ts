@@ -4,11 +4,13 @@ import {
   Role,
   approveReturnSchema,
   cancelReturnSchema,
+  completeReturnSchema,
   createReturnSchema,
   inspectReturnSchema,
   listReturnsQuerySchema,
   rejectReturnSchema,
   type CancelReturnInput,
+  type CompleteReturnInput,
   type CreateReturnInput,
   type InspectReturnInput,
   type ListReturnsQuery,
@@ -76,5 +78,12 @@ export class ReturnsController {
   @ApiOperation({ summary: 'Withdraw a not-yet-completed return (→ CANCELLED)' })
   cancel(@Param('id') id: string, @Body(new ZodValidationPipe(cancelReturnSchema)) dto: CancelReturnInput, @CurrentUser('id') userId: string) {
     return this.returns.cancel(id, dto, userId);
+  }
+
+  @Post(':id/complete')
+  @Roles(...MANAGE)
+  @ApiOperation({ summary: 'Finalize an approved return: credit note, refund, unit disposition, warranty void (APPROVED → COMPLETED)' })
+  complete(@Param('id') id: string, @Body(new ZodValidationPipe(completeReturnSchema)) dto: CompleteReturnInput, @CurrentUser('id') userId: string) {
+    return this.returns.complete(id, dto, userId);
   }
 }
