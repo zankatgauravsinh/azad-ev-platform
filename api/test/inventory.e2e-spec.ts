@@ -135,6 +135,27 @@ describe('Inventory (e2e)', () => {
     expect(events.body[1].toStatus).toBe('RESERVED');
   });
 
+  it('blocks the generic status API from marking a vehicle RETURNED (return-only path)', async () => {
+    // A dedicated unit driven to IN_SERVICE, from where the transition machine allows
+    // → RETURNED — but the generic API must refuse it: RETURNED is reachable only
+    // through the vehicle-return workflow, so a sold vehicle can't be walked back to stock.
+    const stamp = Date.now();
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/inventory/units')
+      .set('Authorization', bearer())
+      .send({ modelId, variant: 'RET-Variant', colour: 'RetBlue', vin: `RET${stamp}`, motorNumber: `RMOT${stamp}`, batteryNumber: `RBAT${stamp}`, purchaseCost: 10000000, sellingPrice: 12000000 })
+      .expect(201);
+    const rid = created.body.id;
+
+    await request(app.getHttpServer()).patch(`/api/v1/inventory/units/${rid}/status`).set('Authorization', bearer()).send({ toStatus: 'IN_SERVICE' }).expect(200);
+    const blocked = await request(app.getHttpServer()).patch(`/api/v1/inventory/units/${rid}/status`).set('Authorization', bearer()).send({ toStatus: 'RETURNED' }).expect(400);
+    expect(String(blocked.body.message)).toMatch(/vehicle-return workflow/i);
+
+    // Clean up (IN_SERVICE → AVAILABLE is unaffected by the guard).
+    await request(app.getHttpServer()).patch(`/api/v1/inventory/units/${rid}/status`).set('Authorization', bearer()).send({ toStatus: 'AVAILABLE' }).expect(200);
+    await request(app.getHttpServer()).delete(`/api/v1/inventory/units/${rid}`).set('Authorization', bearer());
+  });
+
   it('returns stats including the new unit', async () => {
     const res = await request(app.getHttpServer())
       .get('/api/v1/inventory/stats')

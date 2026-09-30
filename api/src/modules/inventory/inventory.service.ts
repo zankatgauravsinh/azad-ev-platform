@@ -261,6 +261,16 @@ export class InventoryService {
     if (!canTransitionUnit(unit.status as UnitStatus, dto.toStatus)) {
       throw new BadRequestException(`Cannot change status from ${unit.status} to ${dto.toStatus}`);
     }
+    // A vehicle enters and leaves RETURNED only through the approved vehicle-return
+    // workflow (request → inspection → approval → completion). The generic status API
+    // must never let a delivered vehicle be walked back into sellable stock — that would
+    // bypass the credit note, refund and inspection and let a sold unit be resold.
+    if (dto.toStatus === UnitStatus.RETURNED) {
+      throw new BadRequestException('A vehicle can only be marked RETURNED through the vehicle-return workflow');
+    }
+    if (unit.status === UnitStatus.RETURNED) {
+      throw new BadRequestException('A returned vehicle re-enters stock only via an approved return inspection');
+    }
     // A BOOKED unit belongs to a live booking; manually re-statusing it here would
     // orphan that booking (and could re-open the unit for a second sale).
     if (unit.status === UnitStatus.BOOKED) {
