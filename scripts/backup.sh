@@ -6,6 +6,7 @@
 #   DATABASE_URL=postgres://user:pass@host:5432/db ./scripts/backup.sh [backup_dir]
 #
 set -euo pipefail
+DATABASE_URL="postgresql://azad:azad@localhost:5432/azad_ev?schema=public"
 
 BACKUP_DIR="${1:-${BACKUP_DIR:-./backups}}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
