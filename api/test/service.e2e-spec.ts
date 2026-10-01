@@ -56,8 +56,10 @@ describe('Service & after-sales (e2e)', () => {
     unitId = unit.body.id;
     const customer = await http().post('/api/v1/customers').set('Authorization', auth(ownerToken)).send({ name: 'Svc Customer', phone: `96${stamp}` }).expect(201);
     customerId = customer.body.id;
-    const spares = await http().get('/api/v1/service/spare-parts').set('Authorization', auth(ownerToken)).expect(200);
-    sparePartId = spares.body.data[0].id;
+    // Use a dedicated part (not shared seed stock) so repeated runs stay idempotent.
+    const part = await http().post('/api/v1/service/spare-parts').set('Authorization', auth(ownerToken))
+      .send({ name: 'Svc Test Part', sku: `SVCP-${stamp}`, quantity: 100, cost: 1000, sellingPrice: 1500, minStock: 5 }).expect(201);
+    sparePartId = part.body.id;
   });
 
   afterAll(async () => {

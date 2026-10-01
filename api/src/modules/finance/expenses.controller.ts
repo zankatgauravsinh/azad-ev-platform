@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiParam, ApiTags } 
 import type { Response } from 'express';
 import {
   createExpenseSchema,
+  EXPENSE_ATTACHMENT_TYPES,
   listExpensesQuerySchema,
   setExpenseStatusSchema,
   updateExpenseSchema,
@@ -103,7 +104,9 @@ export class ExpensesController {
   addAttachment(@Param('id') id: string, @UploadedFile() file: MulterFile | undefined, @Body('type') type: string | undefined, @CurrentUser('id') userId: string) {
     if (!file) throw new BadRequestException('A file is required');
     if (!ATTACH_MIME.includes(file.mimetype)) throw new BadRequestException('Only JPG, PNG, WEBP or PDF files are allowed');
-    return this.expenses.addAttachment(id, file, (type ?? 'OTHER').toUpperCase(), userId);
+    const attachType = (type ?? 'OTHER').toUpperCase();
+    if (!(EXPENSE_ATTACHMENT_TYPES as readonly string[]).includes(attachType)) throw new BadRequestException('Invalid attachment type');
+    return this.expenses.addAttachment(id, file, attachType, userId);
   }
 
   @Delete(':id/attachments/:attachmentId')

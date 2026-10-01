@@ -24,6 +24,8 @@ export interface StorageService {
   save(input: SaveFileInput): Promise<StoredFile>;
   read(fileKey: string): Promise<Buffer>;
   remove(fileKey: string): Promise<void>;
-  /** Public/temporary URL for a stored object. */
+  /** Signed, time-limited URL for a stored object (safe to embed in `<img src>`). */
   urlFor(fileKey: string): string;
+  /** Verify the signed-URL query params for a key; throws if missing, tampered or expired. */
+  verifyUrl(fileKey: string, params: { exp?: string; sig?: string }): void;
 }

@@ -9,7 +9,7 @@ const customer = { id: 'c1', name: 'Ramesh', phone: '9825012345', leadStatus: 'N
 
 describe('CustomersService', () => {
   let repo: jest.Mocked<
-    Pick<CustomersRepository, 'findByPhone' | 'create' | 'update' | 'findById' | 'softDelete'>
+    Pick<CustomersRepository, 'findByPhone' | 'create' | 'update' | 'findById' | 'softDelete' | 'activeRelationCounts'>
   >;
   let timeline: jest.Mocked<Pick<CustomerTimelineService, 'record'>>;
   let activityLog: jest.Mocked<Pick<ActivityLogService, 'record'>>;
@@ -22,6 +22,7 @@ describe('CustomersService', () => {
       update: jest.fn().mockResolvedValue({ ...customer, leadStatus: 'INTERESTED' }),
       findById: jest.fn().mockResolvedValue(customer),
       softDelete: jest.fn().mockResolvedValue(customer),
+      activeRelationCounts: jest.fn().mockResolvedValue({ bookings: 0, serviceJobs: 0 }),
     } as never;
     timeline = { record: jest.fn().mockResolvedValue({}) } as never;
     activityLog = { record: jest.fn().mockResolvedValue(undefined) } as never;
@@ -85,6 +86,12 @@ describe('CustomersService', () => {
     it('soft-deletes a customer', async () => {
       await service.remove('c1', 'u1');
       expect(repo.softDelete).toHaveBeenCalledWith('c1');
+    });
+
+    it('refuses to delete a customer with open bookings or service jobs', async () => {
+      repo.activeRelationCounts.mockResolvedValueOnce({ bookings: 1, serviceJobs: 0 });
+      await expect(service.remove('c1', 'u1')).rejects.toThrow(/open booking/);
+      expect(repo.softDelete).not.toHaveBeenCalled();
     });
   });
 });

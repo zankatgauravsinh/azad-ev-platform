@@ -103,11 +103,14 @@ export function SettingsPage(): JSX.Element {
       <form onSubmit={onSubmit}>
         <fieldset disabled={!canWrite}>
           <Tabs defaultValue="general">
-            <TabsList className="flex-wrap">
-              {['general', 'branding', 'sales', 'invoice', 'service', 'finance', 'notifications', 'localization', 'backup'].map((t) => (
-                <TabsTrigger key={t} value={t}>{titleCase(t)}</TabsTrigger>
-              ))}
-            </TabsList>
+            {/* Horizontal scroll strip so the 9 tabs never wrap/overlap on narrow screens. */}
+            <div className="overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <TabsList className="w-max">
+                {['general', 'branding', 'sales', 'invoice', 'service', 'finance', 'notifications', 'localization', 'backup'].map((t) => (
+                  <TabsTrigger key={t} value={t}>{titleCase(t)}</TabsTrigger>
+                ))}
+              </TabsList>
+            </div>
 
             <TabsContent value="general">
               <Panel>
@@ -171,7 +174,12 @@ export function SettingsPage(): JSX.Element {
                   <SwitchField control={control} name="gstEnabled" label="GST enabled" />
                   <Field label="GST number" error={errors.gstNumber?.message}><Input {...register('gstNumber')} disabled={!canWrite || !values.gstEnabled} /></Field>
                   <Field label="Tax percentage (%)" error={errors.taxPercentage?.message}><Input type="number" min={0} max={100} step={0.1} {...register('taxPercentage', { valueAsNumber: true })} /></Field>
-                  <Field label="Terms & conditions" className="sm:col-span-2"><Textarea rows={3} {...register('termsAndConditions')} /></Field>
+                  <Field label="Terms & conditions" className="sm:col-span-2">
+                    <div>
+                      <Textarea rows={3} {...register('termsAndConditions')} />
+                      <p className="mt-1 text-xs text-muted-foreground">Characters: {(values.termsAndConditions ?? '').length}</p>
+                    </div>
+                  </Field>
                   <Field label="Invoice footer" className="sm:col-span-2"><Input {...register('invoiceFooter')} /></Field>
                 </Grid>
               </Panel>

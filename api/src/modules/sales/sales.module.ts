@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CustomersModule } from '../customers/customers.module';
+import { MonthlyClosingModule } from '../finance/monthly-closing.module';
 import { QuotationsController } from './quotations.controller';
 import { QuotationsService } from './quotations.service';
 import { BookingsController } from './bookings.controller';
@@ -9,7 +10,7 @@ import { SequenceService } from './sequence.service';
 import { SalesPdfService } from './sales-pdf.service';
 
 @Module({
-  imports: [CustomersModule], // for CustomerTimelineService (append to the customer timeline)
+  imports: [CustomersModule, MonthlyClosingModule], // CustomerTimelineService; month-lock guard on back-dated payments
   controllers: [QuotationsController, BookingsController, AccessoriesController],
   providers: [QuotationsService, BookingsService, SequenceService, SalesPdfService],
   exports: [BookingsService, QuotationsService, SequenceService],

@@ -1,10 +1,13 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AppConfigService } from '../config/app-config.service';
 import { TenantContext } from '../tenant/tenant-context.service';
 import type { SaveFileInput, StorageService, StoredFile } from './storage.service';
+
+/** How long a signed upload URL stays valid — long enough for a working session, short enough to bound a leaked link. */
+const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 @Injectable()
 export class LocalStorageService implements StorageService {
@@ -50,7 +53,29 @@ export class LocalStorageService implements StorageService {
   }
 
   urlFor(fileKey: string): string {
-    return `/api/v1/uploads/${encodeURIComponent(fileKey)}`;
+    const exp = Math.floor(Date.now() / 1000) + SIGNED_URL_TTL_SECONDS;
+    const sig = this.sign(fileKey, exp);
+    return `/api/v1/uploads/${encodeURIComponent(fileKey)}?exp=${exp}&sig=${sig}`;
+  }
+
+  verifyUrl(fileKey: string, params: { exp?: string; sig?: string }): void {
+    const { exp, sig } = params;
+    if (!exp || !sig) throw new ForbiddenException('File link is missing its access token');
+    const expSeconds = Number(exp);
+    if (!Number.isFinite(expSeconds) || expSeconds * 1000 < Date.now()) {
+      throw new ForbiddenException('File link has expired');
+    }
+    const expected = this.sign(fileKey, expSeconds);
+    const provided = Buffer.from(sig);
+    const wanted = Buffer.from(expected);
+    if (provided.length !== wanted.length || !timingSafeEqual(provided, wanted)) {
+      throw new ForbiddenException('File link is invalid');
+    }
+  }
+
+  /** HMAC over the key + expiry; namespaced so it can never collide with an auth token. */
+  private sign(fileKey: string, exp: number): string {
+    return createHmac('sha256', this.config.get('JWT_ACCESS_SECRET')).update(`upload:${fileKey}:${exp}`).digest('hex');
   }
 
   /** Resolve a key to an absolute path, guarding against path traversal. */

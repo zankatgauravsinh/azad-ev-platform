@@ -34,8 +34,8 @@ describe('sales pricing', () => {
       expect(computeTotal({ ...base, accessoriesTotal: 200000, taxAmount: 100000 })).toBe(11920000n);
     });
 
-    it('never returns a negative total', () => {
-      expect(computeTotal({ ...base, discount: 99999999 })).toBe(0n);
+    it('rejects a negative total instead of clamping to zero', () => {
+      expect(() => computeTotal({ ...base, discount: 99999999 })).toThrow(/exceed the on-road price/);
     });
   });
 });

@@ -103,6 +103,11 @@ export class ExpensesService {
     const existing = await this.getRowOrThrow(id);
     await this.closing.assertOpen(existing.expenseDate);
     if (dto.expenseDate) await this.closing.assertOpen(dto.expenseDate);
+    // Financial fields freeze once approved/paid so approved figures (and P&L /
+    // vendor outstanding) can't be altered after the fact.
+    if ((existing.status === 'APPROVED' || existing.paid) && (dto.amount !== undefined || dto.gstAmount !== undefined || dto.expenseDate !== undefined || dto.vendorId !== undefined)) {
+      throw new BadRequestException('Amount, GST, date and vendor cannot be changed after approval');
+    }
     const updated = await this.prisma.expense.update({
       where: { id },
       data: {
@@ -135,6 +140,8 @@ export class ExpensesService {
   async setStatus(id: string, dto: SetExpenseStatusInput, userId: string): Promise<ExpenseDto> {
     const existing = await this.getRowOrThrow(id);
     await this.closing.assertOpen(existing.expenseDate);
+    // A settled expense is final — its approval state can't be reversed.
+    if (existing.paid) throw new BadRequestException('A settled (paid) expense cannot change approval status');
     const updated = await this.prisma.expense.update({ where: { id }, data: { status: dto.status, updatedById: userId }, include: expenseInclude });
     await this.activityLog.record({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'Expense', entityId: id, summary: `Expense ${updated.expenseNumber} ${dto.status.toLowerCase()}` });
     return this.toDto(updated);
@@ -142,6 +149,8 @@ export class ExpensesService {
 
   async settle(id: string, userId: string): Promise<ExpenseDto> {
     const existing = await this.getRowOrThrow(id);
+    // Only an approved expense can be marked paid (a draft/pending/rejected can't).
+    if (existing.status !== 'APPROVED') throw new BadRequestException('Only an approved expense can be marked paid');
     await this.closing.assertOpen(existing.expenseDate);
     const updated = await this.prisma.expense.update({ where: { id }, data: { paid: true, settledDate: new Date(), updatedById: userId }, include: expenseInclude });
     await this.activityLog.record({ actorId: userId, action: 'PAYMENT', entityType: 'Expense', entityId: id, summary: `Settled expense ${updated.expenseNumber}` });

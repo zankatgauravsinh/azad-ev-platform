@@ -144,6 +144,13 @@ export class CustomersService {
 
   async remove(id: string, userId: string): Promise<void> {
     const customer = await this.getById(id);
+    const active = await this.repo.activeRelationCounts(id);
+    if (active.bookings > 0 || active.serviceJobs > 0) {
+      const parts: string[] = [];
+      if (active.bookings > 0) parts.push(`${active.bookings} open booking(s)`);
+      if (active.serviceJobs > 0) parts.push(`${active.serviceJobs} open service job(s)`);
+      throw new ConflictException(`Cannot delete ${customer.name}: ${parts.join(' and ')} still active — close or cancel them first`);
+    }
     await this.repo.softDelete(id);
     await this.activityLog.record({
       actorId: userId,
@@ -204,13 +211,17 @@ export class CustomersService {
 
   async getRelated(id: string): Promise<CustomerRelated> {
     await this.getById(id);
-    const [bookings, payments, deliveries, service, warrantySales] = await Promise.all([
+    const [bookings, payments, deliveries, service, warrantySales, warrantyRecords] = await Promise.all([
       this.repo.bookings(id),
       this.repo.payments(id),
       this.repo.deliveries(id),
       this.repo.service(id),
       this.repo.warrantySales(id),
+      this.repo.warrantyRecords(id),
     ]);
+    // unitId → the id of its (latest) formal warranty record, so the UI can open the warranty dialog.
+    const warrantyByUnit = new Map<string, string>();
+    for (const w of warrantyRecords) if (!warrantyByUnit.has(w.unitId)) warrantyByUnit.set(w.unitId, w.id);
     return {
       bookings: bookings.map((b) => ({ ...b, createdAt: b.createdAt.toISOString() })),
       payments: payments.map((p) => ({
@@ -219,9 +230,17 @@ export class CustomersService {
         mode: p.mode,
         context: p.context,
         paidAt: p.paidAt.toISOString(),
+        receiptNumber: p.receiptNumber,
+        reference: p.reference,
+        bookingId: p.booking?.id ?? p.sale?.bookingId ?? null,
+        bookingCode: p.booking?.code ?? null,
+        invoiceNumber: p.booking?.sale?.invoiceNumber ?? p.sale?.invoiceNumber ?? null,
+        serviceJobId: p.serviceJob?.id ?? null,
+        serviceCode: p.serviceJob?.code ?? null,
       })),
       deliveries: deliveries.map((d) => ({
         id: d.id,
+        bookingId: d.sale.bookingId,
         saleId: d.saleId,
         deliveredAt: d.deliveredAt.toISOString(),
         vin: d.sale.unit.vin,
@@ -232,7 +251,7 @@ export class CustomersService {
         complaint: s.complaints.map((c) => c.description).join('; '),
         createdAt: s.createdAt.toISOString(),
       })),
-      warranty: warrantySales.map((s) => this.toWarranty(s)),
+      warranty: warrantySales.map((s) => this.toWarranty(s, warrantyByUnit.get(s.unit.id) ?? null)),
     };
   }
 
@@ -355,10 +374,13 @@ export class CustomersService {
     return upper as (typeof DOCUMENT_TYPES)[number];
   }
 
-  private toWarranty(sale: {
-    unit: { id: string; vin: string; variant: { name: string; warrantyMonths: number | null; model: { name: string } } };
-    delivery: { deliveredAt: Date } | null;
-  }): WarrantyDto {
+  private toWarranty(
+    sale: {
+      unit: { id: string; vin: string; variant: { name: string; warrantyMonths: number | null; model: { name: string } } };
+      delivery: { deliveredAt: Date } | null;
+    },
+    warrantyId: string | null,
+  ): WarrantyDto {
     const deliveredAt = sale.delivery?.deliveredAt ?? null;
     const months = sale.unit.variant.warrantyMonths ?? null;
     let expiry: Date | null = null;
@@ -367,6 +389,7 @@ export class CustomersService {
       expiry.setMonth(expiry.getMonth() + months);
     }
     return {
+      warrantyId,
       unitId: sale.unit.id,
       vin: sale.unit.vin,
       model: sale.unit.variant.model.name,

@@ -30,8 +30,9 @@ export class AccessoriesController {
   @Roles(Role.OWNER, Role.MANAGER)
   @ApiOperation({ summary: 'Add an accessory / part' })
   create(@Body(new ZodValidationPipe(createAccessorySchema)) dto: CreateAccessoryInput, @CurrentUser('id') userId: string) {
+    // avgCost / onHand / reserved are system-maintained (opening stock & purchases) — never set here.
     return this.prisma.accessory.create({
-      data: { name: dto.name, sku: dto.sku ?? null, sellPrice: BigInt(dto.sellPrice), costPrice: BigInt(dto.costPrice), isPart: dto.isPart, createdById: userId, updatedById: userId },
+      data: { name: dto.name, sku: dto.sku ?? null, category: dto.category ?? null, sellPrice: BigInt(dto.sellPrice), minStock: dto.minStock, isPart: dto.isPart, createdById: userId, updatedById: userId },
     });
   }
 }

@@ -29,6 +29,7 @@ import { CustomerTimelineService } from '../customers/customer-timeline.service'
 import { SequenceService } from './sequence.service';
 import { SalesPdfService } from './sales-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
+import { MonthlyClosingService } from '../finance/monthly-closing.service';
 import { computeTotal, sumAccessories } from './pricing';
 
 type Tx = Prisma.TransactionClient;
@@ -57,6 +58,7 @@ export class BookingsService {
     private readonly activityLog: ActivityLogService,
     private readonly pdf: SalesPdfService,
     private readonly pdfBrand: PdfBrandService,
+    private readonly closing: MonthlyClosingService,
   ) {}
 
   // ── Reads ──────────────────────────────────────────────
@@ -214,6 +216,8 @@ export class BookingsService {
   async addPayment(id: string, dto: AddPaymentInput, userId: string) {
     const booking = await this.getById(id);
     if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot add a payment to a cancelled booking');
+    // A payment dated in a closed month would silently change that month's collected total.
+    await this.closing.assertOpen(dto.paidAt ?? new Date());
     const payment = await this.prisma.$transaction((tx) => this.insertPayment(tx, id, dto, userId, booking.customerId));
     return payment;
   }
@@ -226,32 +230,40 @@ export class BookingsService {
   // ── Finance ────────────────────────────────────────────
   async upsertFinance(id: string, dto: UpsertFinanceInput, userId: string) {
     const booking = await this.getById(id);
+    if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot update finance on a cancelled booking');
     const wasApproved = booking.finance?.status === FinanceStatus.APPROVED;
-    const finance = await this.prisma.financeDetail.upsert({
-      where: { bookingId: id },
-      create: { bookingId: id, financeCompany: dto.financeCompany, downPayment: BigInt(dto.downPayment), loanAmount: BigInt(dto.loanAmount), emiAmount: BigInt(dto.emiAmount), tenureMonths: dto.tenureMonths, interestRate: dto.interestRate, disbursedAmount: BigInt(dto.disbursedAmount), status: dto.status, createdById: userId, updatedById: userId },
-      update: { financeCompany: dto.financeCompany, downPayment: BigInt(dto.downPayment), loanAmount: BigInt(dto.loanAmount), emiAmount: BigInt(dto.emiAmount), tenureMonths: dto.tenureMonths, interestRate: dto.interestRate, disbursedAmount: BigInt(dto.disbursedAmount), status: dto.status, updatedById: userId },
+    const finance = await this.prisma.$transaction(async (tx) => {
+      const detail = await tx.financeDetail.upsert({
+        where: { bookingId: id },
+        create: { bookingId: id, financeCompany: dto.financeCompany, downPayment: BigInt(dto.downPayment), loanAmount: BigInt(dto.loanAmount), emiAmount: BigInt(dto.emiAmount), tenureMonths: dto.tenureMonths, interestRate: dto.interestRate, disbursedAmount: BigInt(dto.disbursedAmount), status: dto.status, createdById: userId, updatedById: userId },
+        update: { financeCompany: dto.financeCompany, downPayment: BigInt(dto.downPayment), loanAmount: BigInt(dto.loanAmount), emiAmount: BigInt(dto.emiAmount), tenureMonths: dto.tenureMonths, interestRate: dto.interestRate, disbursedAmount: BigInt(dto.disbursedAmount), status: dto.status, updatedById: userId },
+      });
+      await tx.booking.update({ where: { id }, data: { financeRequired: true, updatedById: userId } });
+      if (dto.status === FinanceStatus.APPROVED && !wasApproved) {
+        await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.FINANCE_APPROVED, title: `Finance approved (${dto.financeCompany})`, entityType: 'Booking', entityId: id, actorId: userId }, tx);
+      }
+      return detail;
     });
-    await this.prisma.booking.update({ where: { id }, data: { financeRequired: true, updatedById: userId } });
-    if (dto.status === FinanceStatus.APPROVED && !wasApproved) {
-      await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.FINANCE_APPROVED, title: `Finance approved (${dto.financeCompany})`, entityType: 'Booking', entityId: id, actorId: userId });
-    }
     return finance;
   }
 
   // ── Insurance ──────────────────────────────────────────
   async upsertInsurance(id: string, dto: UpsertInsuranceInput, userId: string) {
     const booking = await this.getById(id);
+    if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot update insurance on a cancelled booking');
     const isNew = !booking.insurance;
-    const insurance = await this.prisma.insuranceDetail.upsert({
-      where: { bookingId: id },
-      create: { bookingId: id, provider: dto.provider, policyNumber: dto.policyNumber ?? null, premium: BigInt(dto.premium), startDate: dto.startDate ?? null, endDate: dto.endDate ?? null, status: dto.status, createdById: userId, updatedById: userId },
-      update: { provider: dto.provider, policyNumber: dto.policyNumber ?? null, premium: BigInt(dto.premium), startDate: dto.startDate ?? null, endDate: dto.endDate ?? null, status: dto.status, updatedById: userId },
+    const insurance = await this.prisma.$transaction(async (tx) => {
+      const detail = await tx.insuranceDetail.upsert({
+        where: { bookingId: id },
+        create: { bookingId: id, provider: dto.provider, policyNumber: dto.policyNumber ?? null, premium: BigInt(dto.premium), startDate: dto.startDate ?? null, endDate: dto.endDate ?? null, status: dto.status, createdById: userId, updatedById: userId },
+        update: { provider: dto.provider, policyNumber: dto.policyNumber ?? null, premium: BigInt(dto.premium), startDate: dto.startDate ?? null, endDate: dto.endDate ?? null, status: dto.status, updatedById: userId },
+      });
+      await tx.booking.update({ where: { id }, data: { insuranceRequired: true, updatedById: userId } });
+      if (isNew) {
+        await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.INSURANCE_ADDED, title: `Insurance added (${dto.provider})`, entityType: 'Booking', entityId: id, actorId: userId }, tx);
+      }
+      return detail;
     });
-    await this.prisma.booking.update({ where: { id }, data: { insuranceRequired: true, updatedById: userId } });
-    if (isNew) {
-      await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.INSURANCE_ADDED, title: `Insurance added (${dto.provider})`, entityType: 'Booking', entityId: id, actorId: userId });
-    }
     return insurance;
   }
 
@@ -265,8 +277,9 @@ export class BookingsService {
   async markDelivered(id: string, dto: MarkDeliveredInput, userId: string) {
     const booking = await this.getById(id);
     if (!booking.sale) throw new BadRequestException('Generate the invoice before delivering');
-    const summary = this.paymentSummary(booking);
-    if (summary.status !== PaymentStatus.PAID) throw new BadRequestException(`Balance of ${(Number(summary.balance) / 100).toFixed(2)} is pending`);
+    // A partial (or nil) payment does NOT block delivery — the unpaid balance
+    // stays tracked as outstanding via the booking's payments, and no automatic
+    // adjustment is made to clear it. Only the invoice-exists guard remains.
     const deliveredAt = dto.actualDelivery ?? new Date();
     await this.prisma.$transaction(async (tx) => {
       await this.transitionUnit(tx, booking.unitId, UnitStatus.DELIVERED, userId, `Delivered on booking ${booking.code}`);
@@ -403,12 +416,20 @@ export class BookingsService {
 
   /** Allocate a specific VIN to a booking — the unit must be AVAILABLE (prevents double allocation). */
   private async allocateUnit(tx: Tx, unitId: string, bookingCode: string, userId: string, _customerId: string): Promise<void> {
-    const unit = await tx.inventoryUnit.findFirst({ where: { id: unitId } });
-    if (!unit) throw new NotFoundException('Scooter not found');
-    if (unit.status !== UnitStatus.AVAILABLE) {
+    // Atomic claim: flip AVAILABLE → BOOKED in one guarded write so two concurrent
+    // bookings can't both grab the same unit (count === 1 means we won the race).
+    const claimed = await tx.inventoryUnit.updateMany({
+      where: { id: unitId, status: UnitStatus.AVAILABLE },
+      data: { status: UnitStatus.BOOKED, updatedById: userId },
+    });
+    if (claimed.count !== 1) {
+      const unit = await tx.inventoryUnit.findFirst({ where: { id: unitId }, select: { vin: true, status: true } });
+      if (!unit) throw new NotFoundException('Scooter not found');
       throw new ConflictException(`Scooter ${unit.vin} is not available (currently ${unit.status})`);
     }
-    await this.transitionUnit(tx, unitId, UnitStatus.BOOKED, userId, `Allocated to booking ${bookingCode}`);
+    await tx.inventoryEvent.create({
+      data: { unitId, fromStatus: UnitStatus.AVAILABLE, toStatus: UnitStatus.BOOKED, note: `Allocated to booking ${bookingCode}`, createdById: userId },
+    });
   }
 
   private async releaseUnit(tx: Tx, unitId: string, userId: string, note: string): Promise<void> {

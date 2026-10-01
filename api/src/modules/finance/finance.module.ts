@@ -16,10 +16,10 @@ import { PnlService } from './pnl.service';
 import { FinanceDashboardService } from './finance-dashboard.service';
 import { FinancePdfService } from './finance-pdf.service';
 import { RecurringExpensesService } from './recurring-expenses.service';
-import { MonthlyClosingService } from './monthly-closing.service';
+import { MonthlyClosingModule } from './monthly-closing.module';
 
 @Module({
-  imports: [CustomersModule, SalesModule], // CustomerTimelineService + SequenceService (StorageModule is @Global)
+  imports: [CustomersModule, SalesModule, MonthlyClosingModule], // CustomerTimelineService + SequenceService (StorageModule is @Global)
   controllers: [FinanceController, ExpensesController, VendorsController, IncomeController, BankController],
   providers: [
     ExpenseCategoriesService,
@@ -32,7 +32,6 @@ import { MonthlyClosingService } from './monthly-closing.service';
     FinanceDashboardService,
     FinancePdfService,
     RecurringExpensesService,
-    MonthlyClosingService,
   ],
   exports: [ExpensesService, PnlService, CashbookService],
 })

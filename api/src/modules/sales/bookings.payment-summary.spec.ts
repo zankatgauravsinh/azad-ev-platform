@@ -5,6 +5,7 @@ import type { CustomerTimelineService } from '../customers/customer-timeline.ser
 import type { ActivityLogService } from '../../activity-log/activity-log.service';
 import type { SalesPdfService } from './sales-pdf.service';
 import type { PdfBrandService } from '../../common/pdf/pdf-brand.service';
+import type { MonthlyClosingService } from '../finance/monthly-closing.service';
 
 describe('BookingsService.paymentSummary (payment calculations)', () => {
   const service = new BookingsService(
@@ -14,6 +15,7 @@ describe('BookingsService.paymentSummary (payment calculations)', () => {
     {} as ActivityLogService,
     {} as SalesPdfService,
     {} as PdfBrandService,
+    {} as MonthlyClosingService,
   );
 
   it('reports PENDING when nothing is paid', () => {

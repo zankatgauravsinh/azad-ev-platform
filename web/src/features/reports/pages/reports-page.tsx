@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { FileSpreadsheet, FileText, FileDown } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ExportFormat, ReportKpi, ReportType } from '@azad/shared';
+import type { ExportFormat, ReportKpi, ReportType, ReturnDisposition, ReturnStatus } from '@azad/shared';
+import { RETURN_DISPOSITIONS, RETURN_STATUSES } from '@azad/shared';
 import { apiErrorMessage } from '@/lib/api-client';
 import { saveBlob } from '@/lib/download';
 import { formatPaise } from '@/lib/money';
@@ -13,11 +14,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BarChart } from '@/features/dashboard/components/bar-chart';
 import { useServiceReports } from '@/features/service/hooks';
-import { reportsApi, type Range } from '../api';
-import { useOverviewReport, useSalesReport, useCustomersReport, useInventoryReport, usePaymentsReport } from '../hooks';
+import { returnStatusLabel, dispositionLabel } from '@/features/returns/meta';
+import { reportsApi, type Range, type ReturnsFilter } from '../api';
+import { useOverviewReport, useSalesReport, useCustomersReport, useInventoryReport, usePaymentsReport, useReturnsReport } from '../hooks';
 import { HBarList, DailyBars } from '../components/report-charts';
 
 const startOfToday = (): Date => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
@@ -95,6 +98,10 @@ export function ReportsPage(): JSX.Element {
   const inventory = useInventoryReport();
   const payments = usePaymentsReport(range);
   const service = useServiceReports();
+  const [rStatus, setRStatus] = useState<ReturnStatus | 'ALL'>('ALL');
+  const [rDisp, setRDisp] = useState<ReturnDisposition | 'ALL'>('ALL');
+  const returnsFilter: ReturnsFilter = { from: range.from, to: range.to, status: rStatus === 'ALL' ? undefined : rStatus, disposition: rDisp === 'ALL' ? undefined : rDisp };
+  const returns = useReturnsReport(returnsFilter);
 
   return (
     <div className="pb-4">
@@ -112,9 +119,12 @@ export function ReportsPage(): JSX.Element {
       </CardContent></Card>
 
       <Tabs defaultValue="overview">
-        <TabsList className="flex-wrap">
-          {['overview', 'sales', 'customers', 'inventory', 'payments', 'service'].map((t) => <TabsTrigger key={t} value={t}>{titleCase(t)}</TabsTrigger>)}
-        </TabsList>
+        {/* Horizontal scroll strip so tabs never wrap/overlap on narrow screens. */}
+        <div className="overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <TabsList className="w-max">
+            {['overview', 'sales', 'customers', 'inventory', 'payments', 'service', 'returns'].map((t) => <TabsTrigger key={t} value={t}>{titleCase(t)}</TabsTrigger>)}
+          </TabsList>
+        </div>
 
         {/* Overview */}
         <TabsContent value="overview" className="space-y-6">
@@ -191,7 +201,62 @@ export function ReportsPage(): JSX.Element {
             </>
           )}
         </TabsContent>
+
+        {/* Vehicle returns */}
+        <TabsContent value="returns" className="space-y-6">
+          <Kpis kpis={returns.data?.kpis} loading={returns.isLoading} cols="lg:grid-cols-4" />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <Select value={rStatus} onValueChange={(v) => setRStatus(v as ReturnStatus | 'ALL')}>
+                <SelectTrigger className="w-44"><SelectValue placeholder="Status" /></SelectTrigger>
+                <SelectContent><SelectItem value="ALL">All statuses</SelectItem>{RETURN_STATUSES.map((s) => <SelectItem key={s} value={s}>{returnStatusLabel[s]}</SelectItem>)}</SelectContent>
+              </Select>
+              <Select value={rDisp} onValueChange={(v) => setRDisp(v as ReturnDisposition | 'ALL')}>
+                <SelectTrigger className="w-48"><SelectValue placeholder="Disposition" /></SelectTrigger>
+                <SelectContent><SelectItem value="ALL">All dispositions</SelectItem>{RETURN_DISPOSITIONS.map((d) => <SelectItem key={d} value={d}>{dispositionLabel[d]}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            {returns.data && <ReturnsExportBar filter={returnsFilter} />}
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Panel title="By status">
+              <ul className="space-y-1.5 text-sm">{(returns.data?.byStatus ?? []).map((s) => <li key={s.status} className="flex justify-between"><span>{returnStatusLabel[s.status]}</span><span className="tabular-nums text-muted-foreground">{s.count}</span></li>)}</ul>
+            </Panel>
+            <Panel title="By disposition">
+              <ul className="space-y-1.5 text-sm">{(returns.data?.byDisposition ?? []).map((d) => <li key={d.disposition} className="flex justify-between"><span>{dispositionLabel[d.disposition]}</span><span className="tabular-nums text-muted-foreground">{d.count}</span></li>)}</ul>
+            </Panel>
+          </div>
+          <Panel title="Returns per month">{returns.data ? <BarChart points={returns.data.byMonth} tone="primary" /> : <Skeleton className="h-40" />}</Panel>
+          <Panel title="Returns">
+            {returns.data ? (
+              <ReportTable
+                headers={['Return', 'Requested', 'Customer', 'Vehicle', 'Status', 'Deduction', 'Refund']}
+                empty="No returns in range"
+                rows={returns.data.rows.map((r) => [r.returnNumber, new Date(r.requestedDate).toLocaleDateString('en-IN'), r.customer, r.vin, titleCase(r.status), formatPaise(r.deduction), formatPaise(r.refundAmount)])}
+              />
+            ) : <Skeleton className="h-40" />}
+          </Panel>
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function ReturnsExportBar({ filter }: { filter: ReturnsFilter }): JSX.Element {
+  const [busy, setBusy] = useState<ExportFormat | null>(null);
+  const run = async (format: ExportFormat): Promise<void> => {
+    setBusy(format);
+    try {
+      const blob = await reportsApi.exportReturns(format, filter);
+      saveBlob(blob, `returns-report.${format === 'excel' ? 'xlsx' : format}`);
+    } catch (e) { toast.error(apiErrorMessage(e, 'Export failed')); }
+    finally { setBusy(null); }
+  };
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => run('pdf')}><FileText className="h-4 w-4" /> PDF</Button>
+      <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => run('excel')}><FileSpreadsheet className="h-4 w-4" /> Excel</Button>
+      <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => run('csv')}><FileDown className="h-4 w-4" /> CSV</Button>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
-import { formatInr } from '../../common/utils/money';
+import { formatInrExact } from '../../common/utils/money';
 import { drawBrandHeader, drawBrandFooter, useBrandFonts, NAVY, FONT_BODY, FONT_BOLD, type PdfBrand } from '../../common/pdf/brand';
 
 export interface PdfLine {
@@ -74,7 +74,7 @@ export class SalesPdfService {
       doc.font(FONT_BODY).fontSize(10);
       for (const line of input.lines) {
         doc.fillColor('#000').text(line.label, left + 8, y + 5);
-        const amount = `${line.negative ? '− ' : ''}${formatInr(line.amount)}`;
+        const amount = `${line.negative ? '− ' : ''}${formatInrExact(line.amount)}`;
         doc.text(amount, right - 108, y + 5, { width: 100, align: 'right' });
         y += rowH;
         doc.moveTo(left, y).lineTo(right, y).strokeColor('#eee').stroke();
@@ -83,7 +83,7 @@ export class SalesPdfService {
       doc.rect(left, y, right - left, rowH + 4).fill('#EDEFF2');
       doc.fillColor(NAVY).font(FONT_BOLD).fontSize(11);
       doc.text('On-road Total', left + 8, y + 6);
-      doc.text(formatInr(input.total), right - 128, y + 6, { width: 120, align: 'right' });
+      doc.text(formatInrExact(input.total), right - 128, y + 6, { width: 120, align: 'right' });
       y += rowH + 14;
 
       if (input.finance) {
@@ -91,7 +91,7 @@ export class SalesPdfService {
         y += 16;
         doc.fillColor('#000').font(FONT_BODY).fontSize(9);
         doc.text(
-          `${input.finance.company} · Loan ${formatInr(input.finance.loanAmount)} · Down ${formatInr(input.finance.downPayment)} · EMI ${formatInr(input.finance.emi)} × ${input.finance.tenureMonths} months`,
+          `${input.finance.company} · Loan ${formatInrExact(input.finance.loanAmount)} · Down ${formatInrExact(input.finance.downPayment)} · EMI ${formatInrExact(input.finance.emi)} × ${input.finance.tenureMonths} months`,
           left,
           y,
         );

@@ -23,21 +23,23 @@ export function ServiceReportsPage(): JSX.Element {
         <Card><CardContent className="p-5">
           <h3 className="mb-3 text-sm font-semibold">Today</h3>
           <div className="grid grid-cols-3 gap-2 text-sm">
-            <div><p className="text-2xl font-bold">{data.daily.created}</p><p className="text-muted-foreground">Created</p></div>
-            <div><p className="text-2xl font-bold">{data.daily.delivered}</p><p className="text-muted-foreground">Delivered</p></div>
-            <div><p className="text-2xl font-bold">{formatPaise(data.daily.collected)}</p><p className="text-muted-foreground">Collected</p></div>
+            <div><p className="text-lg font-bold sm:text-2xl">{data.daily.created}</p><p className="text-muted-foreground">Created</p></div>
+            <div><p className="text-lg font-bold sm:text-2xl">{data.daily.delivered}</p><p className="text-muted-foreground">Delivered</p></div>
+            <div><p className="text-lg font-bold tabular-nums sm:text-2xl">{formatPaise(data.daily.collected)}</p><p className="text-muted-foreground">Collected</p></div>
           </div>
         </CardContent></Card>
 
         <Card><CardContent className="p-5">
           <h3 className="mb-3 text-sm font-semibold">Technician performance</h3>
           {data.technicians.length === 0 ? <p className="text-sm text-muted-foreground">No technicians.</p> : (
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-muted-foreground"><th>Name</th><th className="text-right">Jobs</th><th className="text-right">Delivered</th><th className="text-right">Revenue</th><th className="text-right">Rating</th></tr></thead>
-              <tbody>{data.technicians.map((t) => (
-                <tr key={t.technicianId} className="border-t"><td className="py-1">{t.name}</td><td className="text-right">{t.totalJobs}</td><td className="text-right">{t.delivered}</td><td className="text-right">{formatPaise(t.revenue)}</td><td className="text-right">{t.avgRating ? `${t.avgRating.toFixed(1)}★` : '—'}</td></tr>
-              ))}</tbody>
-            </table>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[28rem] text-sm">
+                <thead><tr className="text-left text-muted-foreground"><th>Name</th><th className="text-right">Jobs</th><th className="text-right">Delivered</th><th className="text-right">Revenue</th><th className="text-right">Rating</th></tr></thead>
+                <tbody>{data.technicians.map((t) => (
+                  <tr key={t.technicianId} className="border-t"><td className="py-1">{t.name}</td><td className="text-right">{t.totalJobs}</td><td className="text-right">{t.delivered}</td><td className="text-right">{formatPaise(t.revenue)}</td><td className="text-right">{t.avgRating ? `${t.avgRating.toFixed(1)}★` : '—'}</td></tr>
+                ))}</tbody>
+              </table>
+            </div>
           )}
         </CardContent></Card>
 

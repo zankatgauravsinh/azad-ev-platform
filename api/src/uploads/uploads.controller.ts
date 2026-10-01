@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Param, Res } from '@nestjs/common';
+import { Controller, Get, Inject, Param, Query, Res } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { Public } from '../common/decorators/public.decorator';
@@ -14,9 +14,10 @@ const MIME_BY_EXT: Record<string, string> = {
 };
 
 /**
- * Serves stored files. Keys are unguessable UUIDs (local storage). Marked public
- * so `<img src>` works without an auth header; when moved to S3 this becomes a
- * signed URL instead. See ARCHITECTURE §6.
+ * Serves stored files. The endpoint is unauthenticated so `<img src>` works
+ * without an auth header, but every URL carries a time-limited HMAC signature
+ * (see LocalStorageService) that is verified here — an unsigned or expired key
+ * is rejected. When moved to S3 this becomes a native signed URL. See ARCHITECTURE §6.
  */
 @ApiTags('Uploads')
 @Controller('uploads')
@@ -25,9 +26,15 @@ export class UploadsController {
 
   @Public()
   @Get(':key')
-  @ApiOperation({ summary: 'Stream a stored file by key' })
-  async serve(@Param('key') key: string, @Res() res: Response): Promise<void> {
+  @ApiOperation({ summary: 'Stream a stored file by signed key' })
+  async serve(
+    @Param('key') key: string,
+    @Query('exp') exp: string | undefined,
+    @Query('sig') sig: string | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
     const fileKey = decodeURIComponent(key);
+    this.storage.verifyUrl(fileKey, { exp, sig });
     const buffer = await this.storage.read(fileKey);
     const ext = fileKey.split('.').pop()?.toLowerCase() ?? '';
     res.setHeader('Content-Type', MIME_BY_EXT[ext] ?? 'application/octet-stream');

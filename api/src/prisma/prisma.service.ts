@@ -16,6 +16,11 @@ const SOFT_DELETE_MODELS = new Set<Prisma.ModelName>([
   'Booking',
   'Sale',
   'Expense',
+  // Carry deletedAt and are soft-deleted by their services — must be filtered on read.
+  'SparePart',
+  'LabourItem',
+  'Vendor',
+  'ServiceJob',
 ]);
 
 /** Every model that carries a companyId column (child/join tables are scoped via their parent). */
@@ -24,6 +29,17 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   'ScooterModel', 'ScooterVariant', 'InventoryUnit', 'InventoryEvent', 'InventoryUnitPhoto', 'InventoryUnitDocument',
   'Accessory', 'TestRide', 'Booking', 'BookingDocument', 'Quotation', 'Sale', 'FinanceDetail', 'InsuranceDetail',
   'Payment', 'Delivery', 'ServiceJob', 'Expense', 'Notification', 'ActivityLog', 'CompanySetting', 'InvoiceSetting',
+  // Service catalogue
+  'SparePart', 'LabourItem',
+  // Warranty & AMC
+  'Warranty', 'WarrantyClaim', 'FreeService', 'AmcPlan', 'AmcVisit',
+  // Finance
+  'Vendor', 'ExpenseCategory', 'Income', 'BankTransaction', 'CashAdjustment',
+  'RecurringExpense', 'MonthlyClosing', 'ExpenseAttachment',
+  // Accessory inventory (child AccessoryPurchaseItem is scoped via its parent purchase)
+  'AccessoryPurchase', 'AccessoryStockMovement',
+  // Vehicle return
+  'VehicleReturn', 'CreditNote', 'Refund',
 ]);
 
 @Injectable()

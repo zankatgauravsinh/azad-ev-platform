@@ -58,27 +58,41 @@ export class PnlService {
     const from = query.from ?? fy.from;
     const to = query.to ?? fy.to;
 
-    const [salesPayments, servicePayments, amc, incomeBySource, expenseByCategory, cogs] = await Promise.all([
+    const [salesPayments, servicePayments, amc, incomeBySource, expenseByCategory, cogs, salesReturns] = await Promise.all([
       this.prisma.payment.aggregate({ _sum: { amount: true }, where: { context: { in: ['SALE', 'BOOKING_ADVANCE'] }, paidAt: { gte: from, lte: to } } }),
       this.prisma.payment.aggregate({ _sum: { amount: true }, where: { context: 'SERVICE', paidAt: { gte: from, lte: to } } }),
       this.prisma.amcPlan.aggregate({ _sum: { price: true }, where: { createdAt: { gte: from, lte: to } } }),
       this.prisma.income.groupBy({ by: ['source'], _sum: { amount: true, gstAmount: true }, where: { incomeDate: { gte: from, lte: to } } }),
       this.prisma.expense.groupBy({ by: ['categoryId'], _sum: { amount: true, gstAmount: true }, where: { status: 'APPROVED', expenseDate: { gte: from, lte: to } } }),
       this.prisma.expense.aggregate({ _sum: { amount: true, gstAmount: true }, where: { status: 'APPROVED', expenseDate: { gte: from, lte: to }, category: { name: 'Vehicle Purchase' } } }),
+      // Vehicle-return reversal, cash basis: the Refund (money actually returned) reverses the
+      // revenue that was recognized when the customer paid. The CreditNote is the legal/GST
+      // document and is deliberately NOT summed here (that would double-count the reversal).
+      // An approved deduction stays as retained income by design (paid − deduction = refund).
+      // COGS is unchanged: the Vehicle-Purchase model is purchase-period based, not per-unit,
+      // so a return has no COGS reversal here — intentional, pending CA review.
+      this.prisma.refund.aggregate({ _sum: { amount: true }, where: { refundedAt: { gte: from, lte: to } } }),
     ]);
 
-    const salesRevenue = salesPayments._sum.amount ?? 0n;
+    const salesRevenueGross = salesPayments._sum.amount ?? 0n;
+    const returnsTotal = salesReturns._sum.amount ?? 0n;
+    const salesRevenue = salesRevenueGross - returnsTotal; // net of refunds (cash-basis reversal)
     const serviceRevenue = servicePayments._sum.amount ?? 0n;
     const amcRevenue = amc._sum.price ?? 0n;
 
-    const income: ProfitLossLine[] = [
-      { label: 'Sales revenue', amount: String(salesRevenue) },
-      { label: 'Service revenue', amount: String(serviceRevenue) },
-      { label: 'AMC revenue', amount: String(amcRevenue) },
-    ];
+    const income: ProfitLossLine[] = [{ label: 'Sales revenue', amount: String(salesRevenueGross) }];
+    if (returnsTotal > 0n) income.push({ label: 'Less: Sales returns (refunds)', amount: String(-returnsTotal) });
+    income.push({ label: 'Service revenue', amount: String(serviceRevenue) });
+    income.push({ label: 'AMC revenue', amount: String(amcRevenue) });
+    // P&L uses net amounts only — GST is a liability / recoverable credit, not
+    // revenue or expense (it is reported separately by gstSummary). Service and AMC
+    // are already counted above (payments / AmcPlan), so exclude those sources from
+    // the manual income ledger to avoid double counting.
+    const COUNTED_ELSEWHERE = new Set<string>(['SERVICE', 'AMC']);
     let otherIncomeTotal = 0n;
     for (const g of incomeBySource) {
-      const amt = (g._sum.amount ?? 0n) + (g._sum.gstAmount ?? 0n);
+      if (COUNTED_ELSEWHERE.has(g.source)) continue;
+      const amt = g._sum.amount ?? 0n;
       otherIncomeTotal += amt;
       income.push({ label: this.incomeLabel(g.source), amount: String(amt) });
     }
@@ -86,13 +100,13 @@ export class PnlService {
     const categoryNames = await this.prisma.expenseCategory.findMany({ where: { id: { in: expenseByCategory.map((e) => e.categoryId) } }, select: { id: true, name: true } });
     const nameOf = new Map(categoryNames.map((c) => [c.id, c.name]));
     const expenses: ProfitLossLine[] = expenseByCategory
-      .map((e) => ({ label: nameOf.get(e.categoryId) ?? 'Other', amount: String((e._sum.amount ?? 0n) + (e._sum.gstAmount ?? 0n)), _n: (e._sum.amount ?? 0n) + (e._sum.gstAmount ?? 0n) }))
+      .map((e) => ({ label: nameOf.get(e.categoryId) ?? 'Other', _n: e._sum.amount ?? 0n }))
       .sort((a, b) => Number(b._n - a._n))
-      .map(({ label, amount }) => ({ label, amount }));
+      .map(({ label, _n }) => ({ label, amount: String(_n) }));
 
     const totalIncome = salesRevenue + serviceRevenue + amcRevenue + otherIncomeTotal;
     const totalExpense = sumBig(expenses.map((e) => BigInt(e.amount)));
-    const costOfGoods = (cogs._sum.amount ?? 0n) + (cogs._sum.gstAmount ?? 0n);
+    const costOfGoods = cogs._sum.amount ?? 0n;
 
     return {
       range: { from: from.toISOString(), to: to.toISOString() },

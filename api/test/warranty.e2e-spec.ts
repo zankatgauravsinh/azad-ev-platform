@@ -83,7 +83,7 @@ describe('Warranty & AMC (e2e)', () => {
   });
 
   it('rejects a second warranty for the same vehicle', async () => {
-    await http().post('/api/v1/warranties').set('Authorization', auth(ownerToken)).send({ unitId, customerId }).expect(404);
+    await http().post('/api/v1/warranties').set('Authorization', auth(ownerToken)).send({ unitId, customerId }).expect(409);
   });
 
   it('lists and fetches the warranty', async () => {

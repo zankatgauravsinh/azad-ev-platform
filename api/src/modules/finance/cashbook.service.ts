@@ -19,29 +19,34 @@ export class CashbookService {
     private readonly closing: MonthlyClosingService,
   ) {}
 
-  /** Bank balance = opening + credits − debits (from recorded bank transactions). */
+  /** Bank balance = opening + credits − debits − non-cash vehicle-return refunds (money paid back). */
   async bankBalance(): Promise<bigint> {
     const settings = await this.prisma.companySetting.findFirst();
-    const groups = await this.prisma.bankTransaction.groupBy({ by: ['direction'], _sum: { amount: true } });
+    const [groups, nonCashRefunds] = await Promise.all([
+      this.prisma.bankTransaction.groupBy({ by: ['direction'], _sum: { amount: true } }),
+      this.prisma.refund.aggregate({ _sum: { amount: true }, where: { method: { not: 'CASH' } } }),
+    ]);
     const credit = groups.find((g) => g.direction === 'CREDIT')?._sum.amount ?? 0n;
     const debit = groups.find((g) => g.direction === 'DEBIT')?._sum.amount ?? 0n;
-    return (settings?.openingBank ?? 0n) + credit - debit;
+    return (settings?.openingBank ?? 0n) + credit - debit - (nonCashRefunds._sum.amount ?? 0n);
   }
 
   /** Physical cash in the drawer as of `asOf` (exclusive upper bound). */
   async cashInHand(asOf?: Date): Promise<bigint> {
     const settings = await this.prisma.companySetting.findFirst();
     const before = asOf ? { lt: asOf } : undefined;
-    const [income, expense, deposits, withdrawals, cashPayments, adjustments] = await Promise.all([
+    const [income, expense, deposits, withdrawals, cashPayments, adjustments, cashRefunds] = await Promise.all([
       this.prisma.income.aggregate({ _sum: { amount: true, gstAmount: true }, where: { paymentMethod: 'CASH', ...(before ? { incomeDate: before } : {}) } }),
       this.prisma.expense.aggregate({ _sum: { amount: true, gstAmount: true }, where: { paymentMethod: 'CASH', status: 'APPROVED', ...(before ? { expenseDate: before } : {}) } }),
       this.prisma.bankTransaction.aggregate({ _sum: { amount: true }, where: { type: 'DEPOSIT', ...(before ? { txnDate: before } : {}) } }),
       this.prisma.bankTransaction.aggregate({ _sum: { amount: true }, where: { type: 'WITHDRAWAL', ...(before ? { txnDate: before } : {}) } }),
       this.prisma.payment.aggregate({ _sum: { amount: true }, where: { mode: 'CASH', ...(before ? { paidAt: before } : {}) } }),
       this.prisma.cashAdjustment.aggregate({ _sum: { amount: true }, where: { ...(before ? { adjDate: before } : {}) } }),
+      this.prisma.refund.aggregate({ _sum: { amount: true }, where: { method: 'CASH', ...(before ? { refundedAt: before } : {}) } }),
     ]);
     const cashIn = (income._sum.amount ?? 0n) + (income._sum.gstAmount ?? 0n) + (withdrawals._sum.amount ?? 0n) + (cashPayments._sum.amount ?? 0n);
-    const cashOut = (expense._sum.amount ?? 0n) + (expense._sum.gstAmount ?? 0n) + (deposits._sum.amount ?? 0n);
+    // Cash refunds for vehicle returns are money out of the drawer.
+    const cashOut = (expense._sum.amount ?? 0n) + (expense._sum.gstAmount ?? 0n) + (deposits._sum.amount ?? 0n) + (cashRefunds._sum.amount ?? 0n);
     return (settings?.openingCash ?? 0n) + cashIn - cashOut + (adjustments._sum.amount ?? 0n);
   }
 
@@ -75,12 +80,13 @@ export class CashbookService {
   /** All cash-affecting movements within a single day, most-recent last. */
   private async dayRows(start: Date, end: Date): Promise<CashBookRow[]> {
     const win = { gte: start, lt: end };
-    const [income, expenses, bank, payments, adjustments] = await Promise.all([
+    const [income, expenses, bank, payments, adjustments, refunds] = await Promise.all([
       this.prisma.income.findMany({ where: { paymentMethod: 'CASH', incomeDate: win }, select: { incomeNumber: true, incomeDate: true, amount: true, gstAmount: true, source: true } }),
       this.prisma.expense.findMany({ where: { paymentMethod: 'CASH', status: 'APPROVED', expenseDate: win }, select: { expenseNumber: true, expenseDate: true, amount: true, gstAmount: true, category: { select: { name: true } } } }),
       this.prisma.bankTransaction.findMany({ where: { type: { in: ['DEPOSIT', 'WITHDRAWAL'] }, txnDate: win }, select: { txnNumber: true, txnDate: true, type: true, amount: true } }),
       this.prisma.payment.findMany({ where: { mode: 'CASH', paidAt: win }, select: { receiptNumber: true, paidAt: true, amount: true, context: true } }),
       this.prisma.cashAdjustment.findMany({ where: { adjDate: win }, select: { adjDate: true, amount: true, notes: true } }),
+      this.prisma.refund.findMany({ where: { method: 'CASH', refundedAt: win }, select: { refundNumber: true, refundedAt: true, amount: true } }),
     ]);
     const rows: CashBookRow[] = [];
     for (const i of income) rows.push({ at: i.incomeDate.toISOString(), kind: 'INCOME', label: `${i.incomeNumber} · ${i.source}`, inAmount: String(i.amount + i.gstAmount), outAmount: '0' });
@@ -88,6 +94,7 @@ export class CashbookService {
     for (const b of bank) rows.push({ at: b.txnDate.toISOString(), kind: 'BANK', label: `${b.txnNumber} · ${b.type}`, inAmount: b.type === 'WITHDRAWAL' ? String(b.amount) : '0', outAmount: b.type === 'DEPOSIT' ? String(b.amount) : '0' });
     for (const p of payments) rows.push({ at: p.paidAt.toISOString(), kind: p.context === 'SERVICE' ? 'SERVICE' : 'SALES', label: `${p.receiptNumber ?? 'Receipt'} · ${p.context}`, inAmount: String(p.amount), outAmount: '0' });
     for (const a of adjustments) rows.push({ at: a.adjDate.toISOString(), kind: 'ADJUSTMENT', label: a.notes, inAmount: a.amount >= 0n ? String(a.amount) : '0', outAmount: a.amount < 0n ? String(-a.amount) : '0' });
+    for (const r of refunds) rows.push({ at: r.refundedAt.toISOString(), kind: 'REFUND', label: `${r.refundNumber} · Vehicle return refund`, inAmount: '0', outAmount: String(r.amount) });
     return rows.sort((a, b) => a.at.localeCompare(b.at));
   }
 }

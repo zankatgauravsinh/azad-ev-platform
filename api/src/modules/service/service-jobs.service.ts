@@ -33,6 +33,7 @@ import { SequenceService } from '../sales/sequence.service';
 import { WarrantyService } from './warranty.service';
 import { ServicePdfService, type ServiceDocType } from './service-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
+import { MonthlyClosingService } from '../finance/monthly-closing.service';
 
 type Tx = Prisma.TransactionClient;
 export interface Actor {
@@ -72,6 +73,7 @@ export class ServiceJobsService {
     private readonly warranty: WarrantyService,
     private readonly pdf: ServicePdfService,
     private readonly pdfBrand: PdfBrandService,
+    private readonly closing: MonthlyClosingService,
   ) {}
 
   // ── PDF (repeatable; reads the persisted job) ──────────
@@ -127,7 +129,8 @@ export class ServiceJobsService {
       this.prisma.serviceJob.findMany({ where, orderBy: { [query.sort]: query.order }, skip: (query.page - 1) * query.pageSize, take: query.pageSize, include }),
       this.prisma.serviceJob.count({ where }),
     ]);
-    const data = await Promise.all(rows.map((r) => this.toDto(r)));
+    const warranties = await this.warranty.vehicleWarranties(rows.map((r) => r.unitId));
+    const data = await Promise.all(rows.map((r) => this.toDto(r, warranties.get(r.unitId))));
     return { data, meta: buildPageMeta(query.page, query.pageSize, total) };
   }
 
@@ -217,6 +220,13 @@ export class ServiceJobsService {
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.serviceJob.update({ where: { id }, data });
+      // Cancelling a job returns any consumed spare-part stock to inventory.
+      if (dto.status === ServiceStatus.CANCELLED) {
+        const parts = await tx.servicePart.findMany({ where: { serviceJobId: id, sparePartId: { not: null } }, select: { sparePartId: true, qty: true } });
+        for (const p of parts) {
+          await tx.sparePart.updateMany({ where: { id: p.sparePartId as string }, data: { quantity: { increment: p.qty }, updatedById: actor.id } });
+        }
+      }
       const event = STATUS_EVENT[dto.status];
       if (event) await this.timeline.record({ customerId: job.customerId, type: event.type, title: `${event.title} (${job.code})`, entityType: 'ServiceJob', entityId: id, actorId: actor.id }, tx);
     });
@@ -274,12 +284,13 @@ export class ServiceJobsService {
       if (dto.sparePartId) {
         const part = await tx.sparePart.findFirst({ where: { id: dto.sparePartId } });
         if (!part) throw new NotFoundException('Spare part not found');
-        if (part.quantity < dto.qty) throw new BadRequestException(`Only ${part.quantity} of ${part.name} in stock`);
         name = name || part.name;
         if (!dto.unitCost) unitCost = part.cost;
         if (!dto.unitPrice) unitPrice = part.sellingPrice;
         if (part.warrantyMonths > 0) warranty = true;
-        await tx.sparePart.update({ where: { id: part.id }, data: { quantity: { decrement: dto.qty }, updatedById: actor.id } });
+        // Atomic guarded decrement so concurrent consumption can't drive stock negative.
+        const decremented = await tx.sparePart.updateMany({ where: { id: part.id, quantity: { gte: dto.qty } }, data: { quantity: { decrement: dto.qty }, updatedById: actor.id } });
+        if (decremented.count !== 1) throw new BadRequestException(`Only ${part.quantity} of ${part.name} in stock`);
       }
       await tx.servicePart.create({ data: { serviceJobId: id, sparePartId: dto.sparePartId ?? null, name, qty: dto.qty, unitCost, unitPrice, warranty, createdById: actor.id, updatedById: actor.id } });
       await this.recompute(tx, id);
@@ -345,6 +356,8 @@ export class ServiceJobsService {
 
   async addPayment(id: string, dto: ServicePaymentInput, actor: Actor): Promise<ServiceJobDto> {
     const job = await this.load(id, actor);
+    // Don't let a payment land in a month that finance has already closed.
+    await this.closing.assertOpen(new Date());
     await this.prisma.$transaction(async (tx) => {
       const receiptNumber = await this.sequence.next('receipt', tx);
       await tx.payment.create({ data: { receiptNumber, context: PaymentContext.SERVICE, serviceJobId: id, amount: BigInt(dto.amount), mode: dto.mode, reference: dto.reference ?? null, receivedById: actor.id, paidAt: new Date(), createdById: actor.id, updatedById: actor.id } });
@@ -400,8 +413,8 @@ export class ServiceJobsService {
     };
   }
 
-  private async toDto(job: JobWithRelations): Promise<ServiceJobDto> {
-    const warranty = await this.warranty.vehicleWarranty(job.unitId);
+  private async toDto(job: JobWithRelations, precomputedWarranty?: ServiceJobDto['warrantyStatus']['vehicle']): Promise<ServiceJobDto> {
+    const warranty = precomputedWarranty ?? (await this.warranty.vehicleWarranty(job.unitId));
     return {
       id: job.id, code: job.code, type: job.type, priority: job.priority, status: job.status,
       underWarranty: job.underWarranty, odometerKm: job.odometerKm,

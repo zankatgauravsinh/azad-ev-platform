@@ -90,7 +90,7 @@ export const updateCompanySettingsSchema = z
     backupEnabled: z.boolean().optional(),
     backupFrequency: z.enum(BACKUP_FREQUENCIES as [BackupFrequency, ...BackupFrequency[]]).optional(),
     // Invoice
-    termsAndConditions: optionalText(2000),
+    termsAndConditions: z.string().trim().optional(),
     invoiceFooter: optionalText(500),
   })
   .refine((v) => !v.gstEnabled || (v.gstNumber && v.gstNumber.trim().length > 0), {

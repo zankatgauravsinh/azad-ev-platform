@@ -451,6 +451,53 @@ export const FinancePayMethod = {
 export type FinancePayMethod = (typeof FinancePayMethod)[keyof typeof FinancePayMethod];
 export const FINANCE_PAY_METHODS = Object.values(FinancePayMethod);
 
+/** Post-delivery vehicle return lifecycle. */
+export const ReturnStatus = {
+  REQUESTED: 'REQUESTED',
+  INSPECTION: 'INSPECTION',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+  COMPLETED: 'COMPLETED',
+  CANCELLED: 'CANCELLED',
+} as const;
+export type ReturnStatus = (typeof ReturnStatus)[keyof typeof ReturnStatus];
+export const RETURN_STATUSES = Object.values(ReturnStatus);
+
+/** Allowed return transitions (enforced server-side). REJECTED/CANCELLED/COMPLETED are terminal. */
+export const RETURN_STATUS_TRANSITIONS: Record<ReturnStatus, ReturnStatus[]> = {
+  REQUESTED: ['INSPECTION', 'REJECTED', 'CANCELLED'],
+  INSPECTION: ['APPROVED', 'REJECTED', 'CANCELLED'],
+  APPROVED: ['COMPLETED', 'CANCELLED'],
+  REJECTED: [],
+  COMPLETED: [],
+  CANCELLED: [],
+};
+export function canTransitionReturn(from: ReturnStatus, to: ReturnStatus): boolean {
+  return RETURN_STATUS_TRANSITIONS[from]?.includes(to) ?? false;
+}
+export const RETURN_TERMINAL_STATUSES: ReturnStatus[] = ['REJECTED', 'COMPLETED', 'CANCELLED'];
+
+/** Where a returned unit goes once the return completes. */
+export const ReturnDisposition = {
+  AVAILABLE: 'AVAILABLE',
+  IN_SERVICE: 'IN_SERVICE',
+  SCRAP: 'SCRAP',
+} as const;
+export type ReturnDisposition = (typeof ReturnDisposition)[keyof typeof ReturnDisposition];
+export const RETURN_DISPOSITIONS = Object.values(ReturnDisposition);
+
+/** Kinds of accessory stock movement in the audit ledger. */
+export const AccessoryMovementType = {
+  OPENING: 'OPENING',
+  PURCHASE_IN: 'PURCHASE_IN',
+  SALE_OUT: 'SALE_OUT',
+  ADJUSTMENT: 'ADJUSTMENT',
+  RESERVE: 'RESERVE',
+  RELEASE: 'RELEASE',
+} as const;
+export type AccessoryMovementType = (typeof AccessoryMovementType)[keyof typeof AccessoryMovementType];
+export const ACCESSORY_MOVEMENT_TYPES = Object.values(AccessoryMovementType);
+
 export const IncomeSource = {
   ACCESSORIES: 'ACCESSORIES',
   INSURANCE_COMMISSION: 'INSURANCE_COMMISSION',

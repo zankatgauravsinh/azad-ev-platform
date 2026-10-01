@@ -20,6 +20,7 @@ import {
   type ChangeUnitStatusInput,
   type ListUnitsQuery,
   type Paginated,
+  type ReturnDisposition,
   type UpdateUnitInput,
 } from '@azad/shared';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
@@ -261,6 +262,24 @@ export class InventoryService {
     if (!canTransitionUnit(unit.status as UnitStatus, dto.toStatus)) {
       throw new BadRequestException(`Cannot change status from ${unit.status} to ${dto.toStatus}`);
     }
+    // A vehicle enters and leaves RETURNED only through the approved vehicle-return
+    // workflow (request → inspection → approval → completion). The generic status API
+    // must never let a delivered vehicle be walked back into sellable stock — that would
+    // bypass the credit note, refund and inspection and let a sold unit be resold.
+    if (dto.toStatus === UnitStatus.RETURNED) {
+      throw new BadRequestException('A vehicle can only be marked RETURNED through the vehicle-return workflow');
+    }
+    if (unit.status === UnitStatus.RETURNED) {
+      throw new BadRequestException('A returned vehicle re-enters stock only via an approved return inspection');
+    }
+    // A BOOKED unit belongs to a live booking; manually re-statusing it here would
+    // orphan that booking (and could re-open the unit for a second sale).
+    if (unit.status === UnitStatus.BOOKED) {
+      const active = await this.repo.activeBooking(id);
+      if (active) {
+        throw new ConflictException(`Scooter ${unit.vin} is reserved by booking ${active.code} — cancel or complete that booking first`);
+      }
+    }
     const updated = await this.repo.transaction(async (tx) => {
       const u = await this.repo.updateUnit(id, { status: dto.toStatus, updatedById: userId }, tx);
       await this.repo.addEvent(
@@ -284,6 +303,27 @@ export class InventoryService {
       metadata: { from: unit.status, to: dto.toStatus, note: dto.note ?? null },
     });
     return updated;
+  }
+
+  /**
+   * Completes a vehicle return's inventory effect: DELIVERED → RETURNED → disposition.
+   * Called ONLY from the return-completion transaction (the generic changeStatus API is
+   * deliberately locked out of RETURNED). Runs on the caller's transaction, so a failure
+   * anywhere in completion rolls this back too. SCRAP leaves the unit at RETURNED
+   * (non-sellable); AVAILABLE / IN_SERVICE re-stock it.
+   */
+  async applyReturnDisposition(unitId: string, disposition: ReturnDisposition, userId: string, tx: Prisma.TransactionClient): Promise<void> {
+    const unit = await tx.inventoryUnit.findFirst({ where: { id: unitId }, select: { id: true, status: true, vin: true } });
+    if (!unit) throw new NotFoundException('Scooter not found');
+    if (unit.status !== UnitStatus.DELIVERED) {
+      throw new ConflictException(`Scooter ${unit.vin} is ${unit.status}, not DELIVERED — cannot complete the return`);
+    }
+    await this.repo.updateUnit(unitId, { status: UnitStatus.RETURNED, updatedById: userId }, tx);
+    await this.repo.addEvent({ unitId, fromStatus: UnitStatus.DELIVERED, toStatus: UnitStatus.RETURNED, note: 'Vehicle return completed', createdById: userId }, tx);
+    if (disposition === 'AVAILABLE' || disposition === 'IN_SERVICE') {
+      await this.repo.updateUnit(unitId, { status: disposition as UnitStatus, updatedById: userId }, tx);
+      await this.repo.addEvent({ unitId, fromStatus: UnitStatus.RETURNED, toStatus: disposition as UnitStatus, note: `Return disposition: ${disposition}`, createdById: userId }, tx);
+    }
   }
 
   // ── Bulk CSV import ────────────────────────────────────

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import type { CashBookDto, ExpenseDto, IncomeDto, VendorLedgerDto } from '@azad/shared';
-import { formatInr } from '../../common/utils/money';
+import { formatInrExact } from '../../common/utils/money';
 import { drawBrandHeader, drawBrandFooter, useBrandFonts, NAVY, GOLD, FONT_BODY, FONT_BOLD, type PdfBrand } from '../../common/pdf/brand';
 
 const d = (iso: string): string => new Date(iso).toLocaleDateString('en-IN');
@@ -58,14 +58,14 @@ export class FinancePdfService {
       this.grid(doc, left, right, [
         ['Mobile', v.mobile ?? '—'],
         ['GSTIN', v.gstNumber ?? '—'],
-        ['Total purchases', formatInr(BigInt(v.totalPurchases))],
-        ['Outstanding', formatInr(BigInt(v.outstanding))],
+        ['Total purchases', formatInrExact(BigInt(v.totalPurchases))],
+        ['Outstanding', formatInrExact(BigInt(v.outstanding))],
       ]);
       this.sectionTitle(doc, left, 'Transactions');
       let running = 0n;
       this.table(doc, left, right, ['Date', 'Expense', 'Category', 'Amount', 'Running'], [0.16, 0.18, 0.28, 0.19, 0.19], ledger.rows.map((r) => {
         running += BigInt(r.amount);
-        return [d(r.date), r.expenseNumber, r.category, formatInr(BigInt(r.amount)), formatInr(running)];
+        return [d(r.date), r.expenseNumber, r.category, formatInrExact(BigInt(r.amount)), formatInrExact(running)];
       }));
       drawBrandFooter(doc, brand);
     });
@@ -75,17 +75,17 @@ export class FinancePdfService {
     return this.build((doc, left, right) => {
       drawBrandHeader(doc, brand, { docType: 'CASH BOOK', infoLines: [`Date: ${d(cb.date)}`] });
       this.grid(doc, left, right, [
-        ['Opening', formatInr(BigInt(cb.opening))],
-        ['Cash in', formatInr(BigInt(cb.cashIn))],
-        ['Cash out', formatInr(BigInt(cb.cashOut))],
-        ['Closing', formatInr(BigInt(cb.closing))],
+        ['Opening', formatInrExact(BigInt(cb.opening))],
+        ['Cash in', formatInrExact(BigInt(cb.cashIn))],
+        ['Cash out', formatInrExact(BigInt(cb.cashOut))],
+        ['Closing', formatInrExact(BigInt(cb.closing))],
       ]);
       this.sectionTitle(doc, left, 'Entries');
       this.table(doc, left, right, ['Time', 'Particulars', 'In', 'Out'], [0.16, 0.5, 0.17, 0.17], cb.rows.map((r) => [
         new Date(r.at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
         r.label,
-        BigInt(r.inAmount) > 0n ? formatInr(BigInt(r.inAmount)) : '—',
-        BigInt(r.outAmount) > 0n ? formatInr(BigInt(r.outAmount)) : '—',
+        BigInt(r.inAmount) > 0n ? formatInrExact(BigInt(r.inAmount)) : '—',
+        BigInt(r.outAmount) > 0n ? formatInrExact(BigInt(r.outAmount)) : '—',
       ]));
       drawBrandFooter(doc, brand);
     });
@@ -130,7 +130,7 @@ export class FinancePdfService {
       const bold = label === 'Total';
       doc.fillColor(bold ? NAVY : '#555').font(bold ? FONT_BOLD : FONT_BODY).fontSize(bold ? 12 : 10);
       doc.text(label, x, y, { width: 100 });
-      doc.text(formatInr(BigInt(amount)), x + 100, y, { width: boxW - 100, align: 'right' });
+      doc.text(formatInrExact(BigInt(amount)), x + 100, y, { width: boxW - 100, align: 'right' });
       y += bold ? 20 : 16;
     }
     doc.y = y + 4;

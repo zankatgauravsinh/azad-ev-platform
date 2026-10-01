@@ -132,7 +132,7 @@ export interface BankTransactionDto {
 
 export interface CashBookRow {
   at: string;
-  kind: 'INCOME' | 'EXPENSE' | 'BANK' | 'ADJUSTMENT' | 'SALES' | 'SERVICE';
+  kind: 'INCOME' | 'EXPENSE' | 'BANK' | 'ADJUSTMENT' | 'SALES' | 'SERVICE' | 'REFUND';
   label: string;
   inAmount: string;
   outAmount: string;

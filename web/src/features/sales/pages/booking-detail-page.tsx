@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, Banknote, CalendarClock, CheckCircle2, Download, Eye, FileText, Printer, Shield, Truck, User } from 'lucide-react';
+import { ArrowLeft, Ban, Banknote, CalendarClock, CheckCircle2, Download, Eye, FileText, Printer, Shield, Truck, Undo2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookingStatus, PaymentStatus } from '@azad/shared';
 import { apiErrorMessage } from '@/lib/api-client';
@@ -16,6 +16,9 @@ import { useBooking, useSalesInvalidate } from '../hooks';
 import { salesApi } from '../api';
 import { BookingStatusBadge, FinanceStatusBadge, InsuranceStatusBadge, PaymentStatusBadge } from '../components/status-badges';
 import { FinanceDialog, InsuranceDialog, PaymentDialog, ScheduleDeliveryDialog } from '../components/booking-dialogs';
+import { CustomerDetailDialog } from '@/features/customers/components/customer-detail-dialog';
+import { CreateReturnDialog } from '@/features/returns/components/create-return-dialog';
+import { ReturnDetailDialog } from '@/features/returns/components/return-detail-dialog';
 
 export function BookingDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -24,6 +27,9 @@ export function BookingDetailPage(): JSX.Element {
   const { data: b, isLoading } = useBooking(id);
   const [dialog, setDialog] = useState<'payment' | 'finance' | 'insurance' | 'schedule' | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [viewCustomer, setViewCustomer] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
+  const [viewReturnId, setViewReturnId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   if (isLoading || !b) return <div className="space-y-4"><Skeleton className="h-8 w-56" /><Skeleton className="h-40 w-full" /></div>;
@@ -90,6 +96,7 @@ export function BookingDetailPage(): JSX.Element {
               </>
             )}
             {b.sale && !b.actualDelivery && <Button variant="accent" onClick={() => run(() => salesApi.deliver(b.id), 'Delivered')} disabled={busy}><Truck className="h-4 w-4" /> Deliver</Button>}
+            {b.sale && b.actualDelivery && <Button variant="outline" onClick={() => setReturnOpen(true)}><Undo2 className="h-4 w-4" /> Request return</Button>}
             {b.status !== BookingStatus.CONVERTED && <Button variant="outline" className="text-destructive" onClick={() => setCancelOpen(true)}><Ban className="h-4 w-4" /> Cancel</Button>}
           </div>
         )}
@@ -123,6 +130,7 @@ export function BookingDetailPage(): JSX.Element {
               <p className="mb-1 flex items-center gap-2 text-sm font-semibold"><User className="h-4 w-4" /> Customer</p>
               <p className="text-sm">{b.customer.name}</p>
               <p className="text-sm text-muted-foreground">{b.customer.phone}</p>
+              <Button size="sm" variant="outline" className="mt-2" onClick={() => setViewCustomer(true)}><Eye className="h-4 w-4" /> View customer</Button>
             </div>
             <div>
               <p className="mb-1 flex items-center gap-2 text-sm font-semibold"><CalendarClock className="h-4 w-4" /> Delivery</p>
@@ -185,6 +193,16 @@ export function BookingDetailPage(): JSX.Element {
       {dialog === 'finance' && <FinanceDialog open onOpenChange={() => setDialog(null)} booking={b} />}
       {dialog === 'insurance' && <InsuranceDialog open onOpenChange={() => setDialog(null)} booking={b} />}
       {dialog === 'schedule' && <ScheduleDeliveryDialog open onOpenChange={() => setDialog(null)} booking={b} />}
+      <CustomerDetailDialog id={viewCustomer ? b.customer.id : null} onOpenChange={setViewCustomer} />
+      {b.sale && (
+        <CreateReturnDialog
+          open={returnOpen}
+          onOpenChange={setReturnOpen}
+          preset={{ saleId: b.sale.id, bookingCode: b.code, customerName: b.customer.name }}
+          onCreated={(rid) => setViewReturnId(rid)}
+        />
+      )}
+      <ReturnDetailDialog id={viewReturnId} onOpenChange={(o) => { if (!o) setViewReturnId(null); }} />
       <ConfirmDialog open={cancelOpen} onOpenChange={setCancelOpen} title={`Cancel booking ${b.code}?`} description="The reserved scooter is released back to Available." confirmLabel="Cancel booking" destructive onConfirm={() => run(() => salesApi.cancelBooking(b.id, 'Cancelled by staff'), 'Booking cancelled')} />
     </div>
   );

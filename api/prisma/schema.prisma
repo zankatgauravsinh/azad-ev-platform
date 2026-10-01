@@ -349,6 +349,8 @@ model Customer {
   warranties  Warranty[]
   amcPlans    AmcPlan[]
   income      Income[]
+  returns     VehicleReturn[]
+  refunds     Refund[]
 
   @@index([leadStatus])
   @@index([assignedToId])
@@ -546,6 +548,7 @@ model InventoryUnit {
   documents   InventoryUnitDocument[]
   warranties  Warranty[]
   amcPlans    AmcPlan[]
+  returns     VehicleReturn[]
 
   @@index([status])
   @@index([variantId])
@@ -613,9 +616,16 @@ model Accessory {
   companyId String  @default("")
   name      String
   sku       String? @unique
+  category  String?
   sellPrice BigInt  @default(0)
-  costPrice BigInt  @default(0)
-  stockQty  Int     @default(0)
+  /// Weighted-average moving cost (system-maintained by purchases / opening stock only — never user-set).
+  avgCost   BigInt  @default(0)
+  /// Physical quantity in stock.
+  onHand    Int     @default(0)
+  /// Quantity committed to confirmed, undelivered bookings. Available = onHand - reserved.
+  reserved  Int     @default(0)
+  /// Reorder level for low-stock alerts.
+  minStock  Int     @default(0)
   isPart    Boolean @default(false)
   isActive  Boolean @default(true)
 
@@ -627,6 +637,8 @@ model Accessory {
   bookingAccessories   BookingAccessory[]
   quotationAccessories QuotationAccessory[]
   saleAccessories      SaleAccessory[]
+  purchaseItems        AccessoryPurchaseItem[]
+  movements            AccessoryStockMovement[]
 
   @@index([isPart])
   @@index([companyId])
@@ -714,6 +726,7 @@ model Booking {
   insurance   InsuranceDetail?
   sale        Sale?
   serviceJobs ServiceJob[]
+  returns     VehicleReturn[]
 
   @@index([status])
   @@index([customerId])
@@ -874,6 +887,9 @@ model Sale {
   payments    Payment[]
   delivery    Delivery?
   serviceJobs ServiceJob[]
+  returns     VehicleReturn[]
+  creditNotes CreditNote[]
+  refunds     Refund[]
 
   @@index([customerId])
   @@index([status])
@@ -905,7 +921,10 @@ model SaleAccessory {
   accessoryId String
   accessory   Accessory @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
   qty         Int       @default(1)
+  /// Selling price charged per unit (snapshot at delivery).
   unitPrice   BigInt    @default(0)
+  /// Weighted-average cost per unit at the moment of sale — the COGS basis.
+  costAtSale  BigInt    @default(0)
 
   createdById String?
   updatedById String?
@@ -913,6 +932,81 @@ model SaleAccessory {
   updatedAt   DateTime @updatedAt
 
   @@index([saleId])
+}
+
+/// Kinds of accessory stock movement recorded in the audit ledger.
+enum AccessoryMovementType {
+  OPENING
+  PURCHASE_IN
+  SALE_OUT
+  ADJUSTMENT
+  RESERVE
+  RELEASE
+}
+
+/// Accessory purchase (stock-in) header — supplier invoice. Reuses Vendor.
+model AccessoryPurchase {
+  id             String   @id @default(uuid())
+  companyId      String   @default("")
+  purchaseNumber String
+  vendorId       String?
+  vendor         Vendor?  @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  purchaseDate   DateTime @default(now())
+  notes          String?
+  subtotal       BigInt   @default(0)
+  gstAmount      BigInt   @default(0)
+  total          BigInt   @default(0)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items AccessoryPurchaseItem[]
+
+  @@unique([companyId, purchaseNumber])
+  @@index([companyId])
+  @@index([vendorId])
+}
+
+model AccessoryPurchaseItem {
+  id          String            @id @default(uuid())
+  purchaseId  String
+  purchase    AccessoryPurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  accessoryId String
+  accessory   Accessory         @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
+  quantity    Int
+  /// Ex-GST unit cost — the basis for weighted-average costing.
+  unitCost    BigInt            @default(0)
+  gstAmount   BigInt            @default(0)
+  lineTotal   BigInt            @default(0)
+
+  @@index([purchaseId])
+  @@index([accessoryId])
+}
+
+/// Immutable audit ledger of every accessory stock movement.
+/// OPENING/PURCHASE_IN/SALE_OUT/ADJUSTMENT change onHand; RESERVE/RELEASE change reserved.
+model AccessoryStockMovement {
+  id            String                @id @default(uuid())
+  companyId     String                @default("")
+  accessoryId   String
+  accessory     Accessory             @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
+  type          AccessoryMovementType
+  quantity      Int
+  /// Cost per unit captured at this movement (purchase/opening cost, or avgCost snapshot on SALE_OUT).
+  unitCost      BigInt                @default(0)
+  onHandAfter   Int                   @default(0)
+  reservedAfter Int                   @default(0)
+  refType       String?
+  refId         String?
+  note          String?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([companyId])
+  @@index([accessoryId, createdAt])
 }
 
 model FinanceDetail {
@@ -1015,13 +1109,20 @@ model Delivery {
 }
 
 model DeliveryChecklist {
-  id         String   @id @default(uuid())
-  deliveryId String   @unique
-  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
-  helmet     Boolean  @default(false)
-  charger    Boolean  @default(false)
-  keys       Boolean  @default(false)
-  documents  Boolean  @default(false)
+  id                String   @id @default(uuid())
+  deliveryId        String   @unique
+  delivery          Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  helmet            Boolean  @default(false)
+  charger           Boolean  @default(false)
+  keys              Boolean  @default(false)
+  documents         Boolean  @default(false)
+  // Extended handover / pre-delivery inspection items
+  insurance         Boolean  @default(false)
+  rcBook            Boolean  @default(false)
+  invoice           Boolean  @default(false)
+  warrantyCard      Boolean  @default(false)
+  charged           Boolean  @default(false)
+  accessoriesFitted Boolean  @default(false)
 
   createdById String?
   updatedById String?
@@ -1339,6 +1440,9 @@ model CompanySetting {
   vendorPrefix            String  @default("VND")
   incomePrefix            String  @default("INC")
   bankPrefix              String  @default("BNK")
+  returnPrefix            String  @default("RET")
+  creditNotePrefix        String  @default("CN")
+  refundPrefix            String  @default("RF")
   financeGstRate          Decimal @default(18) @db.Decimal(5, 2)
   financialYearStartMonth Int     @default(4)
   openingCash             BigInt  @default(0)
@@ -1390,25 +1494,156 @@ model CompanySetting {
 
 /// Per-company document sequence counters (state, not user-editable settings).
 model InvoiceSetting {
-  id                  String @id @default(uuid())
-  companyId           String @unique @default("")
-  nextInvoiceNumber   Int    @default(1)
-  nextBookingNumber   Int    @default(1)
-  nextQuotationNumber Int    @default(1)
-  nextReceiptNumber   Int    @default(1)
-  nextServiceNumber   Int    @default(1)
-  nextWarrantyNumber  Int    @default(1)
-  nextAmcNumber       Int    @default(1)
-  nextClaimNumber     Int    @default(1)
-  nextExpenseNumber   Int    @default(1)
-  nextVendorNumber    Int    @default(1)
-  nextIncomeNumber    Int    @default(1)
-  nextBankNumber      Int    @default(1)
+  id                   String @id @default(uuid())
+  companyId            String @unique @default("")
+  nextInvoiceNumber    Int    @default(1)
+  nextBookingNumber    Int    @default(1)
+  nextQuotationNumber  Int    @default(1)
+  nextReceiptNumber    Int    @default(1)
+  nextServiceNumber    Int    @default(1)
+  nextWarrantyNumber   Int    @default(1)
+  nextAmcNumber        Int    @default(1)
+  nextClaimNumber      Int    @default(1)
+  nextExpenseNumber    Int    @default(1)
+  nextVendorNumber     Int    @default(1)
+  nextIncomeNumber     Int    @default(1)
+  nextBankNumber       Int    @default(1)
+  nextReturnNumber     Int    @default(1)
+  nextCreditNoteNumber Int    @default(1)
+  nextRefundNumber     Int    @default(1)
 
   createdById String?
   updatedById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// ─────────────────────────── Vehicle Return (post-delivery sales return) ───────────────────────────
+
+enum ReturnStatus {
+  REQUESTED
+  INSPECTION
+  APPROVED
+  REJECTED
+  COMPLETED
+  CANCELLED
+}
+
+/// Where a returned unit goes once the return completes. SCRAP keeps the unit
+/// at RETURNED (non-sellable); AVAILABLE / IN_SERVICE re-stock it.
+enum ReturnDisposition {
+  AVAILABLE
+  IN_SERVICE
+  SCRAP
+}
+
+/// A post-delivery sales return. Separate from booking cancellation — the original
+/// Booking/Sale/Payment records are never mutated. Financial reversal is carried by
+/// the linked CreditNote (invoice/GST reversal) and Refund (money returned).
+model VehicleReturn {
+  id           String        @id @default(uuid())
+  companyId    String        @default("")
+  returnNumber String
+  saleId       String
+  sale         Sale          @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  bookingId    String
+  booking      Booking       @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  unitId       String
+  unit         InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  customerId   String
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  status ReturnStatus @default(REQUESTED)
+  reason String
+
+  requestedById String
+  requestedAt   DateTime @default(now())
+
+  inspectionOk    Boolean?
+  inspectionNotes String?
+  inspectedById   String?
+  inspectedAt     DateTime?
+
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectionReason String?
+
+  disposition     ReturnDisposition?
+  /// Approved deduction (damage/use) withheld from the refund — must carry a reason.
+  deductionAmount BigInt             @default(0)
+  deductionReason String?
+  completedById   String?
+  completedAt     DateTime?
+
+  creditNote CreditNote?
+  refunds    Refund[]
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, returnNumber])
+  @@index([companyId])
+  @@index([saleId])
+  @@index([unitId])
+  @@index([status])
+}
+
+/// Reversal of a sale/invoice (taxable value + GST). Keeps Sale immutable.
+model CreditNote {
+  id               String        @id @default(uuid())
+  companyId        String        @default("")
+  creditNoteNumber String
+  returnId         String        @unique
+  return           VehicleReturn @relation(fields: [returnId], references: [id], onDelete: Restrict)
+  saleId           String
+  sale             Sale          @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  amount           BigInt        @default(0)
+  gstAmount        BigInt        @default(0)
+  total            BigInt        @default(0)
+  reason           String
+  issuedById       String?
+  issuedAt         DateTime      @default(now())
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, creditNoteNumber])
+  @@index([companyId])
+  @@index([saleId])
+}
+
+/// Actual money returned to the customer for a completed return. Never alters the
+/// original Payment ledger.
+model Refund {
+  id           String        @id @default(uuid())
+  companyId    String        @default("")
+  refundNumber String
+  returnId     String
+  return       VehicleReturn @relation(fields: [returnId], references: [id], onDelete: Restrict)
+  saleId       String
+  sale         Sale          @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  customerId   String
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  amount       BigInt        @default(0)
+  method       PaymentMode
+  reference    String?
+  note         String?
+  refundedById String?
+  refundedAt   DateTime      @default(now())
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, refundNumber])
+  @@index([companyId])
+  @@index([returnId])
+  @@index([saleId])
 }
 
 // ─────────────────────────── Module 8 — Warranty & AMC ───────────────────────────
@@ -1589,6 +1824,7 @@ model AmcVisit {
   createdById String?
   createdAt   DateTime @default(now())
 
+  @@unique([amcPlanId, visitNumber])
   @@index([amcPlanId])
   @@index([companyId, visitDate])
 }
@@ -1689,8 +1925,9 @@ model Vendor {
   status       VendorStatus @default(ACTIVE)
   notes        String?
 
-  expenses  Expense[]
-  recurring RecurringExpense[]
+  expenses           Expense[]
+  recurring          RecurringExpense[]
+  accessoryPurchases AccessoryPurchase[]
 
   createdById String?
   updatedById String?
