@@ -43,7 +43,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Bookings', to: '/bookings', icon: ClipboardList, enabled: true, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
   { label: 'Delivery', to: '/delivery', icon: Bike, enabled: true, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
   { label: 'Returns', to: '/returns', icon: Undo2, enabled: true, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
-  { label: 'Service', to: '/service', icon: Wrench, enabled: true, roles: ['OWNER', 'MANAGER', 'TECHNICIAN'] },
+  { label: 'Service', to: '/service', icon: Wrench, enabled: true, roles: ['OWNER', 'MANAGER', 'TECHNICIAN', 'SALES_EXECUTIVE'] },
   { label: 'Spare Parts', to: '/service/spare-parts', icon: Package, enabled: true, roles: ['OWNER', 'MANAGER', 'TECHNICIAN'] },
   { label: 'Warranty & AMC', to: '/warranty', icon: ShieldCheck, enabled: true, roles: ['OWNER', 'MANAGER', 'TECHNICIAN', 'SALES_EXECUTIVE'] },
   { label: 'Finance', to: '/finance', icon: Wallet, enabled: true, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
