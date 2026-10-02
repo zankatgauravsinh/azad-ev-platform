@@ -14,6 +14,7 @@ import {
   Settings,
   Home,
   Undo2,
+  UserCog,
   type LucideIcon,
 } from 'lucide-react';
 import type { Role } from '@azad/shared';
@@ -47,6 +48,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Warranty & AMC', to: '/warranty', icon: ShieldCheck, enabled: true, roles: ['OWNER', 'MANAGER', 'TECHNICIAN', 'SALES_EXECUTIVE'] },
   { label: 'Finance', to: '/finance', icon: Wallet, enabled: true, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
   { label: 'Reports', to: '/reports', icon: BarChart3, enabled: true, roles: ['OWNER', 'MANAGER'] },
+  { label: 'Staff', to: '/staff', icon: UserCog, enabled: true, roles: ['OWNER'] },
   { label: 'Settings', to: '/settings', icon: Settings, enabled: true, roles: ['OWNER', 'MANAGER'] },
 ];
 

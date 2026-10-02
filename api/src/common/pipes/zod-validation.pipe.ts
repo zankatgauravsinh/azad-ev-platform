@@ -1,12 +1,16 @@
 import { ArgumentMetadata, BadRequestException, PipeTransform } from '@nestjs/common';
-import { ZodSchema } from 'zod';
+import { ZodType, ZodTypeDef } from 'zod';
 
 /**
  * Validates and parses an argument against a Zod schema.
  * Usage: `@Body(new ZodValidationPipe(loginSchema)) dto: LoginInput`.
+ *
+ * The schema's input type is intentionally unconstrained so schemas whose parsed output
+ * differs from their raw input (e.g. a query field using `.transform()` / `.default()`)
+ * are accepted; only the parsed output type `T` is pinned. Runtime behaviour is unchanged.
  */
 export class ZodValidationPipe<T> implements PipeTransform {
-  constructor(private readonly schema: ZodSchema<T>) {}
+  constructor(private readonly schema: ZodType<T, ZodTypeDef, unknown>) {}
 
   transform(value: unknown, _metadata: ArgumentMetadata): T {
     const result = this.schema.safeParse(value);
