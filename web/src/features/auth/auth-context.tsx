@@ -1,20 +1,25 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import type { AuthUser, LoginInput } from '@azad/shared';
+import type { LoginInput, MeResponse } from '@azad/shared';
 import { tokenStore } from '@/lib/token-store';
 import { authApi } from './api';
 
 interface AuthContextValue {
-  user: AuthUser | null;
+  user: MeResponse | null;
   status: 'loading' | 'authenticated' | 'unauthenticated';
-  login: (input: LoginInput) => Promise<AuthUser>;
+  login: (input: LoginInput) => Promise<MeResponse>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  /**
+   * UX-only effective-permission check against the user's keys from /auth/me. NOT a security
+   * boundary — the backend authorizes every request. Returns false when unauthenticated.
+   */
+  can: (permission: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }): JSX.Element {
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<MeResponse | null>(null);
   const [status, setStatus] = useState<AuthContextValue['status']>('loading');
 
   const loadUser = useCallback(async () => {
@@ -38,12 +43,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }): JSX.E
     void loadUser();
   }, [loadUser]);
 
-  const login = useCallback(async (input: LoginInput): Promise<AuthUser> => {
+  const login = useCallback(async (input: LoginInput): Promise<MeResponse> => {
     const result = await authApi.login(input);
     tokenStore.set(result.accessToken, result.refreshToken);
-    setUser(result.user);
+    // Fetch /auth/me so the session carries effective permission keys (login response has none).
+    const me = await authApi.me();
+    setUser(me);
     setStatus('authenticated');
-    return result.user;
+    return me;
   }, []);
 
   const logout = useCallback(async () => {
@@ -56,9 +63,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }): JSX.E
     }
   }, []);
 
+  const can = useCallback((permission: string): boolean => (user?.permissions ?? []).includes(permission), [user]);
+
   const value = useMemo(
-    () => ({ user, status, login, logout, refreshUser: loadUser }),
-    [user, status, login, logout, loadUser],
+    () => ({ user, status, login, logout, refreshUser: loadUser, can }),
+    [user, status, login, logout, loadUser, can],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -68,4 +77,9 @@ export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
+}
+
+/** Convenience hook: `useCan('inventory.update')`. UX-only — backend remains authoritative. */
+export function useCan(permission: string): boolean {
+  return useAuth().can(permission);
 }

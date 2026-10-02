@@ -2,17 +2,18 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import { ActivityAction } from '@azad/shared';
 import type {
-  AuthUser,
   ChangePasswordInput,
   JwtPayload,
   LoginInput,
   LoginResponse,
+  MeResponse,
   Role,
 } from '@azad/shared';
 import { UsersService } from '../users/users.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
+import { PermissionResolver } from '../common/rbac/permission-resolver.service';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +22,7 @@ export class AuthService {
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
     private readonly activityLog: ActivityLogService,
+    private readonly permissions: PermissionResolver,
   ) {}
 
   async login(input: LoginInput, ip?: string): Promise<LoginResponse> {
@@ -66,9 +68,12 @@ export class AuthService {
     await this.users.setRefreshTokenHash(userId, null);
   }
 
-  async me(userId: string): Promise<AuthUser> {
+  async me(userId: string): Promise<MeResponse> {
     const user = await this.users.findByIdOrThrow(userId);
-    return UsersService.toAuthUser(user);
+    const authUser = UsersService.toAuthUser(user);
+    // Effective permission keys via the shared resolver (OWNER → full catalog). UX-only on client.
+    const permissions = [...(await this.permissions.resolve(authUser))];
+    return { ...authUser, permissions };
   }
 
   async changePassword(userId: string, input: ChangePasswordInput): Promise<void> {

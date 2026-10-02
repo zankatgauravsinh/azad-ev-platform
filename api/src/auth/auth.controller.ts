@@ -9,6 +9,7 @@ import {
   type ChangePasswordInput,
   type LoginInput,
   type LoginResponse,
+  type MeResponse,
   type RefreshInput,
 } from '@azad/shared';
 import { Public } from '../common/decorators/public.decorator';
@@ -72,7 +73,7 @@ export class AuthController {
   @Get('me')
   @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'Get the authenticated user profile' })
-  me(@CurrentUser() user: AuthUser): Promise<AuthUser> {
+  me(@CurrentUser() user: AuthUser): Promise<MeResponse> {
     return this.auth.me(user.id);
   }
 
