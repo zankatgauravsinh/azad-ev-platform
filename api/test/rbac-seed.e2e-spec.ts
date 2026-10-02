@@ -48,6 +48,18 @@ describe('RBAC seed & backfill (e2e)', () => {
     expect(r2.usersBackfilled).toBe(0); // existing users already backfilled
   });
 
+  it('creates no demo/sample data (companies, users, customers unchanged)', async () => {
+    const before = {
+      companies: await prisma.company.count(),
+      users: await prisma.user.count(),
+      customers: await prisma.customer.count(),
+    };
+    await seedRbac(prisma); // a pure re-run: only RBAC rows + roleId backfill, never business data
+    expect(await prisma.company.count()).toBe(before.companies);
+    expect(await prisma.user.count()).toBe(before.users);
+    expect(await prisma.customer.count()).toBe(before.customers);
+  });
+
   it('creates exactly five locked system roles for the company (no duplicates)', async () => {
     const roles = await prisma.appRole.findMany({ where: { companyId: companyAId } });
     expect(roles.length).toBe(5);

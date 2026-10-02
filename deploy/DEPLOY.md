@@ -68,6 +68,26 @@ cd ..
 
 Skip this entirely when there are no schema changes.
 
+### 3b. Initialize RBAC (run on every deploy)
+
+Seeds the permission catalog + the five locked system roles for every company and backfills each
+user's dynamic role (`User.roleId`) from their legacy `role`. **Authorization is permission-based,
+so this must run or every non-OWNER user is denied across the app.**
+
+```
+cd api
+set -a; source .env; set +a      # load DATABASE_URL (skip if already loaded in §3a)
+npm run rbac:init                # = node dist/rbac-init.js  (needs `npm run build` from §3 first)
+cd ..
+```
+
+- Run it on **every** deploy, not just migration releases — it is idempotent (a second run creates
+  nothing and backfills zero users) and safe to repeat.
+- It runs as compiled JS under `node` (no `ts-node`, no dev dependencies) and creates **no** demo
+  data — it is not the dev seed (`npm run prisma:seed`), which must never run in production.
+- On the very first deploy of this release, run §3a (the migration that creates the RBAC tables)
+  **before** this step.
+
 ## 4. Restart the API (pm2)
 
 ```
@@ -122,5 +142,6 @@ check it as the intended role **and** as a role that should not see it.
 
 `deploy/azad-api.service` + `deploy/nginx.conf` describe an alternative **systemd**-based
 deployment (API at `/opt/azad-ev/app`, `prisma migrate deploy` run automatically on start).
+That path must also run `npm run rbac:init` after the migration (§3b) for the same reason.
 The live server currently uses **pm2** as described above; the systemd unit is kept for
 reference / future migration. Don't mix the two.
