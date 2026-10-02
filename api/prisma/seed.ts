@@ -1,5 +1,6 @@
 import { PrismaClient, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 const prisma = new PrismaClient();
 
@@ -113,6 +114,12 @@ async function main(): Promise<void> {
     });
   }
   console.log(`✓ ${spares.length} spare parts ready`);
+
+  // ── Dynamic RBAC: seed system roles + permissions, backfill User.roleId (idempotent) ──
+  const rbac = await seedRbac(prisma);
+  console.log(
+    `✓ RBAC seeded → ${rbac.permissions} permissions, ${rbac.rolesUpserted} system roles across ${rbac.companies} company(ies), ${rbac.usersBackfilled} user(s) backfilled`,
+  );
 
   console.log('\nSeed complete.');
 }
