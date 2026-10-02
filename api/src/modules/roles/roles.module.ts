@@ -1,13 +1,15 @@
 import { Module } from '@nestjs/common';
 import { RoleRepository } from './role.repository';
 import { RoleService } from './role.service';
+import { RolesController } from './roles.controller';
 
 /**
- * Role management (Group 3A — service layer only; no controller/HTTP yet). PrismaService and
- * ActivityLogService are global, so no imports are required. The HTTP controller is wired in a
- * later group (3B); until then RoleService is exported for that future use.
+ * Role management (OWNER-only). PrismaService and ActivityLogService are global, so no imports are
+ * required. Group 3B adds the HTTP controller; the endpoints are authorized by the existing
+ * RolesGuard (@Roles(OWNER)) — no RBAC permission authorization yet.
  */
 @Module({
+  controllers: [RolesController],
   providers: [RoleRepository, RoleService],
   exports: [RoleService],
 })

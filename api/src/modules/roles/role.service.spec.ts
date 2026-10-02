@@ -45,7 +45,7 @@ describe('RoleService', () => {
 
   describe('authorization (OWNER-only)', () => {
     it('rejects a non-owner for every operation', async () => {
-      await expect(service.list(manager, { page: 1, pageSize: 20 })).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.list(manager, { page: 1, pageSize: 20, order: 'desc' })).rejects.toBeInstanceOf(ForbiddenException);
       await expect(service.get(manager, 'r1')).rejects.toBeInstanceOf(ForbiddenException);
       await expect(service.create(manager, validCreate)).rejects.toBeInstanceOf(ForbiddenException);
       await expect(service.update(manager, 'r1', { name: 'X1' })).rejects.toBeInstanceOf(ForbiddenException);
@@ -218,7 +218,7 @@ describe('RoleService', () => {
       repo.count.mockResolvedValue(2);
       repo.permissionCountByRole.mockResolvedValue(new Map([['r1', 5], ['r2', 0]]));
       repo.userCountByRole.mockResolvedValue(new Map([['r1', 2]]));
-      const res = await service.list(owner, { page: 1, pageSize: 20 });
+      const res = await service.list(owner, { page: 1, pageSize: 20, order: 'desc' });
       expect(res.meta.total).toBe(2);
       expect(res.data[0]).toMatchObject({ id: 'r1', permissionCount: 5, assignedUserCount: 2 });
       expect(res.data[1]).toMatchObject({ id: 'r2', permissionCount: 0, assignedUserCount: 0 });

@@ -5,7 +5,12 @@ import {
   Role,
   buildPageMeta,
   isPermissionKey,
+  type CreateRoleInput,
+  type DuplicateRoleInput,
+  type ListRolesQuery,
   type Paginated,
+  type RoleDetail,
+  type RoleListItem,
 } from '@azad/shared';
 import { RoleRepository } from './role.repository';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
@@ -17,41 +22,16 @@ export interface RoleActor {
   companyId: string;
 }
 
-export interface CreateRoleInput {
-  name: string;
-  description?: string | null;
-  permissionKeys: string[];
-}
-export interface UpdateRoleInput {
+/**
+ * Internal combined update input. The HTTP PATCH contract (shared `updateRoleSchema`) only carries
+ * name/description — permissions are replaced via PUT /roles/:id/permissions, which calls
+ * updatePermissions() → update() with `permissionKeys`. This type keeps that combined path usable
+ * internally without exposing a second permission channel over HTTP.
+ */
+export interface UpdateRoleData {
   name?: string;
   description?: string | null;
   permissionKeys?: string[];
-}
-export interface DuplicateRoleInput {
-  name: string;
-  description?: string | null;
-}
-export interface ListRolesQuery {
-  page: number;
-  pageSize: number;
-  order?: 'asc' | 'desc';
-  q?: string;
-  type?: 'system' | 'custom';
-}
-
-export interface RoleListItem {
-  id: string;
-  name: string;
-  description: string | null;
-  isSystem: boolean;
-  isProtected: boolean;
-  assignedUserCount: number;
-  permissionCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-export interface RoleDetail extends Omit<RoleListItem, 'permissionCount'> {
-  permissionKeys: string[];
 }
 
 /**
@@ -120,7 +100,7 @@ export class RoleService {
     return this.toDetail(role, permissionKeys, 0);
   }
 
-  async update(actor: RoleActor, id: string, input: UpdateRoleInput): Promise<RoleDetail> {
+  async update(actor: RoleActor, id: string, input: UpdateRoleData): Promise<RoleDetail> {
     this.assertOwner(actor);
     const role = await this.loadOrThrow(id);
     this.assertCustom(role);

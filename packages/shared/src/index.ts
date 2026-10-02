@@ -4,6 +4,7 @@ export * from './auth';
 export * from './staff';
 export * from './permissions';
 export * from './system-roles';
+export * from './roles';
 export * from './api';
 export * from './inventory';
 export * from './customer';
