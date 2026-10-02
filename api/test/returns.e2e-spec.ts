@@ -4,6 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 function binaryParser(res: request.Response, cb: (err: Error | null, body: Buffer) => void): void {
   const chunks: Buffer[] = [];
@@ -81,6 +82,8 @@ describe('Vehicle Returns (e2e)', () => {
     const sales = await prisma.user.create({ data: { companyId: owner.companyId, name: 'Ret Sales', email: `ret.sales.${stamp}@e2e.test`, role: 'SALES_EXECUTIVE', passwordHash: hash } });
     createdUserIds.push(manager.id, sales.id);
 
+    // Backfill roleId so permission-migrated returns endpoints resolve as in production.
+    await seedRbac(prisma);
     ownerToken = await login(email, password);
     managerToken = await login(manager.email, 'Test@12345');
     salesToken = await login(sales.email, 'Test@12345');

@@ -273,6 +273,25 @@ describe('Authorization boundaries (e2e)', () => {
     });
   });
 
+  // Batch 6 permission-migrated: Returns (view/create O|M|S, manage O|M). The requester≠approver
+  // rule and state-machine stay in ReturnsService (not an endpoint-permission concern).
+  describe('Returns (view/create O|M|S, manage O|M)', () => {
+    const nope = `nonexistent-${stamp}`;
+    it('view + create are O|M|S; TECH/ACCOUNTANT denied', async () => {
+      for (const r of ['OWNER', 'MANAGER', 'SALES_EXECUTIVE']) await allowed(r, 'get', '/returns');
+      await allowed('SALES_EXECUTIVE', 'post', '/returns', {}); // returns.create
+      for (const r of ['TECHNICIAN', 'ACCOUNTANT']) await forbidden(r, 'get', '/returns');
+    });
+    it('inspect/approve/reject/cancel/complete are O|M (SALES & others denied)', async () => {
+      await allowed('MANAGER', 'post', `/returns/${nope}/inspect`, {});
+      await allowed('MANAGER', 'post', `/returns/${nope}/approve`, {});
+      await forbidden('SALES_EXECUTIVE', 'post', `/returns/${nope}/approve`, {});
+      await forbidden('SALES_EXECUTIVE', 'post', `/returns/${nope}/complete`, {});
+      await forbidden('TECHNICIAN', 'post', `/returns/${nope}/reject`, {});
+      await forbidden('ACCOUNTANT', 'post', `/returns/${nope}/cancel`, {});
+    });
+  });
+
   // The ACCOUNTANT role was introduced across the system later; pin its full boundary explicitly.
   describe('ACCOUNTANT authorization matrix', () => {
     it('is ALLOWED across Finance', async () => {

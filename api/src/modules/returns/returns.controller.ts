@@ -1,7 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  Role,
   approveReturnSchema,
   cancelReturnSchema,
   completeReturnSchema,
@@ -16,14 +15,12 @@ import {
   type ListReturnsQuery,
   type RejectReturnInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { ReturnsService } from './returns.service';
 
-const READ = [Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE] as const;
 /** Inspect / approve / reject / cancel / complete are management-only. */
-const MANAGE = [Role.OWNER, Role.MANAGER] as const;
 
 @ApiTags('Vehicle Returns')
 @ApiBearerAuth('access-token')
@@ -32,56 +29,56 @@ export class ReturnsController {
   constructor(private readonly returns: ReturnsService) {}
 
   @Get()
-  @Roles(...READ)
+  @Permissions('returns.view')
   @ApiOperation({ summary: 'List vehicle returns' })
   list(@Query(new ZodValidationPipe(listReturnsQuerySchema)) query: ListReturnsQuery) {
     return this.returns.list(query);
   }
 
   @Get(':id')
-  @Roles(...READ)
+  @Permissions('returns.view')
   @ApiOperation({ summary: 'Return detail' })
   get(@Param('id') id: string) {
     return this.returns.get(id);
   }
 
   @Post()
-  @Roles(...READ)
+  @Permissions('returns.create')
   @ApiOperation({ summary: 'Request a post-delivery vehicle return' })
   request(@Body(new ZodValidationPipe(createReturnSchema)) dto: CreateReturnInput, @CurrentUser('id') userId: string) {
     return this.returns.request(dto, userId);
   }
 
   @Post(':id/inspect')
-  @Roles(...MANAGE)
+  @Permissions('returns.inspect')
   @ApiOperation({ summary: 'Record the return inspection (REQUESTED → INSPECTION)' })
   inspect(@Param('id') id: string, @Body(new ZodValidationPipe(inspectReturnSchema)) dto: InspectReturnInput, @CurrentUser('id') userId: string) {
     return this.returns.inspect(id, dto, userId);
   }
 
   @Post(':id/approve')
-  @Roles(...MANAGE)
+  @Permissions('returns.approve')
   @ApiOperation({ summary: 'Approve an inspected return (INSPECTION → APPROVED); requester cannot self-approve' })
   approve(@Param('id') id: string, @Body(new ZodValidationPipe(approveReturnSchema)) _dto: unknown, @CurrentUser('id') userId: string) {
     return this.returns.approve(id, userId);
   }
 
   @Post(':id/reject')
-  @Roles(...MANAGE)
+  @Permissions('returns.reject')
   @ApiOperation({ summary: 'Reject a return (→ REJECTED); unit stays DELIVERED' })
   reject(@Param('id') id: string, @Body(new ZodValidationPipe(rejectReturnSchema)) dto: RejectReturnInput, @CurrentUser('id') userId: string) {
     return this.returns.reject(id, dto, userId);
   }
 
   @Post(':id/cancel')
-  @Roles(...MANAGE)
+  @Permissions('returns.cancel')
   @ApiOperation({ summary: 'Withdraw a not-yet-completed return (→ CANCELLED)' })
   cancel(@Param('id') id: string, @Body(new ZodValidationPipe(cancelReturnSchema)) dto: CancelReturnInput, @CurrentUser('id') userId: string) {
     return this.returns.cancel(id, dto, userId);
   }
 
   @Post(':id/complete')
-  @Roles(...MANAGE)
+  @Permissions('returns.complete')
   @ApiOperation({ summary: 'Finalize an approved return: credit note, refund, unit disposition, warranty void (APPROVED → COMPLETED)' })
   complete(@Param('id') id: string, @Body(new ZodValidationPipe(completeReturnSchema)) dto: CompleteReturnInput, @CurrentUser('id') userId: string) {
     return this.returns.complete(id, dto, userId);
