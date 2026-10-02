@@ -1,7 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  Role,
   createRoleSchema,
   duplicateRoleSchema,
   listRolesQuerySchema,
@@ -14,7 +13,7 @@ import {
   type UpdateRoleInput,
   type UpdateRolePermissionsInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { RoleService, type RoleActor } from './role.service';
@@ -22,13 +21,13 @@ import { RoleService, type RoleActor } from './role.service';
 const actorOf = (u: AuthUser): RoleActor => ({ id: u.id, role: u.role, companyId: u.companyId });
 
 /**
- * Role management — OWNER-only (class-level @Roles is defense-in-depth; RoleService re-asserts
- * OWNER). The actor (id + role + companyId) comes only from the authenticated token; companyId is
- * never accepted from the client. Authorization here still uses the existing role enum / RolesGuard.
+ * Role management — gated by @Permissions('roles.manage') (OWNER-only in the seed; RoleService
+ * re-asserts OWNER as a second layer). The actor (id + role + companyId) comes only from the
+ * authenticated token; companyId is never accepted from the client.
  */
 @ApiTags('Roles')
 @ApiBearerAuth('access-token')
-@Roles(Role.OWNER)
+@Permissions('roles.manage')
 @Controller('roles')
 export class RolesController {
   constructor(private readonly roles: RoleService) {}

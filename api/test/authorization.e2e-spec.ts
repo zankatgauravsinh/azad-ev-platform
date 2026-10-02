@@ -315,6 +315,18 @@ describe('Authorization boundaries (e2e)', () => {
     });
   });
 
+  // Batch 8 permission-migrated: Staff (staff.manage) and Roles (roles.manage) — OWNER-only.
+  describe('Staff & Roles management (OWNER-only)', () => {
+    it('staff.manage: OWNER allowed; MANAGER/SALES/TECHNICIAN/ACCOUNTANT denied', async () => {
+      await allowed('OWNER', 'get', '/users/staff');
+      for (const r of ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT']) await forbidden(r, 'get', '/users/staff');
+    });
+    it('roles.manage: OWNER allowed; MANAGER/SALES/TECHNICIAN/ACCOUNTANT denied', async () => {
+      await allowed('OWNER', 'get', '/roles');
+      for (const r of ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT']) await forbidden(r, 'get', '/roles');
+    });
+  });
+
   // The ACCOUNTANT role was introduced across the system later; pin its full boundary explicitly.
   describe('ACCOUNTANT authorization matrix', () => {
     it('is ALLOWED across Finance', async () => {
