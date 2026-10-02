@@ -230,6 +230,19 @@ describe('Authorization boundaries (e2e)', () => {
       await forbidden('ACCOUNTANT', 'get', '/service/labour-items');
       await allowed('OWNER', 'post', '/service/labour-items', {});
     });
+    it('spare-part stock adjust is O|M (spareparts.adjust)', async () => {
+      await forbidden('TECHNICIAN', 'post', `/service/spare-parts/nonexistent-${stamp}/adjust`, {});
+      await allowed('MANAGER', 'post', `/service/spare-parts/nonexistent-${stamp}/adjust`, {});
+    });
+  });
+
+  // Batch 4 permission-migrated: service reports use the shared reports.view (O|M) key.
+  describe('Service reports (reports.view = O|M)', () => {
+    it('allows OWNER/MANAGER; denies SALES/TECHNICIAN/ACCOUNTANT', async () => {
+      await allowed('OWNER', 'get', '/service/reports');
+      await allowed('MANAGER', 'get', '/service/reports');
+      for (const role of ['SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT']) await forbidden(role, 'get', '/service/reports');
+    });
   });
 
   describe('Service jobs: SALES read access (confirmed), mutations stay O|M(/T)', () => {
