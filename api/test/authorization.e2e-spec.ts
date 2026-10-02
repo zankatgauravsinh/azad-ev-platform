@@ -133,6 +133,46 @@ describe('Authorization boundaries (e2e)', () => {
     });
   });
 
+  // Batch 2 permission-migrated parity (customers / inventory / quotations / bookings / delivery).
+  describe('Batch 2 parity', () => {
+    const nope = `nonexistent-${stamp}`;
+    it('customers: view O|M|S; customer delete O|M; doc/note delete stay O|M|S (Option A)', async () => {
+      for (const r of ['OWNER', 'MANAGER', 'SALES_EXECUTIVE']) await allowed(r, 'get', '/customers');
+      for (const r of ['TECHNICIAN', 'ACCOUNTANT']) await forbidden(r, 'get', '/customers');
+      await forbidden('SALES_EXECUTIVE', 'delete', `/customers/${nope}`); // customers.delete = O|M
+      await allowed('MANAGER', 'delete', `/customers/${nope}`);
+      // Option A: document & note deletes remain O|M|S via customers.update (Sales retained).
+      await allowed('SALES_EXECUTIVE', 'delete', `/customers/${nope}/documents/${nope}`);
+      await allowed('SALES_EXECUTIVE', 'delete', `/customers/${nope}/notes/${nope}`);
+      await forbidden('TECHNICIAN', 'delete', `/customers/${nope}/documents/${nope}`);
+    });
+    it('inventory: reads O|M|S; dashboard/export/writes O|M (Sales denied)', async () => {
+      await allowed('SALES_EXECUTIVE', 'get', '/inventory/units');
+      await forbidden('SALES_EXECUTIVE', 'get', '/inventory/dashboard');
+      await forbidden('SALES_EXECUTIVE', 'get', '/inventory/units/export');
+      await forbidden('SALES_EXECUTIVE', 'post', '/inventory/units', {});
+      await allowed('MANAGER', 'get', '/inventory/dashboard');
+      await allowed('MANAGER', 'get', '/inventory/units/export');
+      await forbidden('ACCOUNTANT', 'get', '/inventory/units');
+    });
+    it('quotations: SALES may delete (quotations.delete = O|M|S)', async () => {
+      await allowed('SALES_EXECUTIVE', 'delete', `/quotations/${nope}`);
+      await forbidden('TECHNICIAN', 'delete', `/quotations/${nope}`);
+    });
+    it('bookings: payment & invoice are O|M|S for SALES; TECH/ACCOUNTANT denied', async () => {
+      await allowed('SALES_EXECUTIVE', 'post', `/bookings/${nope}/payments`, {});
+      await allowed('SALES_EXECUTIVE', 'post', `/bookings/${nope}/invoice`, {});
+      await forbidden('TECHNICIAN', 'post', `/bookings/${nope}/payments`, {});
+      await forbidden('ACCOUNTANT', 'post', `/bookings/${nope}/invoice`, {});
+    });
+    it('delivery: view + manage are O|M|S', async () => {
+      await allowed('SALES_EXECUTIVE', 'get', '/deliveries');
+      await allowed('SALES_EXECUTIVE', 'post', `/deliveries/${nope}/schedule`, {});
+      await forbidden('TECHNICIAN', 'get', '/deliveries');
+      await forbidden('ACCOUNTANT', 'post', `/deliveries/${nope}/schedule`, {});
+    });
+  });
+
   describe('AMC (read O|M|S|T, write O|M|T)', () => {
     it('allows SALES read; TECHNICIAN read+write; rejects ACCOUNTANT', async () => {
       await allowed('SALES_EXECUTIVE', 'get', '/amc');

@@ -6,6 +6,7 @@ import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 const PNG_1PX = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -52,6 +53,8 @@ describe('Customers (e2e)', () => {
       });
       createdUserIds.push(user.id);
     }
+    // Backfill roleId so permission-migrated customer endpoints resolve as in production.
+    await seedRbac(prisma);
     ownerToken = await login(email, password);
     const [sales, tech] = await prisma.user.findMany({
       where: { id: { in: createdUserIds } },

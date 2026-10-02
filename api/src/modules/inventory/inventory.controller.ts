@@ -30,14 +30,13 @@ import {
   createUnitSchema,
   DOCUMENT_TYPES,
   listUnitsQuerySchema,
-  Role,
   updateUnitSchema,
   type ChangeUnitStatusInput,
   type CreateUnitInput,
   type ListUnitsQuery,
   type UpdateUnitInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { InventoryService } from './inventory.service';
@@ -49,8 +48,6 @@ interface MulterFile {
   size: number;
 }
 
-const READ_ROLES = [Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE] as const;
-const WRITE_ROLES = [Role.OWNER, Role.MANAGER] as const;
 
 const IMAGE_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 const DOC_MIME = [...IMAGE_MIME, 'application/pdf'];
@@ -83,14 +80,14 @@ export class InventoryController {
 
   // ── Dashboard / stats ──────────────────────────────────
   @Get('stats')
-  @Roles(...READ_ROLES)
+  @Permissions('inventory.view')
   @ApiOperation({ summary: 'Inventory status counts' })
   stats() {
     return this.inventory.stats();
   }
 
   @Get('dashboard')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.dashboard')
   @ApiOperation({ summary: 'Inventory dashboard: stats + widgets' })
   dashboard() {
     return this.inventory.dashboard();
@@ -98,14 +95,14 @@ export class InventoryController {
 
   // ── Models ─────────────────────────────────────────────
   @Get('models')
-  @Roles(...READ_ROLES)
+  @Permissions('inventory.view')
   @ApiOperation({ summary: 'List scooter models' })
   models() {
     return this.inventory.listModels();
   }
 
   @Get('variants')
-  @Roles(...READ_ROLES)
+  @Permissions('inventory.view')
   @ApiOperation({ summary: 'List scooter variants (for quotations/bookings)' })
   @ApiQuery({ name: 'modelId', required: false, format: 'uuid' })
   variants(@Query('modelId') modelId?: string) {
@@ -113,7 +110,7 @@ export class InventoryController {
   }
 
   @Post('models')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.create')
   @ApiOperation({ summary: 'Create a scooter model' })
   @ApiBody({ schema: { example: { name: 'VX1', brand: 'Comptech' } } })
   @ApiResponse({ status: 201, description: 'The created model' })
@@ -129,7 +126,7 @@ export class InventoryController {
 
   // ── Units: collection ──────────────────────────────────
   @Get('units')
-  @Roles(...READ_ROLES)
+  @Permissions('inventory.view')
   @ApiOperation({ summary: 'List / search / filter / sort / paginate scooters' })
   @ApiQuery({ name: 'q', required: false, description: 'Search VIN, motor/battery no, model, colour, supplier' })
   @ApiQuery({ name: 'status', required: false, enum: ['AVAILABLE', 'RESERVED', 'BOOKED', 'DELIVERED', 'IN_SERVICE', 'RETURNED'] })
@@ -144,7 +141,7 @@ export class InventoryController {
   }
 
   @Get('units/check-vin')
-  @Roles(...READ_ROLES)
+  @Permissions('inventory.view')
   @ApiOperation({ summary: 'Check whether a VIN already exists (duplicate validation)' })
   checkVin(@Query('vin') vin: string) {
     if (!vin?.trim()) throw new BadRequestException('vin is required');
@@ -152,7 +149,7 @@ export class InventoryController {
   }
 
   @Get('units/export')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.export')
   @ApiOperation({ summary: 'Export inventory as Excel or PDF' })
   @ApiQuery({ name: 'format', enum: ['xlsx', 'pdf'], example: 'xlsx' })
   @ApiResponse({ status: 200, description: 'Binary file stream (xlsx or pdf) with Content-Disposition' })
@@ -170,7 +167,7 @@ export class InventoryController {
   }
 
   @Post('units')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.create')
   @ApiOperation({ summary: 'Add a scooter' })
   @ApiBody({ schema: { example: CREATE_EXAMPLE } })
   @ApiResponse({ status: 201, description: 'The created scooter with its variant/model' })
@@ -184,7 +181,7 @@ export class InventoryController {
   }
 
   @Post('units/import')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.create')
   @HttpCode(200)
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Bulk import scooters from a CSV file' })
@@ -200,21 +197,21 @@ export class InventoryController {
 
   // ── Units: item ────────────────────────────────────────
   @Get('units/:id')
-  @Roles(...READ_ROLES)
+  @Permissions('inventory.view')
   @ApiOperation({ summary: 'Scooter detail (info, timeline, bookings, sales, service, media)' })
   getById(@Param('id') id: string) {
     return this.inventory.getById(id);
   }
 
   @Get('units/:id/events')
-  @Roles(...READ_ROLES)
+  @Permissions('inventory.view')
   @ApiOperation({ summary: 'Status history (timeline)' })
   events(@Param('id') id: string) {
     return this.inventory.getEvents(id);
   }
 
   @Patch('units/:id')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.update')
   @ApiOperation({ summary: 'Edit a scooter' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiBody({ schema: { example: UPDATE_EXAMPLE } })
@@ -230,7 +227,7 @@ export class InventoryController {
   }
 
   @Delete('units/:id')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.delete')
   @HttpCode(204)
   @ApiOperation({ summary: 'Soft-delete a scooter' })
   @ApiParam({ name: 'id', format: 'uuid' })
@@ -241,7 +238,7 @@ export class InventoryController {
   }
 
   @Patch('units/:id/status')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.status')
   @ApiOperation({ summary: 'Change status (validated transition, recorded in history)' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiBody({ schema: { example: STATUS_EXAMPLE } })
@@ -258,13 +255,13 @@ export class InventoryController {
 
   // ── Photos ─────────────────────────────────────────────
   @Get('units/:id/photos')
-  @Roles(...READ_ROLES)
+  @Permissions('inventory.view')
   photos(@Param('id') id: string) {
     return this.inventory.listPhotos(id);
   }
 
   @Post('units/:id/photos')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.update')
   @ApiOperation({ summary: 'Upload a unit photo (JPEG/PNG/WebP)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -293,7 +290,7 @@ export class InventoryController {
   }
 
   @Delete('units/:id/photos/:photoId')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.update')
   @HttpCode(204)
   async removePhoto(@Param('id') id: string, @Param('photoId') photoId: string): Promise<void> {
     await this.inventory.removePhoto(id, photoId);
@@ -301,13 +298,13 @@ export class InventoryController {
 
   // ── Documents ──────────────────────────────────────────
   @Get('units/:id/documents')
-  @Roles(...READ_ROLES)
+  @Permissions('inventory.view')
   documents(@Param('id') id: string) {
     return this.inventory.listDocuments(id);
   }
 
   @Post('units/:id/documents')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.update')
   @ApiOperation({ summary: 'Upload a unit document (image or PDF)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -340,7 +337,7 @@ export class InventoryController {
   }
 
   @Delete('units/:id/documents/:docId')
-  @Roles(...WRITE_ROLES)
+  @Permissions('inventory.update')
   @HttpCode(204)
   async removeDocument(@Param('id') id: string, @Param('docId') docId: string): Promise<void> {
     await this.inventory.removeDocument(id, docId);

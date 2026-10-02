@@ -22,7 +22,6 @@ import {
   DOCUMENT_TYPES,
   listCustomersQuerySchema,
   logInteractionSchema,
-  Role,
   updateCustomerSchema,
   updateFollowUpSchema,
   updateNoteSchema,
@@ -37,7 +36,7 @@ import {
   type UpdateFollowUpInput,
   type UpdateNoteInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { CustomersService } from './customers.service';
@@ -51,9 +50,6 @@ interface MulterFile {
   size: number;
 }
 
-const READ_ROLES = [Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE] as const;
-const WRITE_ROLES = [Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE] as const;
-const DELETE_ROLES = [Role.OWNER, Role.MANAGER] as const;
 const DOC_MIME = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -86,7 +82,7 @@ export class CustomersController {
 
   // ── Aggregates (declare before :id) ────────────────────
   @Get('stats')
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   @ApiOperation({ summary: 'Lead-status counts' })
   @ApiResponse({ status: 200, description: '{ total, byStatus }' })
   stats() {
@@ -94,7 +90,7 @@ export class CustomersController {
   }
 
   @Get('follow-ups/reminders')
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   @ApiOperation({ summary: 'Follow-up reminders bucketed into overdue / today / upcoming (for the dashboard)' })
   @ApiResponse({ status: 200, description: '{ overdue[], today[], upcoming[] }' })
   reminders() {
@@ -103,7 +99,7 @@ export class CustomersController {
 
   // ── Customer CRUD ──────────────────────────────────────
   @Get()
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   @ApiOperation({ summary: 'List / search / filter / paginate customers' })
   @ApiQuery({ name: 'q', required: false, description: 'Name, mobile, email, VIN, booking code or invoice number' })
   @ApiQuery({ name: 'leadStatus', required: false, enum: ['NEW', 'CONTACTED', 'INTERESTED', 'TEST_RIDE', 'NEGOTIATION', 'BOOKED', 'WON', 'LOST'] })
@@ -114,7 +110,7 @@ export class CustomersController {
   }
 
   @Post()
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.create')
   @ApiOperation({ summary: 'Add a customer / lead' })
   @ApiBody({ schema: { example: CREATE_EXAMPLE } })
   @ApiResponse({ status: 201, description: 'The created customer' })
@@ -127,7 +123,7 @@ export class CustomersController {
   }
 
   @Get(':id')
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Customer overview' })
   @ApiResponse({ status: 200, description: 'Customer profile' })
@@ -137,7 +133,7 @@ export class CustomersController {
   }
 
   @Patch(':id')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Edit a customer' })
   @ApiResponse({ status: 200, description: 'Updated customer' })
@@ -151,7 +147,7 @@ export class CustomersController {
   }
 
   @Delete(':id')
-  @Roles(...DELETE_ROLES)
+  @Permissions('customers.delete')
   @HttpCode(204)
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Soft-delete a customer' })
@@ -161,7 +157,7 @@ export class CustomersController {
   }
 
   @Patch(':id/status')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Change lead status (records timeline + lost reason)' })
   @ApiBody({ schema: { example: { leadStatus: 'INTERESTED' } } })
@@ -177,7 +173,7 @@ export class CustomersController {
 
   // ── Timeline ───────────────────────────────────────────
   @Get(':id/timeline')
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiQuery({ name: 'type', required: false, description: 'Filter by event type' })
   @ApiOperation({ summary: 'Immutable, auto-generated customer timeline' })
@@ -187,7 +183,7 @@ export class CustomersController {
   }
 
   @Post(':id/interactions')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Log a manual interaction (call/walk-in/test ride/feedback/referral) → timeline entry' })
   @ApiBody({ schema: { example: { type: 'PHONE_CALL', note: 'Discussed EMI options' } } })
@@ -202,7 +198,7 @@ export class CustomersController {
 
   // ── Related + activity ─────────────────────────────────
   @Get(':id/related')
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Bookings, payments, deliveries, service and warranty for the profile tabs' })
   related(@Param('id') id: string) {
@@ -210,7 +206,7 @@ export class CustomersController {
   }
 
   @Get(':id/activity')
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Activity log for this customer' })
   activity(@Param('id') id: string) {
@@ -219,13 +215,13 @@ export class CustomersController {
 
   // ── Documents ──────────────────────────────────────────
   @Get(':id/documents')
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   documents(@Param('id') id: string) {
     return this.customers.listDocuments(id);
   }
 
   @Post(':id/documents')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload a document to the customer folder' })
   @ApiBody({
@@ -252,7 +248,7 @@ export class CustomersController {
   }
 
   @Patch(':id/documents/:docId')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Replace a document file (keeps its type)' })
   @ApiBody({ schema: { type: 'object', required: ['file'], properties: { file: { type: 'string', format: 'binary' } } } })
@@ -268,7 +264,7 @@ export class CustomersController {
   }
 
   @Delete(':id/documents/:docId')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @HttpCode(204)
   async removeDocument(@Param('id') id: string, @Param('docId') docId: string): Promise<void> {
     await this.customers.removeDocument(id, docId);
@@ -276,14 +272,14 @@ export class CustomersController {
 
   // ── Notes ──────────────────────────────────────────────
   @Get(':id/notes')
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   @ApiOperation({ summary: 'Internal notes (never shown to customers)' })
   notesList(@Param('id') id: string) {
     return this.notes.list(id);
   }
 
   @Post(':id/notes')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @ApiBody({ schema: { example: { body: 'Prefers teal, wants EMI under ₹4k' } } })
   createNote(
     @Param('id') id: string,
@@ -294,7 +290,7 @@ export class CustomersController {
   }
 
   @Patch(':id/notes/:noteId')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @ApiOperation({ summary: 'Edit a note (previous version kept as history)' })
   updateNote(
     @Param('id') id: string,
@@ -306,14 +302,14 @@ export class CustomersController {
   }
 
   @Get(':id/notes/:noteId/revisions')
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   @ApiOperation({ summary: 'Edit history of a note' })
   noteRevisions(@Param('id') id: string, @Param('noteId') noteId: string) {
     return this.notes.revisions(id, noteId);
   }
 
   @Delete(':id/notes/:noteId')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @HttpCode(204)
   async removeNote(
     @Param('id') id: string,
@@ -325,14 +321,14 @@ export class CustomersController {
 
   // ── Follow-ups ─────────────────────────────────────────
   @Get(':id/follow-ups')
-  @Roles(...READ_ROLES)
+  @Permissions('customers.view')
   @ApiOperation({ summary: 'Follow-ups for a customer' })
   followUpList(@Param('id') id: string) {
     return this.followUps.list(id);
   }
 
   @Post(':id/follow-ups')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @ApiBody({ schema: { example: { dueAt: '2026-08-01T10:30:00.000Z', priority: 'HIGH', note: 'Call about delivery date' } } })
   @ApiResponse({ status: 201, description: 'The scheduled follow-up' })
   createFollowUp(
@@ -344,7 +340,7 @@ export class CustomersController {
   }
 
   @Patch(':id/follow-ups/:followUpId')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   updateFollowUp(
     @Param('id') id: string,
     @Param('followUpId') followUpId: string,
@@ -355,7 +351,7 @@ export class CustomersController {
   }
 
   @Post(':id/follow-ups/:followUpId/complete')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @ApiOperation({ summary: 'Mark a follow-up complete' })
   completeFollowUp(
     @Param('id') id: string,
@@ -366,7 +362,7 @@ export class CustomersController {
   }
 
   @Post(':id/follow-ups/:followUpId/cancel')
-  @Roles(...WRITE_ROLES)
+  @Permissions('customers.update')
   @ApiOperation({ summary: 'Cancel a follow-up' })
   cancelFollowUp(
     @Param('id') id: string,
