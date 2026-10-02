@@ -82,7 +82,7 @@ describe('Role management (e2e)', () => {
     const res = await http().get('/api/v1/roles?pageSize=100').set('Authorization', auth(ownerToken)).expect(200);
     const mgr = res.body.data.find((r: { id: string }) => r.id === managerRoleId);
     expect(mgr.isSystem).toBe(true);
-    expect(mgr.permissionCount).toBe(68);
+    expect(mgr.permissionCount).toBe(70);
   });
 
   // ── create / get / update / permissions ──
@@ -146,7 +146,7 @@ describe('Role management (e2e)', () => {
     const dup = await http().post(`/api/v1/roles/${managerRoleId}/duplicate`).set('Authorization', auth(ownerToken)).send({ name: `Branch Manager ${stamp}` }).expect(201);
     createdRoleIds.push(dup.body.id);
     expect(dup.body.isSystem).toBe(false);
-    expect(dup.body.permissionKeys.length).toBe(68); // copied MANAGER permissions
+    expect(dup.body.permissionKeys.length).toBe(70); // copied MANAGER permissions
   });
 
   // ── delete + name reuse ──

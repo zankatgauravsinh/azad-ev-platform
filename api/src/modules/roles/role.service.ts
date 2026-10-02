@@ -14,6 +14,7 @@ import {
 } from '@azad/shared';
 import { RoleRepository } from './role.repository';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
+import { PermissionResolver } from '../../common/rbac/permission-resolver.service';
 
 /** Authenticated caller — always derived from the JWT/DB user, never from client input. */
 export interface RoleActor {
@@ -47,6 +48,7 @@ export class RoleService {
   constructor(
     private readonly repo: RoleRepository,
     private readonly activityLog: ActivityLogService,
+    private readonly permissions: PermissionResolver,
   ) {}
 
   async list(actor: RoleActor, query: ListRolesQuery): Promise<Paginated<RoleListItem>> {
@@ -95,6 +97,7 @@ export class RoleService {
       { companyId: actor.companyId, key: null, name, description, isSystem: false, isProtected: false, createdById: actor.id, updatedById: actor.id },
       permissionIds,
     );
+    this.permissions.invalidate(role.id);
     const permissionKeys = [...new Set(input.permissionKeys)];
     await this.audit(actor, ActivityAction.CREATE, role, `Created role ${role.name}`, { event: 'ROLE_CREATED', name: role.name, type: 'custom', permissionKeys });
     return this.toDetail(role, permissionKeys, 0);
@@ -124,6 +127,7 @@ export class RoleService {
     const permissionIds = replacingPermissions ? await this.resolvePermissionIds(input.permissionKeys!) : undefined;
 
     const updated = await this.repo.update(id, data, permissionIds);
+    if (replacingPermissions) this.permissions.invalidate(id);
 
     if (changed.length > 0) {
       await this.audit(actor, ActivityAction.UPDATE, updated, `Updated role ${updated.name}`, { event: 'ROLE_UPDATED', name: updated.name, changed });
@@ -161,6 +165,7 @@ export class RoleService {
       { companyId: actor.companyId, key: null, name, description, isSystem: false, isProtected: false, createdById: actor.id, updatedById: actor.id },
       permissionIds,
     );
+    this.permissions.invalidate(role.id);
     const permissionKeys = await this.repo.findPermissionKeys(role.id);
     await this.audit(actor, ActivityAction.CREATE, role, `Duplicated role ${source.name} → ${role.name}`, {
       event: 'ROLE_DUPLICATED',
@@ -184,6 +189,7 @@ export class RoleService {
     try {
       const deleted = await this.repo.deleteCustom(id);
       if (deleted !== 1) throw new NotFoundException('Role not found');
+      this.permissions.invalidate(id);
     } catch (e) {
       // A user assigned between the count check and the delete trips the onDelete:Restrict FK.
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {

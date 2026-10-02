@@ -4,6 +4,7 @@ import { Role } from '@azad/shared';
 import { RoleService, type RoleActor } from './role.service';
 import type { RoleRepository } from './role.repository';
 import type { ActivityLogService } from '../../activity-log/activity-log.service';
+import type { PermissionResolver } from '../../common/rbac/permission-resolver.service';
 
 const owner: RoleActor = { id: 'owner1', role: Role.OWNER, companyId: 'c1' };
 const manager: RoleActor = { id: 'mgr1', role: Role.MANAGER, companyId: 'c1' };
@@ -19,6 +20,7 @@ const makeRole = (over: Partial<AppRole> = {}): AppRole =>
 describe('RoleService', () => {
   let repo: jest.Mocked<RoleRepository>;
   let activityLog: jest.Mocked<Pick<ActivityLogService, 'record'>>;
+  let permissions: jest.Mocked<Pick<PermissionResolver, 'invalidate'>>;
   let service: RoleService;
 
   beforeEach(() => {
@@ -38,7 +40,12 @@ describe('RoleService', () => {
       deleteCustom: jest.fn().mockResolvedValue(1),
     } as unknown as jest.Mocked<RoleRepository>;
     activityLog = { record: jest.fn().mockResolvedValue(undefined) };
-    service = new RoleService(repo as unknown as RoleRepository, activityLog as unknown as ActivityLogService);
+    permissions = { invalidate: jest.fn() };
+    service = new RoleService(
+      repo as unknown as RoleRepository,
+      activityLog as unknown as ActivityLogService,
+      permissions as unknown as PermissionResolver,
+    );
   });
 
   const validCreate = { name: 'Sales Manager', permissionKeys: ['customers.view', 'bookings.view'] };
@@ -124,6 +131,11 @@ describe('RoleService', () => {
     it('allows emptying the permission set', async () => {
       await service.update(owner, 'r1', { permissionKeys: [] });
       expect(repo.update).toHaveBeenCalledWith('r1', expect.anything(), []);
+    });
+
+    it('invalidates the permission cache when permissions change', async () => {
+      await service.update(owner, 'r1', { permissionKeys: ['customers.view'] });
+      expect(permissions.invalidate).toHaveBeenCalledWith('r1');
     });
 
     it('rejects modifying a system role', async () => {

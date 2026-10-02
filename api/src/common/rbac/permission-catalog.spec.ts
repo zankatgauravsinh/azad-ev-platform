@@ -26,7 +26,7 @@ describe('permission catalog', () => {
   });
 
   it('matches the approved catalog size (regression lock)', () => {
-    expect(PERMISSIONS.length).toBe(71);
+    expect(PERMISSIONS.length).toBe(73);
     expect(PERMISSION_MODULES.length).toBe(25);
   });
 
@@ -39,7 +39,7 @@ describe('permission catalog', () => {
   it('contains the specific keys later groups rely on', () => {
     const required = [
       'customers.view', 'customers.delete',
-      'inventory.view', 'inventory.status',
+      'inventory.view', 'inventory.status', 'inventory.dashboard', 'inventory.export',
       'quotations.delete', // SALES can delete quotations (preserved)
       'bookings.payment', 'bookings.cancel', 'bookings.invoice',
       'delivery.manage',

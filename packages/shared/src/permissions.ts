@@ -69,6 +69,8 @@ const MODULE_ROWS: Record<PermissionModule, Row[]> = {
     ['update', 'Edit inventory'],
     ['delete', 'Delete inventory', true],
     ['status', 'Change unit status'],
+    ['dashboard', 'View inventory dashboard'],
+    ['export', 'Export inventory'],
   ],
   quotations: [
     ['view', 'View quotations'],

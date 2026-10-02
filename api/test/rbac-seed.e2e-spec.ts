@@ -16,7 +16,7 @@ describe('RBAC seed & backfill (e2e)', () => {
   const stamp = Date.now().toString().slice(-8);
   let companyAId = '';
   const EXPECTED_COUNTS: Record<string, number> = {
-    OWNER: 71, MANAGER: 68, SALES_EXECUTIVE: 27, TECHNICIAN: 15, ACCOUNTANT: 10,
+    OWNER: 73, MANAGER: 70, SALES_EXECUTIVE: 27, TECHNICIAN: 15, ACCOUNTANT: 10,
   };
   const cleanup = { companyBId: '', userBId: '' };
 
@@ -39,12 +39,12 @@ describe('RBAC seed & backfill (e2e)', () => {
     await app.close();
   }, 30000);
 
-  it('seeds the 71-permission global catalog and is idempotent', async () => {
+  it('seeds the 73-permission global catalog and is idempotent', async () => {
     const r1 = await seedRbac(prisma);
-    expect(r1.permissions).toBe(71);
-    expect(await prisma.permission.count()).toBe(71);
+    expect(r1.permissions).toBe(73);
+    expect(await prisma.permission.count()).toBe(73);
     const r2 = await seedRbac(prisma); // second run
-    expect(await prisma.permission.count()).toBe(71); // no duplicates
+    expect(await prisma.permission.count()).toBe(73); // no duplicates
     expect(r2.usersBackfilled).toBe(0); // existing users already backfilled
   });
 
@@ -103,7 +103,7 @@ describe('RBAC seed & backfill (e2e)', () => {
     const roleIds = (await prisma.appRole.findMany({ where: { companyId: companyAId }, select: { id: true } })).map((r) => r.id);
     const total = await prisma.rolePermission.count({ where: { roleId: { in: roleIds } } });
     const expected = SYSTEM_ROLES.reduce((sum, def) => sum + SYSTEM_ROLE_PERMISSIONS[def.key as Role].length, 0);
-    expect(total).toBe(expected); // 191
+    expect(total).toBe(expected); // 195
   });
 
   it('backfills the existing owner to the company OWNER role without changing the enum', async () => {
