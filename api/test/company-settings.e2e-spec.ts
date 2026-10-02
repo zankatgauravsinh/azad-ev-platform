@@ -4,6 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 describe('Company settings (e2e)', () => {
   let app: INestApplication;
@@ -35,6 +36,8 @@ describe('Company settings (e2e)', () => {
       });
       createdUserIds.push(u.id);
     }
+    // Backfill roleId so permission-migrated settings endpoints resolve as in production.
+    await seedRbac(prisma);
     const [manager, sales] = await prisma.user.findMany({ where: { id: { in: createdUserIds } }, orderBy: { role: 'asc' } });
     ownerToken = await login(email, password);
     managerToken = await login(manager!.email, 'Test@12345');

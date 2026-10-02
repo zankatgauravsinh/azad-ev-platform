@@ -4,6 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 /**
  * Role-boundary coverage for the fixed-role model (documents, does not change, authorization).
@@ -50,6 +51,9 @@ describe('Authorization boundaries (e2e)', () => {
       });
       createdUserIds.push(u.id);
     }
+    // Backfill roleId for these test users so permission-migrated endpoints resolve exactly as in
+    // production (where every user is backfilled). Role enum / RolesGuard still gate un-migrated routes.
+    await seedRbac(prisma);
     const login = async (mail: string, pass: string): Promise<string> =>
       (await http().post('/api/v1/auth/login').send({ email: mail, password: pass }).expect(200)).body.accessToken;
     T.OWNER = await login(email, password);
@@ -109,6 +113,23 @@ describe('Authorization boundaries (e2e)', () => {
       await allowed('OWNER', 'post', '/accessories', {});
       await forbidden('TECHNICIAN', 'get', '/accessories');
       await forbidden('ACCOUNTANT', 'get', '/accessories');
+    });
+  });
+
+  // Batch 1 permission-migrated: company settings (branding O|M|S|T, read O|M, write OWNER).
+  describe('Company settings (settings.branding / settings.view / settings.manage)', () => {
+    it('branding is readable by OWNER/MANAGER/SALES/TECHNICIAN, denied for ACCOUNTANT', async () => {
+      for (const role of ['OWNER', 'MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN']) await allowed(role, 'get', '/settings/company/branding');
+      await forbidden('ACCOUNTANT', 'get', '/settings/company/branding');
+    });
+    it('settings read is OWNER/MANAGER only', async () => {
+      await allowed('OWNER', 'get', '/settings/company');
+      await allowed('MANAGER', 'get', '/settings/company');
+      for (const role of ['SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT']) await forbidden(role, 'get', '/settings/company');
+    });
+    it('settings write is OWNER only', async () => {
+      for (const role of ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT']) await forbidden(role, 'patch', '/settings/company', { language: 'en' });
+      await allowed('OWNER', 'patch', '/settings/company', { language: 'en' });
     });
   });
 
