@@ -246,9 +246,26 @@ describe('Authorization boundaries (e2e)', () => {
   });
 
   describe('Service jobs: SALES read access (confirmed), mutations stay O|M(/T)', () => {
-    it('allows SALES_EXECUTIVE to read service jobs', async () => { await allowed('SALES_EXECUTIVE', 'get', '/service/jobs'); });
-    it('rejects SALES_EXECUTIVE create/bill (write)', async () => {
-      await forbidden('SALES_EXECUTIVE', 'post', '/service/jobs', {});
+    const nope = `nonexistent-${stamp}`;
+    it('allows SALES_EXECUTIVE to read service jobs but not mutate', async () => {
+      await allowed('SALES_EXECUTIVE', 'get', '/service/jobs');
+      await forbidden('SALES_EXECUTIVE', 'post', '/service/jobs', {}); // service.create
+      await forbidden('SALES_EXECUTIVE', 'post', `/service/jobs/${nope}/status`, {}); // service.workflow
+      await forbidden('SALES_EXECUTIVE', 'post', `/service/jobs/${nope}/parts`, {}); // service.parts
+    });
+    it('TECHNICIAN: workflow/parts/labour allowed; create/edit/bill/payment denied', async () => {
+      await allowed('TECHNICIAN', 'get', '/service/jobs');
+      await allowed('TECHNICIAN', 'post', `/service/jobs/${nope}/status`, {}); // service.workflow
+      await allowed('TECHNICIAN', 'post', `/service/jobs/${nope}/parts`, {}); // service.parts
+      await allowed('TECHNICIAN', 'post', `/service/jobs/${nope}/labour`, {}); // service.labour
+      await forbidden('TECHNICIAN', 'post', '/service/jobs', {}); // service.create (O|M)
+      await forbidden('TECHNICIAN', 'patch', `/service/jobs/${nope}`, {}); // edit → service.create (O|M)
+      await forbidden('TECHNICIAN', 'post', `/service/jobs/${nope}/bill`, {}); // service.bill (O|M)
+      await forbidden('TECHNICIAN', 'post', `/service/jobs/${nope}/payments`, {}); // service.payment (O|M)
+    });
+    it('edit job (PATCH :id) is O|M via service.create', async () => {
+      await allowed('MANAGER', 'patch', `/service/jobs/${nope}`, {});
+      await forbidden('SALES_EXECUTIVE', 'patch', `/service/jobs/${nope}`, {});
     });
     it('rejects ACCOUNTANT read and mutation', async () => {
       await forbidden('ACCOUNTANT', 'get', '/service/jobs');

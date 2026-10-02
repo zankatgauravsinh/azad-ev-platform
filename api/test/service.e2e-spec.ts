@@ -4,6 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 describe('Service & after-sales (e2e)', () => {
   let app: INestApplication;
@@ -41,6 +42,8 @@ describe('Service & after-sales (e2e)', () => {
       const u = await prisma.user.create({ data: { companyId: owner.companyId, name: `Svc ${role}`, email: `svc.${role.toLowerCase()}.${stamp}@e2e.test`, role, passwordHash: hash } });
       createdUserIds.push(u.id);
     }
+    // Backfill roleId so permission-migrated service-jobs endpoints resolve as in production.
+    await seedRbac(prisma);
     const [tech, sales] = await prisma.user.findMany({ where: { id: { in: createdUserIds } }, orderBy: { role: 'asc' } });
     techId = sales!.role === 'TECHNICIAN' ? sales!.id : tech!.id;
     const techUser = [tech, sales].find((u) => u!.role === 'TECHNICIAN')!;
