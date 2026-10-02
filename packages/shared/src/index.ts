@@ -2,6 +2,7 @@ export * from './enums';
 export * from './pagination';
 export * from './auth';
 export * from './staff';
+export * from './permissions';
 export * from './api';
 export * from './inventory';
 export * from './customer';
