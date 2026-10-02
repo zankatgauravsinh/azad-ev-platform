@@ -4,6 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 /**
  * Staff management (OWNER-only) e2e — authorization, tenant isolation across two companies,
@@ -26,6 +27,7 @@ describe('Staff Management (e2e)', () => {
   let companyBId = '';
   const createdUserIds: string[] = [];
   const createdCompanyIds: string[] = [];
+  const createdRoleIds: string[] = [];
   const roleTokens: Record<string, string> = {};
 
   // bcrypt(12) dominates setup time; memoize by plaintext so each distinct test password is hashed once.
@@ -65,6 +67,9 @@ describe('Staff Management (e2e)', () => {
     createdUserIds.push(ownerB.id);
     ownerBToken = await token(ownerBEmail, 'Owner@12345');
 
+    // Staff creation now assigns a dynamic AppRole (roleId) → both companies need the system roles seeded.
+    await seedRbac(prisma);
+
     // One non-owner of each role in company A, to prove rejection.
     for (const role of ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT']) {
       const u = await mkUser(companyAId, role, 'Role@12345');
@@ -80,6 +85,8 @@ describe('Staff Management (e2e)', () => {
       const ids = [...createdUserIds, ...apiMade.map((u) => u.id)];
       await prisma.activityLog.deleteMany({ where: { actorId: { in: ids } } });
       await prisma.user.deleteMany({ where: { id: { in: ids } } });
+      // Custom roles created in company A (the seed company isn't deleted) — remove after their users.
+      if (createdRoleIds.length) await prisma.appRole.deleteMany({ where: { id: { in: createdRoleIds } } });
       await prisma.company.deleteMany({ where: { id: { in: createdCompanyIds } } });
     } catch {
       /* best-effort */
@@ -213,5 +220,56 @@ describe('Staff Management (e2e)', () => {
     const dump = JSON.stringify(entries);
     expect(dump).not.toContain('passwordHash');
     expect(dump).not.toContain('Abcd1234');
+  });
+
+  // ── H1: dynamic role (roleId) assignment — created/updated staff get working permissions ──
+  const sysRole = (companyId: string, key: string) => prisma.appRole.findFirstOrThrow({ where: { companyId, key } });
+  const track = (id: string): string => (createdUserIds.push(id), id);
+
+  it('create wires roleId to the enum’s system role, and the new staff can use those permissions', async () => {
+    const res = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(newStaff({ role: 'MANAGER', password: 'Mgr@12345' })).expect(201);
+    track(res.body.id);
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: res.body.id } });
+    expect(row.roleId).toBe((await sysRole(companyAId, 'MANAGER')).id); // not just the legacy enum
+    const me = await http().get('/api/v1/auth/me').set('Authorization', auth(await token(row.email, 'Mgr@12345'))).expect(200);
+    expect(me.body.permissions).toContain('inventory.view'); // MANAGER has it
+    expect(me.body.permissions).not.toContain('staff.manage'); // MANAGER lacks it
+  });
+
+  it('changing the role moves roleId and the effective permissions with it (same token, re-validated per request)', async () => {
+    const created = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(newStaff({ role: 'SALES_EXECUTIVE', password: 'Sls@12345' })).expect(201);
+    track(created.body.id);
+    const t = await token(created.body.email, 'Sls@12345');
+    const before = await http().get('/api/v1/auth/me').set('Authorization', auth(t)).expect(200);
+    expect(before.body.permissions).toContain('service.view');
+    expect(before.body.permissions).not.toContain('finance.manage');
+
+    await http().patch(`/api/v1/users/staff/${created.body.id}`).set('Authorization', auth(ownerAToken)).send({ role: 'ACCOUNTANT' }).expect(200);
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: created.body.id } });
+    expect(row.roleId).toBe((await sysRole(companyAId, 'ACCOUNTANT')).id);
+    const after = await http().get('/api/v1/auth/me').set('Authorization', auth(t)).expect(200);
+    expect(after.body.permissions).toContain('finance.manage');
+    expect(after.body.permissions).not.toContain('service.view');
+  });
+
+  it('assigns an explicit custom roleId and preserves the legacy enum', async () => {
+    const custom = await prisma.appRole.create({ data: { companyId: companyAId, name: `Custom ${stamp}`, isSystem: false } });
+    createdRoleIds.push(custom.id);
+    const perm = await prisma.permission.findUniqueOrThrow({ where: { key: 'dashboard.view' } });
+    await prisma.rolePermission.create({ data: { roleId: custom.id, permissionId: perm.id } });
+
+    const res = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(newStaff({ role: 'SALES_EXECUTIVE', roleId: custom.id, password: 'Cst@12345' })).expect(201);
+    track(res.body.id);
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: res.body.id } });
+    expect(row.roleId).toBe(custom.id);
+    expect(row.role).toBe('SALES_EXECUTIVE'); // legacy enum kept (a custom role has no enum)
+    const me = await http().get('/api/v1/auth/me').set('Authorization', auth(await token(row.email, 'Cst@12345'))).expect(200);
+    expect(me.body.permissions).toEqual(['dashboard.view']); // exactly the custom role's single grant
+  });
+
+  it('rejects a roleId from another company (400, no id leak)', async () => {
+    const bManager = await sysRole(companyBId, 'MANAGER');
+    const res = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(newStaff({ roleId: bManager.id })).expect(400);
+    expect(JSON.stringify(res.body)).not.toContain(bManager.id);
   });
 });

@@ -19,7 +19,10 @@ export const createStaffSchema = z.object({
   name: z.string().trim().min(1),
   email: z.string().trim().email(),
   phone: z.string().trim().max(20).optional(),
+  // `role` is the legacy base role (kept for display/back-compat). `roleId` optionally assigns a
+  // specific company role (a custom role, or any system role) — it drives effective permissions.
   role: roleEnum,
+  roleId: z.string().uuid().optional(),
   password: staffPassword,
 });
 export type CreateStaffInput = z.infer<typeof createStaffSchema>;
@@ -30,8 +33,9 @@ export const updateStaffSchema = z
     name: z.string().trim().min(1).optional(),
     phone: z.string().trim().max(20).nullable().optional(),
     role: roleEnum.optional(),
+    roleId: z.string().uuid().optional(),
   })
-  .refine((v) => v.name !== undefined || v.phone !== undefined || v.role !== undefined, {
+  .refine((v) => v.name !== undefined || v.phone !== undefined || v.role !== undefined || v.roleId !== undefined, {
     message: 'No changes provided',
   });
 export type UpdateStaffInput = z.infer<typeof updateStaffSchema>;

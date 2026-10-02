@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { Prisma, type User } from '@prisma/client';
+import { Prisma, type AppRole, type User } from '@prisma/client';
 import { ActivityAction, type Role } from '@azad/shared';
 import { StaffService, type StaffActor } from './staff.service';
 import type { UsersRepository } from './users.repository';
@@ -17,8 +17,21 @@ const makeUser = (over: Partial<User> = {}): User =>
     ...over,
   }) as User;
 
+const fakeRole = (over: Partial<AppRole> = {}): AppRole =>
+  ({
+    id: 'role1', companyId: 'c1', key: 'MANAGER', name: 'Manager', description: null,
+    isSystem: true, isProtected: false, createdById: null, updatedById: null,
+    createdAt: new Date('2026-01-01'), updatedAt: new Date('2026-01-01'), deletedAt: null,
+    ...over,
+  }) as AppRole;
+
 describe('StaffService', () => {
-  let repo: jest.Mocked<Pick<UsersRepository, 'findByEmail' | 'findById' | 'create' | 'update' | 'findMany' | 'count' | 'countActiveOwners'>>;
+  let repo: jest.Mocked<
+    Pick<
+      UsersRepository,
+      'findByEmail' | 'findById' | 'create' | 'update' | 'findMany' | 'count' | 'countActiveOwners' | 'findSystemRoleByKey' | 'findRoleById'
+    >
+  >;
   let passwords: jest.Mocked<Pick<PasswordService, 'hash'>>;
   let activityLog: jest.Mocked<Pick<ActivityLogService, 'record'>>;
   let service: StaffService;
@@ -32,6 +45,9 @@ describe('StaffService', () => {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
       countActiveOwners: jest.fn().mockResolvedValue(2),
+      // Seeded system role for an enum (tenant-scoped in the real repo); custom roleId lookups opt in per test.
+      findSystemRoleByKey: jest.fn().mockImplementation(async (key: string) => fakeRole({ id: `role-${key}`, key, isProtected: key === 'OWNER' })),
+      findRoleById: jest.fn().mockResolvedValue(null),
     };
     passwords = { hash: jest.fn().mockResolvedValue('HASHED') };
     activityLog = { record: jest.fn().mockResolvedValue(undefined) };
@@ -79,6 +95,41 @@ describe('StaffService', () => {
       expect((dto as unknown as Record<string, unknown>).refreshTokenHash).toBeUndefined();
     });
 
+    it('assigns the enum’s system roleId atomically with the row (H1)', async () => {
+      await service.create(owner, validCreate); // role: MANAGER
+      expect(repo.findSystemRoleByKey).toHaveBeenCalledWith('MANAGER');
+      const data = repo.create.mock.calls[0]![0];
+      expect(data.roleId).toBe('role-MANAGER'); // dynamic role wired, not just the enum
+      expect(data.role).toBe('MANAGER'); // legacy enum kept in sync
+    });
+
+    it('honours an explicit custom roleId and keeps the legacy enum', async () => {
+      repo.findRoleById.mockResolvedValue(fakeRole({ id: 'custom1', key: null, isSystem: false }));
+      await service.create(owner, { ...validCreate, roleId: 'custom1' });
+      expect(repo.findRoleById).toHaveBeenCalledWith('custom1');
+      const data = repo.create.mock.calls[0]![0];
+      expect(data.roleId).toBe('custom1');
+      expect(data.role).toBe('MANAGER'); // base enum from the DTO (a custom role has no enum)
+    });
+
+    it('rejects an unknown / cross-company roleId (invisible → not found)', async () => {
+      repo.findRoleById.mockResolvedValue(null);
+      await expect(service.create(owner, { ...validCreate, roleId: 'other-co-role' })).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a soft-deleted roleId', async () => {
+      repo.findRoleById.mockResolvedValue(fakeRole({ id: 'custom1', key: null, isSystem: false, deletedAt: new Date() }));
+      await expect(service.create(owner, { ...validCreate, roleId: 'custom1' })).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.create).not.toHaveBeenCalled();
+    });
+
+    it('fails loudly when RBAC is not initialized for the company (no role-less user created)', async () => {
+      repo.findSystemRoleByKey.mockResolvedValue(null);
+      await expect(service.create(owner, validCreate)).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.create).not.toHaveBeenCalled();
+    });
+
     it('rejects a duplicate email (in-company) with a clean error', async () => {
       repo.findByEmail.mockResolvedValue(makeUser());
       await expect(service.create(owner, validCreate)).rejects.toBeInstanceOf(ConflictException);
@@ -108,6 +159,30 @@ describe('StaffService', () => {
     it('promotes a non-owner to OWNER', async () => {
       repo.findById.mockResolvedValue(makeUser({ role: 'MANAGER' }));
       await expect(service.update(owner, 'u1', { role: 'OWNER' })).resolves.toBeDefined();
+    });
+
+    it('a role change moves roleId to the enum’s system role (H1)', async () => {
+      repo.findById.mockResolvedValue(makeUser({ role: 'SALES_EXECUTIVE' }));
+      await service.update(owner, 'u1', { role: 'TECHNICIAN' });
+      const data = repo.update.mock.calls[0]![1] as Record<string, unknown>;
+      expect(data.roleRef).toEqual({ connect: { id: 'role-TECHNICIAN' } });
+      expect(data.role).toBe('TECHNICIAN');
+    });
+
+    it('assigns an explicit custom roleId without touching the legacy enum', async () => {
+      repo.findById.mockResolvedValue(makeUser({ role: 'SALES_EXECUTIVE' }));
+      repo.findRoleById.mockResolvedValue(fakeRole({ id: 'custom1', key: null, isSystem: false }));
+      await service.update(owner, 'u1', { roleId: 'custom1' });
+      const data = repo.update.mock.calls[0]![1] as Record<string, unknown>;
+      expect(data.roleRef).toEqual({ connect: { id: 'custom1' } });
+      expect(data.role).toBeUndefined(); // custom role has no enum → legacy value untouched
+    });
+
+    it('blocks demoting the last active owner via a custom roleId too', async () => {
+      repo.findById.mockResolvedValue(makeUser({ id: 'u1', role: 'OWNER', isActive: true }));
+      repo.countActiveOwners.mockResolvedValue(1);
+      repo.findRoleById.mockResolvedValue(fakeRole({ id: 'custom1', key: null, isSystem: false })); // not an owner role
+      await expect(service.update(owner, 'u1', { roleId: 'custom1' })).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
