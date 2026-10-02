@@ -9,17 +9,16 @@ import {
   type ListVendorsQuery,
   type UpdateVendorInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { VendorsService } from './vendors.service';
 import { FinancePdfService } from './finance-pdf.service';
-import { FINANCE_READ, FINANCE_WRITE } from './finance.roles';
 
 @ApiTags('Finance · Vendors')
 @ApiBearerAuth('access-token')
-@Roles(...FINANCE_READ)
+@Permissions('vendors.view')
 @Controller('vendors')
 export class VendorsController {
   constructor(
@@ -58,20 +57,20 @@ export class VendorsController {
   }
 
   @Post()
-  @Roles(...FINANCE_WRITE)
+  @Permissions('vendors.manage')
   create(@Body(new ZodValidationPipe(createVendorSchema)) dto: CreateVendorInput, @CurrentUser('id') userId: string) {
     return this.vendors.create(dto, userId);
   }
 
   @Patch(':id')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('vendors.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   update(@Param('id') id: string, @Body(new ZodValidationPipe(updateVendorSchema)) dto: UpdateVendorInput, @CurrentUser('id') userId: string) {
     return this.vendors.update(id, dto, userId);
   }
 
   @Delete(':id')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('vendors.manage')
   @HttpCode(204)
   @ApiParam({ name: 'id', format: 'uuid' })
   async remove(@Param('id') id: string, @CurrentUser('id') userId: string): Promise<void> {

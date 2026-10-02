@@ -203,18 +203,41 @@ describe('Authorization boundaries (e2e)', () => {
     });
   });
 
-  describe('Finance: Income / Bank / Vendors (OWNER|MANAGER|ACCOUNTANT)', () => {
-    it('allows ACCOUNTANT', async () => {
-      await allowed('ACCOUNTANT', 'get', '/income');
-      await allowed('ACCOUNTANT', 'get', '/bank-transactions');
-      await allowed('ACCOUNTANT', 'get', '/vendors');
-    });
-    it('rejects SALES_EXECUTIVE and TECHNICIAN', async () => {
-      for (const role of ['SALES_EXECUTIVE', 'TECHNICIAN']) {
-        await forbidden(role, 'get', '/income');
-        await forbidden(role, 'get', '/bank-transactions');
-        await forbidden(role, 'get', '/vendors');
+  // Batch 7 permission-migrated: Finance family (view + manage = OWNER|MANAGER|ACCOUNTANT).
+  describe('Finance family: finance / expenses / bank / income / vendors (O|M|A)', () => {
+    const nope = `nonexistent-${stamp}`;
+    // read endpoint + a representative write (manage) endpoint per module.
+    const reads: Record<string, string> = {
+      finance: '/finance/dashboard', expenses: '/expenses', bank: '/bank-transactions', income: '/income', vendors: '/vendors',
+    };
+    const writes: [string, string, object?][] = [
+      ['post', '/finance/categories', { name: `c-${nope}` }],
+      ['post', '/expenses', {}],
+      ['post', '/bank-transactions', {}],
+      ['post', '/income', {}],
+      ['post', '/vendors', {}],
+    ];
+
+    it('OWNER / MANAGER / ACCOUNTANT may read and write every finance module', async () => {
+      for (const role of ['OWNER', 'MANAGER', 'ACCOUNTANT']) {
+        for (const path of Object.values(reads)) await allowed(role, 'get', path);
+        for (const [m, path, body] of writes) await allowed(role, m as 'post', path, body);
       }
+    });
+
+    it('SALES_EXECUTIVE and TECHNICIAN are denied all finance reads and writes', async () => {
+      for (const role of ['SALES_EXECUTIVE', 'TECHNICIAN']) {
+        for (const path of Object.values(reads)) await forbidden(role, 'get', path);
+        for (const [m, path, body] of writes) await forbidden(role, m as 'post', path, body);
+      }
+    });
+
+    it('does not grant ACCOUNTANT any non-finance capability as a side effect', async () => {
+      await forbidden('ACCOUNTANT', 'get', '/customers');
+      await forbidden('ACCOUNTANT', 'get', '/inventory/units');
+      await forbidden('ACCOUNTANT', 'post', `/returns/${nope}/approve`, {});
+      await forbidden('ACCOUNTANT', 'get', '/dashboard/summary');
+      await forbidden('ACCOUNTANT', 'get', '/users/staff');
     });
   });
 

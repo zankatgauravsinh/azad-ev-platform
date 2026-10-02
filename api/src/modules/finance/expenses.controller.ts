@@ -13,13 +13,12 @@ import {
   type SetExpenseStatusInput,
   type UpdateExpenseInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { ExpensesService } from './expenses.service';
 import { FinancePdfService } from './finance-pdf.service';
-import { FINANCE_READ, FINANCE_WRITE } from './finance.roles';
 
 interface MulterFile {
   buffer: Buffer;
@@ -32,7 +31,7 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 @ApiTags('Finance · Expenses')
 @ApiBearerAuth('access-token')
-@Roles(...FINANCE_READ)
+@Permissions('expenses.view')
 @Controller('expenses')
 export class ExpensesController {
   constructor(
@@ -65,21 +64,21 @@ export class ExpensesController {
   }
 
   @Post()
-  @Roles(...FINANCE_WRITE)
+  @Permissions('expenses.manage')
   @ApiOperation({ summary: 'Record an expense' })
   create(@Body(new ZodValidationPipe(createExpenseSchema)) dto: CreateExpenseInput, @CurrentUser('id') userId: string) {
     return this.expenses.create(dto, userId);
   }
 
   @Patch(':id')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('expenses.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   update(@Param('id') id: string, @Body(new ZodValidationPipe(updateExpenseSchema)) dto: UpdateExpenseInput, @CurrentUser('id') userId: string) {
     return this.expenses.update(id, dto, userId);
   }
 
   @Post(':id/submit')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('expenses.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Submit a draft expense for approval (Draft → Pending)' })
   submit(@Param('id') id: string, @CurrentUser('id') userId: string) {
@@ -87,7 +86,7 @@ export class ExpensesController {
   }
 
   @Patch(':id/status')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('expenses.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Approve / reject / reset an expense' })
   setStatus(@Param('id') id: string, @Body(new ZodValidationPipe(setExpenseStatusSchema)) dto: SetExpenseStatusInput, @CurrentUser('id') userId: string) {
@@ -95,7 +94,7 @@ export class ExpensesController {
   }
 
   @Post(':id/attachments')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('expenses.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Attach an invoice / GST bill / photo / PDF to an expense' })
@@ -110,7 +109,7 @@ export class ExpensesController {
   }
 
   @Delete(':id/attachments/:attachmentId')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('expenses.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiParam({ name: 'attachmentId', format: 'uuid' })
   @ApiOperation({ summary: 'Remove an expense attachment' })
@@ -119,7 +118,7 @@ export class ExpensesController {
   }
 
   @Post(':id/settle')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('expenses.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Mark an expense as paid (settles vendor outstanding)' })
   settle(@Param('id') id: string, @CurrentUser('id') userId: string) {
@@ -127,7 +126,7 @@ export class ExpensesController {
   }
 
   @Delete(':id')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('expenses.manage')
   @HttpCode(204)
   @ApiParam({ name: 'id', format: 'uuid' })
   async remove(@Param('id') id: string, @CurrentUser('id') userId: string): Promise<void> {
