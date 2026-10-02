@@ -183,6 +183,26 @@ describe('Authorization boundaries (e2e)', () => {
     });
   });
 
+  // Batch 3 permission-migrated: Warranty + Claims (read O|M|S|T, write O|M|T, warranty cancel O|M).
+  describe('Warranty & Claims', () => {
+    const nope = `nonexistent-${stamp}`;
+    it('warranty: read O|M|S|T; create/update O|M|T; cancel O|M', async () => {
+      for (const r of ['OWNER', 'MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN']) await allowed(r, 'get', '/warranties');
+      await forbidden('ACCOUNTANT', 'get', '/warranties');
+      await allowed('TECHNICIAN', 'post', '/warranties', {}); // warranty.create
+      await forbidden('SALES_EXECUTIVE', 'post', '/warranties', {});
+      await allowed('TECHNICIAN', 'patch', `/warranties/${nope}`, {}); // warranty.update
+      await forbidden('TECHNICIAN', 'post', `/warranties/${nope}/cancel`, {}); // warranty.cancel = O|M
+      await allowed('MANAGER', 'post', `/warranties/${nope}/cancel`, {});
+    });
+    it('claims: read O|M|S|T; manage O|M|T', async () => {
+      for (const r of ['OWNER', 'MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN']) await allowed(r, 'get', '/warranty-claims');
+      await forbidden('ACCOUNTANT', 'get', '/warranty-claims');
+      await allowed('TECHNICIAN', 'post', '/warranty-claims', {});
+      await forbidden('SALES_EXECUTIVE', 'post', '/warranty-claims', {});
+    });
+  });
+
   describe('Finance: Income / Bank / Vendors (OWNER|MANAGER|ACCOUNTANT)', () => {
     it('allows ACCOUNTANT', async () => {
       await allowed('ACCOUNTANT', 'get', '/income');
