@@ -23,8 +23,8 @@ export function useInventoryList(query: Partial<ListUnitsQuery>) {
   });
 }
 
-export function useInventoryDashboard() {
-  return useQuery({ queryKey: keys.dashboard(), queryFn: inventoryApi.dashboard });
+export function useInventoryDashboard(enabled = true) {
+  return useQuery({ queryKey: keys.dashboard(), queryFn: inventoryApi.dashboard, enabled });
 }
 
 export function useUnit(id: string | undefined) {

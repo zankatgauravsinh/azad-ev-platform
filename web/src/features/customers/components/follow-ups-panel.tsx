@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { CalendarClock, Check, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { FOLLOW_UP_PRIORITIES, FollowUpPriority } from '@azad/shared';
+import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { priorityTone } from '@/lib/labels';
 import { Button } from '@/components/ui/button';
@@ -28,6 +29,7 @@ type FormValues = z.infer<typeof schema>;
 
 export function FollowUpsPanel({ customerId }: { customerId: string }): JSX.Element {
   const qc = useQueryClient();
+  const canEdit = useCan('customers.update');
   const { data: followUps = [] } = useCustomerFollowUps(customerId);
   const [open, setOpen] = useState(false);
   const { control, register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormValues>({
@@ -64,7 +66,7 @@ export function FollowUpsPanel({ customerId }: { customerId: string }): JSX.Elem
     <div>
       <div className="mb-3 flex items-center justify-between">
         <h3 className="flex items-center gap-2 text-sm font-semibold"><CalendarClock className="h-4 w-4" /> Follow-ups</h3>
-        <Button size="sm" variant="outline" onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Schedule</Button>
+        {canEdit && <Button size="sm" variant="outline" onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Schedule</Button>}
       </div>
 
       {followUps.length === 0 ? (
@@ -83,7 +85,7 @@ export function FollowUpsPanel({ customerId }: { customerId: string }): JSX.Elem
                 <p className="mt-1">{new Date(f.dueAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</p>
                 {f.note && <p className="text-muted-foreground">{f.note}</p>}
               </div>
-              {f.status === 'PENDING' && (
+              {f.status === 'PENDING' && canEdit && (
                 <div className="flex shrink-0 gap-1">
                   <Button size="icon" variant="ghost" className="h-8 w-8 text-emerald-600" onClick={() => act(f.id, 'complete')} aria-label="Complete"><Check className="h-4 w-4" /></Button>
                   <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground" onClick={() => act(f.id, 'cancel')} aria-label="Cancel"><X className="h-4 w-4" /></Button>

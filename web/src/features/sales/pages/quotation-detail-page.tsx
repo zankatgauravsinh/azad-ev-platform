@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Copy, FileText, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
+import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaise } from '@/lib/money';
 import { saveBlob } from '@/lib/download';
@@ -17,6 +18,8 @@ export function QuotationDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const invalidate = useSalesInvalidate();
+  const canCreate = useCan('quotations.create');
+  const canConvert = useCan('quotations.convert');
   const { data: q, isLoading } = useQuotation(id);
   const [convertOpen, setConvertOpen] = useState(false);
 
@@ -49,8 +52,8 @@ export function QuotationDetailPage(): JSX.Element {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={pdf}><FileText className="h-4 w-4" /> PDF</Button>
-          <Button variant="outline" onClick={duplicate}><Copy className="h-4 w-4" /> Duplicate</Button>
-          {!q.booking && <Button onClick={() => setConvertOpen(true)}><ShoppingCart className="h-4 w-4" /> Convert to booking</Button>}
+          {canCreate && <Button variant="outline" onClick={duplicate}><Copy className="h-4 w-4" /> Duplicate</Button>}
+          {canConvert && !q.booking && <Button onClick={() => setConvertOpen(true)}><ShoppingCart className="h-4 w-4" /> Convert to booking</Button>}
           {q.booking && <Button variant="outline" onClick={() => navigate(`/bookings/${q.booking!.id}`)}>View booking {q.booking.code}</Button>}
         </div>
       </div>

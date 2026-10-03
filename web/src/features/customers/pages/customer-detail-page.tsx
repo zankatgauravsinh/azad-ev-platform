@@ -30,8 +30,9 @@ import { WarrantyDetailDialog } from '@/features/warranty/components/warranty-de
 export function CustomerDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const canDelete = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const { can } = useAuth();
+  const canUpdate = can('customers.update');
+  const canDelete = can('customers.delete');
   const { data: customer, isLoading } = useCustomer(id);
   const del = useDeleteCustomer();
   const [editOpen, setEditOpen] = useState(false);
@@ -73,9 +74,9 @@ export function CustomerDetailPage(): JSX.Element {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => navigate(`/returns?customerId=${customer.id}`)}><Undo2 className="h-4 w-4" /> Returns</Button>
-          <Button variant="outline" onClick={() => setLogOpen(true)}><MessageSquarePlus className="h-4 w-4" /> Log</Button>
-          <Button variant="outline" onClick={() => setStatusOpen(true)}><RefreshCw className="h-4 w-4" /> Status</Button>
-          <Button variant="outline" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" /> Edit</Button>
+          {canUpdate && <Button variant="outline" onClick={() => setLogOpen(true)}><MessageSquarePlus className="h-4 w-4" /> Log</Button>}
+          {canUpdate && <Button variant="outline" onClick={() => setStatusOpen(true)}><RefreshCw className="h-4 w-4" /> Status</Button>}
+          {canUpdate && <Button variant="outline" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" /> Edit</Button>}
           {canDelete && <Button variant="outline" className="text-destructive" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" /> Delete</Button>}
         </div>
       </div>

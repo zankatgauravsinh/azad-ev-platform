@@ -21,8 +21,10 @@ import { ChangeStatusDialog } from '../components/change-status-dialog';
 export function InventoryDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const canWrite = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const { can } = useAuth();
+  const canUpdate = can('inventory.update');
+  const canStatus = can('inventory.status');
+  const canDelete = can('inventory.delete');
   const { data: unit, isLoading } = useUnit(id);
   const deleteUnit = useDeleteUnit();
   const [editOpen, setEditOpen] = useState(false);
@@ -78,17 +80,23 @@ export function InventoryDetailPage(): JSX.Element {
             </div>
           </div>
         </div>
-        {canWrite && (
+        {(canStatus || canUpdate || canDelete) && (
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setStatusOpen(true)}>
-              <RefreshCw className="h-4 w-4" /> Change status
-            </Button>
-            <Button variant="outline" onClick={() => setEditOpen(true)}>
-              <Pencil className="h-4 w-4" /> Edit
-            </Button>
-            <Button variant="outline" className="text-destructive" onClick={() => setDeleteOpen(true)}>
-              <Trash2 className="h-4 w-4" /> Delete
-            </Button>
+            {canStatus && (
+              <Button variant="outline" onClick={() => setStatusOpen(true)}>
+                <RefreshCw className="h-4 w-4" /> Change status
+              </Button>
+            )}
+            {canUpdate && (
+              <Button variant="outline" onClick={() => setEditOpen(true)}>
+                <Pencil className="h-4 w-4" /> Edit
+              </Button>
+            )}
+            {canDelete && (
+              <Button variant="outline" className="text-destructive" onClick={() => setDeleteOpen(true)}>
+                <Trash2 className="h-4 w-4" /> Delete
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -205,7 +213,7 @@ export function InventoryDetailPage(): JSX.Element {
         <TabsContent value="media">
           <Card>
             <CardContent className="p-6">
-              <UnitMedia unitId={unit.id} photos={unit.photos} documents={unit.documents} />
+              <UnitMedia unitId={unit.id} photos={unit.photos} documents={unit.documents} canEdit={canUpdate} />
             </CardContent>
           </Card>
         </TabsContent>

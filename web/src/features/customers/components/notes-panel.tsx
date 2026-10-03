@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { History, Pencil, StickyNote, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CustomerNoteRevisionDto } from '@azad/shared';
+import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -13,6 +14,7 @@ import { customersApi } from '../api';
 
 export function NotesPanel({ customerId }: { customerId: string }): JSX.Element {
   const qc = useQueryClient();
+  const canEdit = useCan('customers.update');
   const { data: notes = [] } = useCustomerNotes(customerId);
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState<string | null>(null);
@@ -57,12 +59,14 @@ export function NotesPanel({ customerId }: { customerId: string }): JSX.Element 
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border p-3">
-        <Textarea rows={2} placeholder="Internal note (never shown to customers)…" value={draft} onChange={(e) => setDraft(e.target.value)} />
-        <div className="mt-2 flex justify-end">
-          <Button size="sm" onClick={add} disabled={busy || !draft.trim()}>Add note</Button>
+      {canEdit && (
+        <div className="rounded-lg border p-3">
+          <Textarea rows={2} placeholder="Internal note (never shown to customers)…" value={draft} onChange={(e) => setDraft(e.target.value)} />
+          <div className="mt-2 flex justify-end">
+            <Button size="sm" onClick={add} disabled={busy || !draft.trim()}>Add note</Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {notes.length === 0 ? (
         <EmptyState icon={StickyNote} title="No notes yet" />
@@ -90,8 +94,8 @@ export function NotesPanel({ customerId }: { customerId: string }): JSX.Element 
                       {n.editCount > 0 && (
                         <button type="button" onClick={() => showRevisions(n.id)} aria-label="History"><History className="h-3.5 w-3.5 hover:text-foreground" /></button>
                       )}
-                      <button type="button" onClick={() => { setEditing(n.id); setEditBody(n.body); }} aria-label="Edit"><Pencil className="h-3.5 w-3.5 hover:text-foreground" /></button>
-                      <button type="button" onClick={() => remove(n.id)} aria-label="Delete"><Trash2 className="h-3.5 w-3.5 hover:text-destructive" /></button>
+                      {canEdit && <button type="button" onClick={() => { setEditing(n.id); setEditBody(n.body); }} aria-label="Edit"><Pencil className="h-3.5 w-3.5 hover:text-foreground" /></button>}
+                      {canEdit && <button type="button" onClick={() => remove(n.id)} aria-label="Delete"><Trash2 className="h-3.5 w-3.5 hover:text-destructive" /></button>}
                     </div>
                   </div>
                 </>
