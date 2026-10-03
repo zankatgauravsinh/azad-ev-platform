@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Package, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ListSparePartsQuery, SparePartDto } from '@azad/shared';
+import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaise } from '@/lib/money';
 import { useDebounce } from '@/hooks/use-debounce';
@@ -18,6 +19,10 @@ import { serviceApi } from '../api';
 
 export function SparePartsPage(): JSX.Element {
   const invalidate = useServiceInvalidate();
+  // Independent permissions — view / manage (CRUD) / adjust (stock) are separate on the backend.
+  const canView = useCan('spareparts.view');
+  const canManage = useCan('spareparts.manage');
+  const canAdjust = useCan('spareparts.adjust');
   const [search, setSearch] = useState('');
   const q = useDebounce(search);
   const [page, setPage] = useState(1);
@@ -25,7 +30,7 @@ export function SparePartsPage(): JSX.Element {
   const [form, setForm] = useState({ name: '', sku: '', quantity: '0', cost: '0', sellingPrice: '0', warrantyMonths: '0', minStock: '0' });
 
   const query: Partial<ListSparePartsQuery> = useMemo(() => ({ page, pageSize: 20, q: q || undefined }), [page, q]);
-  const { data, isLoading, isFetching } = useSpareParts(query);
+  const { data, isLoading, isFetching } = useSpareParts(query, canView);
 
   const create = async (): Promise<void> => {
     try {
@@ -50,26 +55,28 @@ export function SparePartsPage(): JSX.Element {
     { key: 'cost', header: 'Cost', align: 'right', render: (r) => <span className="tabular-nums">{formatPaise(r.cost)}</span> },
     { key: 'sellingPrice', header: 'Sell', align: 'right', render: (r) => <span className="tabular-nums">{formatPaise(r.sellingPrice)}</span> },
     { key: 'warranty', header: 'Warranty', render: (r) => `${r.warrantyMonths} mo` },
-    {
-      key: 'actions', header: '', render: (r) => (
-        <span className="flex items-center justify-end gap-1">
-          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => adjust(r.id, 1)}>+</Button>
-          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => adjust(r.id, -1)}>−</Button>
-          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => remove(r.id)}><Trash2 className="h-4 w-4" /></Button>
-        </span>
-      ),
-    },
+    ...(canManage || canAdjust
+      ? [{
+          key: 'actions', header: '', render: (r: SparePartDto) => (
+            <span className="flex items-center justify-end gap-1">
+              {canAdjust && <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => adjust(r.id, 1)}>+</Button>}
+              {canAdjust && <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => adjust(r.id, -1)}>−</Button>}
+              {canManage && <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => remove(r.id)}><Trash2 className="h-4 w-4" /></Button>}
+            </span>
+          ),
+        }]
+      : []),
   ];
 
   return (
     <div>
-      <PageHeader title="Spare Parts" description="Workshop parts inventory." actions={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Add part</Button>} />
+      <PageHeader title="Spare Parts" description="Workshop parts inventory." actions={canManage ? <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Add part</Button> : undefined} />
       <div className="relative mb-4 max-w-md">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input className="pl-9" placeholder="Search name or SKU…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
       </div>
       <DataTable columns={columns} rows={data?.data ?? []} getRowId={(r) => r.id} page={data?.meta} onPageChange={setPage} loading={isLoading || isFetching}
-        emptyState={<EmptyState icon={Package} title="No spare parts" description="Add a part to build your workshop inventory." action={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Add part</Button>} />} />
+        emptyState={<EmptyState icon={Package} title="No spare parts" description="Add a part to build your workshop inventory." action={canManage ? <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Add part</Button> : undefined} />} />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
