@@ -1,16 +1,18 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import type { ServiceJobDto } from '@azad/shared';
+import { SYSTEM_ROLE_PERMISSIONS, type Role, type ServiceJobDto } from '@azad/shared';
 import { ServiceDetailPage } from './service-detail-page';
 
 const h = vi.hoisted(() => ({
   user: { current: { id: 'u1', role: 'MANAGER' } as { id: string; role: string } },
+  perms: { current: new Set<string>() },
   job: { current: null as unknown },
 }));
 
-vi.mock('@/features/auth/auth-context', () => ({ useAuth: () => ({ user: h.user.current }) }));
+// Permission-driven (Batch 5): the page reads can() from /auth/me effective permissions.
+vi.mock('@/features/auth/auth-context', () => ({ useAuth: () => ({ user: h.user.current, can: (p: string) => h.perms.current.has(p) }) }));
 vi.mock('../hooks', () => ({
   useServiceJob: () => ({ data: h.job.current, isLoading: false }),
   useLabourItems: () => ({ data: [] }),
@@ -40,6 +42,7 @@ const job = {
 
 const renderAs = (role: string): void => {
   h.user.current = { id: 'u1', role };
+  h.perms.current = new Set(SYSTEM_ROLE_PERMISSIONS[role as Role] ?? []);
   h.job.current = job;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -98,5 +101,91 @@ describe('ServiceDetailPage authorization gating', () => {
     const bill = billControls();
     expect(bill.generateBill).toBeNull();
     expect(bill.takePayment).toBeNull();
+  });
+});
+
+// Each service permission gates its own control, with no implication between them.
+describe('ServiceDetailPage per-permission independence (custom roles)', () => {
+  const renderPerms = (perms: string[]): void => {
+    cleanup();
+    h.perms.current = new Set(perms);
+    h.job.current = job;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/service/j1']}>
+          <Routes><Route path="/service/:id" element={<ServiceDetailPage />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  };
+  const c = {
+    complaint: () => screen.queryByPlaceholderText('Add complaint'),
+    saveInspection: () => screen.queryByRole('button', { name: 'Save inspection' }),
+    partsPicker: () => screen.queryByPlaceholderText('Search spare part to add…'),
+    labourPicker: () => screen.queryByText('Add labour from catalogue…'),
+    generateBill: () => screen.queryByRole('button', { name: 'Generate bill' }),
+    takePayment: () => screen.queryByRole('button', { name: 'Take payment' }),
+  };
+
+  it('service.view only → no mutation controls at all', () => {
+    renderPerms(['service.view']);
+    expect(c.complaint()).toBeNull();
+    expect(c.saveInspection()).toBeNull();
+    expect(c.partsPicker()).toBeNull();
+    expect(c.labourPicker()).toBeNull();
+    expect(c.generateBill()).toBeNull();
+    expect(c.takePayment()).toBeNull();
+  });
+
+  it('service.workflow → complaints/inspection only (not parts/labour/bill/payment)', () => {
+    renderPerms(['service.view', 'service.workflow']);
+    expect(c.complaint()).not.toBeNull();
+    expect(c.saveInspection()).not.toBeNull();
+    expect(c.partsPicker()).toBeNull();
+    expect(c.labourPicker()).toBeNull();
+    expect(c.generateBill()).toBeNull();
+    expect(c.takePayment()).toBeNull();
+  });
+
+  it('service.create alone does NOT expose workflow controls', () => {
+    renderPerms(['service.view', 'service.create']);
+    expect(c.complaint()).toBeNull();
+    expect(c.saveInspection()).toBeNull();
+  });
+
+  it('service.parts (+ spareparts.view) → parts picker only; workflow/labour hidden', () => {
+    renderPerms(['service.view', 'service.parts', 'spareparts.view']);
+    expect(c.partsPicker()).not.toBeNull();
+    expect(c.complaint()).toBeNull();
+    expect(c.labourPicker()).toBeNull();
+  });
+
+  it('spareparts.view WITHOUT service.parts → parts picker hidden (catalog read ≠ mutation)', () => {
+    renderPerms(['service.view', 'spareparts.view']);
+    expect(c.partsPicker()).toBeNull();
+  });
+
+  it('service.labour (+ labour.view) → labour picker only; parts hidden', () => {
+    renderPerms(['service.view', 'service.labour', 'labour.view']);
+    expect(c.labourPicker()).not.toBeNull();
+    expect(c.partsPicker()).toBeNull();
+  });
+
+  it('labour.view WITHOUT service.labour → labour picker hidden (catalog read ≠ mutation)', () => {
+    renderPerms(['service.view', 'labour.view']);
+    expect(c.labourPicker()).toBeNull();
+  });
+
+  it('service.bill → Generate bill only (not Take payment)', () => {
+    renderPerms(['service.view', 'service.bill']);
+    expect(c.generateBill()).not.toBeNull();
+    expect(c.takePayment()).toBeNull();
+  });
+
+  it('service.payment → Take payment only (not Generate bill)', () => {
+    renderPerms(['service.view', 'service.payment']);
+    expect(c.takePayment()).not.toBeNull();
+    expect(c.generateBill()).toBeNull();
   });
 });

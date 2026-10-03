@@ -17,8 +17,9 @@ import { ServiceJobFormDialog } from '../components/service-job-form-dialog';
 
 export function ServiceListPage(): JSX.Element {
   const navigate = useNavigate();
-  const { user, can } = useAuth();
-  const canCreate = user?.role === 'OWNER' || user?.role === 'MANAGER'; // service.create — migrated in a later batch
+  const { can } = useAuth();
+  const canView = can('service.view');
+  const canCreate = can('service.create'); // POST /service/jobs
   const canViewReports = can('reports.view'); // Service Reports entry (GET /service/reports)
   const [search, setSearch] = useState('');
   const q = useDebounce(search);
@@ -30,7 +31,7 @@ export function ServiceListPage(): JSX.Element {
     () => ({ page, pageSize: 20, q: q || undefined, status: status === 'ALL' ? undefined : status }),
     [page, q, status],
   );
-  const { data, isLoading, isFetching } = useServiceJobs(query);
+  const { data, isLoading, isFetching } = useServiceJobs(query, canView);
 
   const columns: Column<ServiceJobDto>[] = [
     { key: 'code', header: 'Job card', render: (r) => <span className="font-mono text-xs">{r.code}</span> },

@@ -11,8 +11,8 @@ const keys = {
   reports: ['service', 'reports'] as const,
 };
 
-export const useServiceJobs = (q: Partial<ListServiceJobsQuery>) => useQuery({ queryKey: keys.jobs(q), queryFn: () => serviceApi.list(q) });
-export const useServiceJob = (id: string | undefined) => useQuery({ queryKey: keys.job(id ?? ''), queryFn: () => serviceApi.get(id as string), enabled: Boolean(id) });
+export const useServiceJobs = (q: Partial<ListServiceJobsQuery>, enabled = true) => useQuery({ queryKey: keys.jobs(q), queryFn: () => serviceApi.list(q), enabled });
+export const useServiceJob = (id: string | undefined, enabled = true) => useQuery({ queryKey: keys.job(id ?? ''), queryFn: () => serviceApi.get(id as string), enabled: Boolean(id) && enabled });
 export const useSpareParts = (q: Partial<ListSparePartsQuery>, enabled = true) => useQuery({ queryKey: keys.spareParts(q), queryFn: () => serviceApi.spareParts(q), enabled });
 // Labour catalogue read is OWNER/MANAGER/TECHNICIAN on the backend; skip the fetch for roles
 // that only have read-only Service access (e.g. SALES_EXECUTIVE) so it never 403s.

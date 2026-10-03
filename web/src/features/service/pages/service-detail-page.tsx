@@ -27,12 +27,17 @@ export function ServiceDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const invalidate = useServiceInvalidate();
-  const { user } = useAuth();
-  const canBill = user?.role === 'OWNER' || user?.role === 'MANAGER';
-  // Workflow mutations (status, complaints, parts, labour, inspection, feedback) are OWNER/MANAGER/TECHNICIAN
-  // on the backend. SALES_EXECUTIVE has read-only Service access, so these controls are hidden for them.
-  const canWork = user?.role === 'OWNER' || user?.role === 'MANAGER' || user?.role === 'TECHNICIAN';
-  const { data: job, isLoading } = useServiceJob(id);
+  const { can } = useAuth();
+  // Each service action is a distinct backend permission — do not collapse into one flag.
+  const canView = can('service.view');
+  const canWorkflow = can('service.workflow'); // status, complaints, resolve, inspection, feedback
+  const canParts = can('service.parts'); // add/remove parts on the job
+  const canLabour = can('service.labour'); // add/remove labour on the job
+  const canBill = can('service.bill'); // generate bill
+  const canPayment = can('service.payment'); // record payment
+  const canViewSpareParts = can('spareparts.view'); // parts-catalog read (picker)
+  const canViewLabour = can('labour.view'); // labour-catalog read (picker)
+  const { data: job, isLoading } = useServiceJob(id, canView);
   const [busy, setBusy] = useState(false);
 
   const run = async (fn: () => Promise<unknown>, ok?: string): Promise<void> => {
@@ -67,7 +72,7 @@ export function ServiceDetailPage(): JSX.Element {
           <p className="text-sm text-muted-foreground">{job.customer.name} · {job.customer.phone} · Technician: {job.technician?.name ?? 'Unassigned'}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {canWork && nextStatuses.map((s) => (
+          {canWorkflow && nextStatuses.map((s) => (
             <Button key={s} size="sm" variant={s === 'CANCELLED' ? 'outline' : 'default'} disabled={busy} className={s === 'CANCELLED' ? 'text-destructive' : ''} onClick={() => run(() => serviceApi.changeStatus(job.id, s), `Moved to ${titleCase(s)}`)}>
               {titleCase(s)}
             </Button>
@@ -88,13 +93,13 @@ export function ServiceDetailPage(): JSX.Element {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Complaints job={job} run={run} busy={busy} canWork={canWork} />
+        <Complaints job={job} run={run} busy={busy} canWorkflow={canWorkflow} />
         <Warranty job={job} />
-        <Parts job={job} run={run} busy={busy} canWork={canWork} />
-        <Labour job={job} run={run} busy={busy} canWork={canWork} />
-        <Bill job={job} run={run} busy={busy} canBill={canBill} />
-        <Inspection job={job} run={run} busy={busy} canWork={canWork} />
-        <Feedback job={job} run={run} busy={busy} canWork={canWork} />
+        <Parts job={job} run={run} busy={busy} canParts={canParts} canViewCatalog={canViewSpareParts} />
+        <Labour job={job} run={run} busy={busy} canLabour={canLabour} canViewCatalog={canViewLabour} />
+        <Bill job={job} run={run} busy={busy} canBill={canBill} canPayment={canPayment} />
+        <Inspection job={job} run={run} busy={busy} canWorkflow={canWorkflow} />
+        <Feedback job={job} run={run} busy={busy} canWorkflow={canWorkflow} />
       </div>
     </div>
   );
@@ -112,7 +117,7 @@ function Panel({ title, icon: Icon, children, className }: { title: string; icon
   );
 }
 
-function Complaints({ job, run, busy, canWork }: Section & { canWork: boolean }): JSX.Element {
+function Complaints({ job, run, busy, canWorkflow }: Section & { canWorkflow: boolean }): JSX.Element {
   const [text, setText] = useState('');
   return (
     <Panel title="Complaints" icon={FileText}>
@@ -120,11 +125,11 @@ function Complaints({ job, run, busy, canWork }: Section & { canWork: boolean })
         {job.complaints.map((c) => (
           <li key={c.id} className="flex items-center justify-between gap-2">
             <span className={c.resolved ? 'text-muted-foreground line-through' : ''}>{c.description} <span className="text-xs text-muted-foreground">[{titleCase(c.priority)}]</span></span>
-            {!c.resolved && canWork && <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(() => serviceApi.resolveComplaint(job.id, c.id))}>Resolve</Button>}
+            {!c.resolved && canWorkflow && <Button size="sm" variant="ghost" disabled={busy} onClick={() => run(() => serviceApi.resolveComplaint(job.id, c.id))}>Resolve</Button>}
           </li>
         ))}
       </ul>
-      {canWork && (
+      {canWorkflow && (
         <div className="mt-3 flex gap-2">
           <Input placeholder="Add complaint" value={text} onChange={(e) => setText(e.target.value)} />
           <Button size="sm" disabled={busy || !text.trim()} onClick={() => run(() => serviceApi.addComplaint(job.id, { description: text.trim(), priority: 'MEDIUM' }), 'Complaint added').then(() => setText(''))}><Plus className="h-4 w-4" /></Button>
@@ -148,9 +153,10 @@ function Warranty({ job }: { job: ServiceJobDto }): JSX.Element {
   );
 }
 
-function Parts({ job, run, busy, canWork }: Section & { canWork: boolean }): JSX.Element {
+function Parts({ job, run, busy, canParts, canViewCatalog }: Section & { canParts: boolean; canViewCatalog: boolean }): JSX.Element {
   const [q, setQ] = useState('');
-  const { data: parts } = useQuery({ queryKey: ['service', 'part-picker', q], queryFn: () => serviceApi.spareParts({ q: q || undefined, pageSize: 6 }), enabled: canWork && q.length > 1 });
+  // Catalog read is gated by spareparts.view, independently from the service.parts mutation.
+  const { data: parts } = useQuery({ queryKey: ['service', 'part-picker', q], queryFn: () => serviceApi.spareParts({ q: q || undefined, pageSize: 6 }), enabled: canViewCatalog && q.length > 1 });
   const add = (sparePartId: string, name: string): void => { void run(() => serviceApi.addPart(job.id, { sparePartId, qty: 1, unitCost: 0, unitPrice: 0, warranty: false }), `Added ${name}`); setQ(''); };
   return (
     <Panel title="Spare parts" icon={Wrench} className="lg:col-span-2">
@@ -159,11 +165,11 @@ function Parts({ job, run, busy, canWork }: Section & { canWork: boolean }): JSX
         {job.parts.map((p) => (
           <li key={p.id} className="flex items-center justify-between py-1.5">
             <span>{p.name} × {p.qty}{p.warranty && <span className="ml-1 text-xs text-accent">(warranty)</span>}</span>
-            <span className="flex items-center gap-2"><span className="tabular-nums">{formatPaise(p.lineTotal)}</span>{canWork && <Button size="icon" variant="ghost" className="h-6 w-6" disabled={busy} onClick={() => run(() => serviceApi.removePart(job.id, p.id))}><Trash2 className="h-3.5 w-3.5" /></Button>}</span>
+            <span className="flex items-center gap-2"><span className="tabular-nums">{formatPaise(p.lineTotal)}</span>{canParts && <Button size="icon" variant="ghost" className="h-6 w-6" disabled={busy} onClick={() => run(() => serviceApi.removePart(job.id, p.id))}><Trash2 className="h-3.5 w-3.5" /></Button>}</span>
           </li>
         ))}
       </ul>
-      {canWork && (
+      {canParts && (
         <>
           <Input placeholder="Search spare part to add…" value={q} onChange={(e) => setQ(e.target.value)} />
           {parts && parts.data.length > 0 && (
@@ -182,8 +188,9 @@ function Parts({ job, run, busy, canWork }: Section & { canWork: boolean }): JSX
   );
 }
 
-function Labour({ job, run, busy, canWork }: Section & { canWork: boolean }): JSX.Element {
-  const { data: items } = useLabourItems(canWork);
+function Labour({ job, run, busy, canLabour, canViewCatalog }: Section & { canLabour: boolean; canViewCatalog: boolean }): JSX.Element {
+  // Labour-catalog read is gated by labour.view, independently from the service.labour mutation.
+  const { data: items } = useLabourItems(canViewCatalog);
   return (
     <Panel title="Labour" icon={Wrench}>
       <ul className="mb-3 divide-y text-sm">
@@ -191,11 +198,11 @@ function Labour({ job, run, busy, canWork }: Section & { canWork: boolean }): JS
         {job.labour.map((l) => (
           <li key={l.id} className="flex items-center justify-between py-1.5">
             <span>{l.description}</span>
-            <span className="flex items-center gap-2"><span className="tabular-nums">{formatPaise(l.cost)}</span>{canWork && <Button size="icon" variant="ghost" className="h-6 w-6" disabled={busy} onClick={() => run(() => serviceApi.removeLabour(job.id, l.id))}><Trash2 className="h-3.5 w-3.5" /></Button>}</span>
+            <span className="flex items-center gap-2"><span className="tabular-nums">{formatPaise(l.cost)}</span>{canLabour && <Button size="icon" variant="ghost" className="h-6 w-6" disabled={busy} onClick={() => run(() => serviceApi.removeLabour(job.id, l.id))}><Trash2 className="h-3.5 w-3.5" /></Button>}</span>
           </li>
         ))}
       </ul>
-      {canWork && (
+      {canLabour && (
         <Select value="" onValueChange={(v) => run(() => serviceApi.addLabour(job.id, { labourItemId: v, cost: 0 }), 'Labour added')}>
           <SelectTrigger disabled={busy}><SelectValue placeholder="Add labour from catalogue…" /></SelectTrigger>
           <SelectContent>{(items ?? []).map((l) => <SelectItem key={l.id} value={l.id}>{l.name} · {formatPaise(l.defaultCost)}</SelectItem>)}</SelectContent>
@@ -205,7 +212,7 @@ function Labour({ job, run, busy, canWork }: Section & { canWork: boolean }): JS
   );
 }
 
-function Bill({ job, run, busy, canBill }: Section & { canBill: boolean }): JSX.Element {
+function Bill({ job, run, busy, canBill, canPayment }: Section & { canBill: boolean; canPayment: boolean }): JSX.Element {
   const [discount, setDiscount] = useState('0');
   const [tax, setTax] = useState('0');
   const [amount, setAmount] = useState('');
@@ -222,25 +229,29 @@ function Bill({ job, run, busy, canBill }: Section & { canBill: boolean }): JSX.
         <span className="text-muted-foreground">Balance</span><span className="text-right tabular-nums text-destructive">{formatPaise(job.bill.balance)}</span>
       </div>
       <div className="mt-2"><PaymentStatusBadge status={job.bill.status} /></div>
-      {canBill && (
+      {(canBill || canPayment) && (
         <div className="mt-4 space-y-3 border-t pt-3">
-          <div className="flex items-end gap-2">
-            <div className="flex-1"><Label className="text-xs">Discount (₹)</Label><Input type="number" min={0} value={discount} onChange={(e) => setDiscount(e.target.value)} /></div>
-            <div className="flex-1"><Label className="text-xs">GST %</Label><Input type="number" min={0} max={100} value={tax} onChange={(e) => setTax(e.target.value)} /></div>
-            <Button disabled={busy} onClick={() => run(() => serviceApi.applyBill(job.id, { discount: Math.round(Number(discount) * 100), taxPercentage: Number(tax) }), 'Bill updated')}>Generate bill</Button>
-          </div>
-          <div className="flex items-end gap-2">
-            <div className="flex-1"><Label className="text-xs">Payment (₹)</Label><Input type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
-            <Select value={mode} onValueChange={setMode}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent>{PAYMENT_MODES.map((m) => <SelectItem key={m} value={m}>{titleCase(m)}</SelectItem>)}</SelectContent></Select>
-            <Button variant="accent" disabled={busy || !amount} onClick={() => run(() => serviceApi.addPayment(job.id, { amount: Math.round(Number(amount) * 100), mode: mode as never }), 'Payment recorded').then(() => setAmount(''))}>Take payment</Button>
-          </div>
+          {canBill && (
+            <div className="flex items-end gap-2">
+              <div className="flex-1"><Label className="text-xs">Discount (₹)</Label><Input type="number" min={0} value={discount} onChange={(e) => setDiscount(e.target.value)} /></div>
+              <div className="flex-1"><Label className="text-xs">GST %</Label><Input type="number" min={0} max={100} value={tax} onChange={(e) => setTax(e.target.value)} /></div>
+              <Button disabled={busy} onClick={() => run(() => serviceApi.applyBill(job.id, { discount: Math.round(Number(discount) * 100), taxPercentage: Number(tax) }), 'Bill updated')}>Generate bill</Button>
+            </div>
+          )}
+          {canPayment && (
+            <div className="flex items-end gap-2">
+              <div className="flex-1"><Label className="text-xs">Payment (₹)</Label><Input type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+              <Select value={mode} onValueChange={setMode}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent>{PAYMENT_MODES.map((m) => <SelectItem key={m} value={m}>{titleCase(m)}</SelectItem>)}</SelectContent></Select>
+              <Button variant="accent" disabled={busy || !amount} onClick={() => run(() => serviceApi.addPayment(job.id, { amount: Math.round(Number(amount) * 100), mode: mode as never }), 'Payment recorded').then(() => setAmount(''))}>Take payment</Button>
+            </div>
+          )}
         </div>
       )}
     </Panel>
   );
 }
 
-function Inspection({ job, run, busy, canWork }: Section & { canWork: boolean }): JSX.Element {
+function Inspection({ job, run, busy, canWorkflow }: Section & { canWorkflow: boolean }): JSX.Element {
   const initial = useMemo(() => {
     const map = new Map(job.inspection.map((i) => [i.item, i]));
     return INSPECTION_ITEMS.map((item) => ({ item, result: (map.get(item)?.result ?? 'GOOD') as InspectionResult, notes: map.get(item)?.notes ?? '' }));
@@ -253,27 +264,27 @@ function Inspection({ job, run, busy, canWork }: Section & { canWork: boolean })
         {rows.map((r, i) => (
           <div key={r.item} className="flex items-center gap-2 rounded-md border p-2">
             <span className="w-28 shrink-0 text-sm">{r.item}</span>
-            <Select value={r.result} onValueChange={(v) => set(i, { result: v as InspectionResult })} disabled={!canWork}>
+            <Select value={r.result} onValueChange={(v) => set(i, { result: v as InspectionResult })} disabled={!canWorkflow}>
               <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
               <SelectContent>{INSPECTION_RESULTS.map((res) => <SelectItem key={res} value={res}>{titleCase(res)}</SelectItem>)}</SelectContent>
             </Select>
           </div>
         ))}
       </div>
-      {canWork && <Button className="mt-3" size="sm" disabled={busy} onClick={() => run(() => serviceApi.saveInspection(job.id, { items: rows.map((r) => ({ item: r.item, result: r.result, notes: r.notes || undefined })) }), 'Inspection saved')}>Save inspection</Button>}
+      {canWorkflow && <Button className="mt-3" size="sm" disabled={busy} onClick={() => run(() => serviceApi.saveInspection(job.id, { items: rows.map((r) => ({ item: r.item, result: r.result, notes: r.notes || undefined })) }), 'Inspection saved')}>Save inspection</Button>}
     </Panel>
   );
 }
 
-function Feedback({ job, run, busy, canWork }: Section & { canWork: boolean }): JSX.Element {
+function Feedback({ job, run, busy, canWorkflow }: Section & { canWorkflow: boolean }): JSX.Element {
   const [rating, setRating] = useState(String(job.feedbackRating ?? 5));
   const [note, setNote] = useState(job.feedbackNote ?? '');
   return (
     <Panel title="Customer feedback" icon={Star}>
       {job.feedbackRating ? (
         <p className="mb-2 text-sm">Rated <span className="font-semibold">{job.feedbackRating}★</span>{job.feedbackNote ? ` — ${job.feedbackNote}` : ''}</p>
-      ) : !canWork ? <p className="text-sm text-muted-foreground">No feedback recorded.</p> : null}
-      {canWork && (
+      ) : !canWorkflow ? <p className="text-sm text-muted-foreground">No feedback recorded.</p> : null}
+      {canWorkflow && (
         <div className="flex items-end gap-2">
           <div><Label className="text-xs">Rating</Label>
             <Select value={rating} onValueChange={setRating}><SelectTrigger className="w-20"><SelectValue /></SelectTrigger><SelectContent>{[1, 2, 3, 4, 5].map((n) => <SelectItem key={n} value={String(n)}>{n}★</SelectItem>)}</SelectContent></Select>
