@@ -12,7 +12,7 @@ const keys = {
   amcDetail: (id: string) => ['warranty', 'amc-detail', id] as const,
 };
 
-export const useWarrantyDashboard = () => useQuery({ queryKey: keys.dashboard, queryFn: warrantyApi.dashboard });
+export const useWarrantyDashboard = (enabled = true) => useQuery({ queryKey: keys.dashboard, queryFn: warrantyApi.dashboard, enabled });
 export const useWarranties = (q: Partial<ListWarrantiesQuery>) => useQuery({ queryKey: keys.list(q), queryFn: () => warrantyApi.list(q) });
 export const useWarranty = (id: string | undefined) => useQuery({ queryKey: keys.detail(id ?? ''), queryFn: () => warrantyApi.get(id as string), enabled: Boolean(id) });
 export const useClaims = (q: Partial<ListClaimsQuery>) => useQuery({ queryKey: keys.claims(q), queryFn: () => claimsApi.list(q) });

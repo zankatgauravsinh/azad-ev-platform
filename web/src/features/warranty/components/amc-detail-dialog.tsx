@@ -21,8 +21,8 @@ import { amcTone, expiryLabel, expiryTone } from '../meta';
 const fmt = (iso: string): string => new Date(iso).toLocaleDateString('en-IN');
 
 export function AmcDetailDialog({ id, onOpenChange }: { id: string | null; onOpenChange: (o: boolean) => void }): JSX.Element {
-  const { user } = useAuth();
-  const canWrite = user?.role === 'OWNER' || user?.role === 'MANAGER' || user?.role === 'TECHNICIAN';
+  const { can } = useAuth();
+  const canManageAmc = can('amc.manage'); // POST /amc/:id/visits
   const { data: a } = useAmcPlan(id ?? undefined);
   const { recordVisit } = useWarrantyMutations();
   const [workDone, setWorkDone] = useState('');
@@ -92,7 +92,7 @@ export function AmcDetailDialog({ id, onOpenChange }: { id: string | null; onOpe
               </Table>
             </section>
 
-            {canWrite && a.status === 'ACTIVE' && (
+            {canManageAmc && a.status === 'ACTIVE' && (
               <section className="space-y-3 rounded-lg border p-3">
                 <h3 className="text-sm font-semibold">Record a visit</h3>
                 <div className="space-y-1"><Label>Work done</Label><Textarea rows={2} value={workDone} onChange={(e) => setWorkDone(e.target.value)} /></div>
