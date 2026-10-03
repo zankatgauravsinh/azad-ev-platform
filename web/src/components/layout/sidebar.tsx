@@ -2,13 +2,15 @@ import { NavLink } from 'react-router-dom';
 import type { Role } from '@azad/shared';
 import { cn } from '@/lib/utils';
 import { BrandMark } from '@/components/brand/brand-mark';
+import { useAuth } from '@/features/auth/auth-context';
 import { useBranding } from '@/features/settings/hooks';
 import { visibleNavItems } from './nav-items';
 
 const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/v1$/, '');
 
 export function Sidebar({ role, onNavigate }: { role: Role; onNavigate?: () => void }): JSX.Element {
-  const items = visibleNavItems(role);
+  const { can } = useAuth();
+  const items = visibleNavItems(role, can);
   const { data: branding } = useBranding();
   const logoSrc = branding?.companyLogoUrl
     ? branding.companyLogoUrl.startsWith('http') ? branding.companyLogoUrl : `${API_ORIGIN}${branding.companyLogoUrl}`

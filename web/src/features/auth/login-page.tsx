@@ -26,7 +26,9 @@ export function LoginPage(): JSX.Element {
   const onSubmit = handleSubmit(async (values) => {
     try {
       const u = await login(values);
-      const home = u.role === 'OWNER' || u.role === 'MANAGER' ? '/dashboard' : '/';
+      // Land dashboard-capable users on the dashboard; everyone else on Home. Permission-driven
+      // (matches the Dashboard nav gate) rather than role-derived.
+      const home = u.permissions.includes('dashboard.view') ? '/dashboard' : '/';
       navigate(home, { replace: true });
     } catch (error) {
       const message = apiErrorMessage(error, 'Unable to sign in');

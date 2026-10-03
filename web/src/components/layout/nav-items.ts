@@ -25,7 +25,15 @@ export interface NavItem {
   icon: LucideIcon;
   /** false until the owning module ships; rendered as a disabled "Soon" entry. */
   enabled: boolean;
-  /** roles allowed to see the item; empty = all authenticated roles. */
+  /**
+   * Effective-permission key required to see the item (RBAC migration). When set it takes
+   * precedence over `roles` and is evaluated against the user's `can()` from /auth/me.
+   */
+  permission?: string;
+  /**
+   * LEGACY role gate — still used by nav items whose module has not yet been migrated to
+   * permissions (later batches). Ignored when `permission` is set. Empty = all authenticated roles.
+   */
   roles?: Role[];
 }
 
@@ -35,7 +43,7 @@ export interface NavItem {
  */
 export const NAV_ITEMS: NavItem[] = [
   { label: 'Home', to: '/', icon: Home, enabled: true },
-  { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard, enabled: true, roles: ['OWNER', 'MANAGER'] },
+  { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard, enabled: true, permission: 'dashboard.view' },
   { label: 'Customers', to: '/customers', icon: Users, enabled: true, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
   { label: 'Inventory', to: '/inventory', icon: PackageOpen, enabled: true, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
   { label: 'Test Rides', to: '/test-rides', icon: Zap, enabled: false, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
@@ -47,11 +55,20 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Spare Parts', to: '/service/spare-parts', icon: Package, enabled: true, roles: ['OWNER', 'MANAGER', 'TECHNICIAN'] },
   { label: 'Warranty & AMC', to: '/warranty', icon: ShieldCheck, enabled: true, roles: ['OWNER', 'MANAGER', 'TECHNICIAN', 'SALES_EXECUTIVE'] },
   { label: 'Finance', to: '/finance', icon: Wallet, enabled: true, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
-  { label: 'Reports', to: '/reports', icon: BarChart3, enabled: true, roles: ['OWNER', 'MANAGER'] },
+  { label: 'Reports', to: '/reports', icon: BarChart3, enabled: true, permission: 'reports.view' },
   { label: 'Staff', to: '/staff', icon: UserCog, enabled: true, roles: ['OWNER'] },
-  { label: 'Settings', to: '/settings', icon: Settings, enabled: true, roles: ['OWNER', 'MANAGER'] },
+  { label: 'Settings', to: '/settings', icon: Settings, enabled: true, permission: 'settings.view' },
 ];
 
-export function visibleNavItems(role: Role): NavItem[] {
-  return NAV_ITEMS.filter((item) => !item.roles || item.roles.includes(role));
+/**
+ * Nav visibility. Permission-migrated items (`permission` set) are gated by the user's effective
+ * permissions via `can()`; not-yet-migrated items fall back to the legacy `roles` list; an item with
+ * neither is visible to all authenticated users.
+ */
+export function visibleNavItems(role: Role, can: (permission: string) => boolean): NavItem[] {
+  return NAV_ITEMS.filter((item) => {
+    if (item.permission) return can(item.permission);
+    if (item.roles) return item.roles.includes(role);
+    return true;
+  });
 }

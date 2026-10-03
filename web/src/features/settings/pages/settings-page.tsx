@@ -30,8 +30,13 @@ type FormValues = UpdateCompanySettingsInput;
 const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/api\/v1$/, '');
 
 export function SettingsPage(): JSX.Element {
-  const { user } = useAuth();
-  const canWrite = user?.role === 'OWNER';
+  const { can } = useAuth();
+  // Company configuration is gated by settings.manage (OWNER in the seed). Backend remains authoritative.
+  // NOTE: the logo/favicon uploads below are backed by a separate permission (settings.branding, held by
+  // more roles), but they currently sit inside this settings.manage fieldset. Granting branding to those
+  // extra roles needs a separate focused UI change (lift the ImageUploads out of this fieldset and gate
+  // them with can('settings.branding')); intentionally NOT done here to avoid a structural change.
+  const canManageSettings = can('settings.manage');
   const { data: settings, isLoading } = useCompanySettings();
   const update = useUpdateSettings();
 
@@ -97,11 +102,11 @@ export function SettingsPage(): JSX.Element {
     <div className="pb-20">
       <PageHeader
         title="Settings"
-        description={canWrite ? 'Configure how your showroom works.' : 'Company configuration (read-only for your role).'}
+        description={canManageSettings ? 'Configure how your showroom works.' : 'Company configuration (read-only for your role).'}
       />
 
       <form onSubmit={onSubmit}>
-        <fieldset disabled={!canWrite}>
+        <fieldset disabled={!canManageSettings}>
           <Tabs defaultValue="general">
             {/* Horizontal scroll strip so the 9 tabs never wrap/overlap on narrow screens. */}
             <div className="overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -132,7 +137,7 @@ export function SettingsPage(): JSX.Element {
                         {WEEKDAYS.map((d) => {
                           const on = (field.value ?? []).includes(d);
                           return (
-                            <button key={d} type="button" disabled={!canWrite}
+                            <button key={d} type="button" disabled={!canManageSettings}
                               onClick={() => field.onChange(on ? (field.value ?? []).filter((x: string) => x !== d) : [...(field.value ?? []), d])}
                               className={`rounded-md border px-3 py-1 text-sm ${on ? 'border-accent bg-accent/15 text-accent' : 'text-muted-foreground'}`}>{d}</button>
                           );
@@ -151,8 +156,8 @@ export function SettingsPage(): JSX.Element {
                   <ColorField label="Secondary colour" name="secondaryColor" register={register} value={values.secondaryColor} error={errors.secondaryColor?.message} />
                 </Grid>
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                  <ImageUpload label="Company logo" kind="logo" url={settings.companyLogoUrl} canWrite={canWrite} />
-                  <ImageUpload label="Favicon" kind="favicon" url={settings.faviconUrl} canWrite={canWrite} />
+                  <ImageUpload label="Company logo" kind="logo" url={settings.companyLogoUrl} canManageSettings={canManageSettings} />
+                  <ImageUpload label="Favicon" kind="favicon" url={settings.faviconUrl} canManageSettings={canManageSettings} />
                 </div>
               </Panel>
             </TabsContent>
@@ -172,7 +177,7 @@ export function SettingsPage(): JSX.Element {
                 <Grid>
                   <Field label="Invoice prefix" error={errors.invoicePrefix?.message}><Input {...register('invoicePrefix')} /></Field>
                   <SwitchField control={control} name="gstEnabled" label="GST enabled" />
-                  <Field label="GST number" error={errors.gstNumber?.message}><Input {...register('gstNumber')} disabled={!canWrite || !values.gstEnabled} /></Field>
+                  <Field label="GST number" error={errors.gstNumber?.message}><Input {...register('gstNumber')} disabled={!canManageSettings || !values.gstEnabled} /></Field>
                   <Field label="Tax percentage (%)" error={errors.taxPercentage?.message}><Input type="number" min={0} max={100} step={0.1} {...register('taxPercentage', { valueAsNumber: true })} /></Field>
                   <Field label="Terms & conditions" className="sm:col-span-2">
                     <div>
@@ -276,7 +281,7 @@ export function SettingsPage(): JSX.Element {
           </Tabs>
         </fieldset>
 
-        {canWrite && isDirty && (
+        {canManageSettings && isDirty && (
           <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 px-3 pt-3 pb-[calc(0.75rem_+_env(safe-area-inset-bottom))] backdrop-blur">
             <div className="mx-auto flex max-w-6xl items-center justify-between">
               <span className="text-sm text-amber-600">You have unsaved changes.</span>
@@ -356,7 +361,7 @@ function SelectField({ control, name, label, options, format }: { control: any; 
   );
 }
 
-function ImageUpload({ label, kind, url, canWrite }: { label: string; kind: 'logo' | 'favicon'; url: string | null; canWrite: boolean }): JSX.Element {
+function ImageUpload({ label, kind, url, canManageSettings }: { label: string; kind: 'logo' | 'favicon'; url: string | null; canManageSettings: boolean }): JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [current, setCurrent] = useState(url);
@@ -376,7 +381,7 @@ function ImageUpload({ label, kind, url, canWrite }: { label: string; kind: 'log
         <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-lg border bg-muted">
           {src ? <img src={src} alt={label} className="h-full w-full object-contain" /> : <ImagePlus className="h-5 w-5 text-muted-foreground" />}
         </div>
-        {canWrite && (
+        {canManageSettings && (
           <div className="flex gap-2">
             <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => inputRef.current?.click()}>Upload</Button>
             {src && <Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={remove}><Trash2 className="h-4 w-4" /></Button>}
