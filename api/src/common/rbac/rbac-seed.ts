@@ -14,7 +14,8 @@ export interface RbacSeedResult {
  *  1. upsert the global Permission catalog (by key),
  *  2. upsert the five locked system roles per company (by companyId+name),
  *  3. assign each system role its exact permission bundle (by composite PK),
- *  4. backfill User.roleId within each user's OWN company (never cross-company).
+ *  4. backfill User.roleId for legacy users whose roleId is still NULL, within their OWN company
+ *     (never cross-company, and never overwriting an existing non-null — system or custom — assignment).
  *
  * Does NOT change authorization behavior: User.role / @Roles / RolesGuard remain authoritative.
  * Safe to run repeatedly — a second run creates nothing new and backfills zero users.
@@ -63,14 +64,19 @@ export async function seedRbac(prisma: PrismaClient): Promise<RbacSeedResult> {
       }
     }
 
-    // 4. Tenant-safe backfill — only users of THIS company, only when roleId is missing or wrong.
+    // 4. Tenant-safe backfill — assign the matching system role ONLY to legacy users of THIS company
+    //    whose roleId is still NULL. A non-null roleId is an intentional assignment (a system role set
+    //    by StaffService, or a custom role via the H1 roleId path) and is NEVER overwritten here —
+    //    otherwise a deploy re-run would revert custom-role staff to their base system role. The FK
+    //    (AppRole onDelete: Restrict) plus RoleService's delete-blocked-when-assigned rule guarantee a
+    //    non-null roleId always points to a live role, so there is no stale/orphan roleId to repair.
     for (const def of SYSTEM_ROLES) {
       const roleId = roleIdByKey.get(def.key)!;
       const res = await prisma.user.updateMany({
         where: {
           companyId,
           role: def.key as unknown as PrismaRole,
-          OR: [{ roleId: null }, { roleId: { not: roleId } }],
+          roleId: null,
         },
         data: { roleId },
       });

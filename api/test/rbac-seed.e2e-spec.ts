@@ -125,6 +125,48 @@ describe('RBAC seed & backfill (e2e)', () => {
     expect(owner.role).toBe('OWNER'); // legacy enum untouched
   });
 
+  it('backfills only NULL roleId and never overwrites a non-null (system or custom) assignment — F1 regression', async () => {
+    await seedRbac(prisma); // ensure company A system roles exist
+    const managerRole = await prisma.appRole.findFirstOrThrow({ where: { companyId: companyAId, key: 'MANAGER' } });
+
+    // (A) legacy user with roleId NULL → should be backfilled to the enum's system role.
+    const legacyNull = await prisma.user.create({
+      data: { companyId: companyAId, name: 'F1 Legacy', email: `f1.legacy.${stamp}@e2e.test`, role: 'MANAGER', passwordHash: 'seed-test-hash', isActive: true },
+    });
+    // (B) user already on a system role → must stay on it.
+    const sysUser = await prisma.user.create({
+      data: { companyId: companyAId, name: 'F1 Sys', email: `f1.sys.${stamp}@e2e.test`, role: 'MANAGER', roleId: managerRole.id, passwordHash: 'seed-test-hash', isActive: true },
+    });
+    // (C/D) custom-role user: legacy base enum + an intentional custom roleId with one known permission.
+    const custom = await prisma.appRole.create({ data: { companyId: companyAId, name: `F1 Custom ${stamp}`, isSystem: false } });
+    const dashPerm = await prisma.permission.findUniqueOrThrow({ where: { key: 'dashboard.view' } });
+    await prisma.rolePermission.create({ data: { roleId: custom.id, permissionId: dashPerm.id } });
+    const customUser = await prisma.user.create({
+      data: { companyId: companyAId, name: 'F1 Cust', email: `f1.cust.${stamp}@e2e.test`, role: 'SALES_EXECUTIVE', roleId: custom.id, passwordHash: 'seed-test-hash', isActive: true },
+    });
+
+    try {
+      await seedRbac(prisma); // a deploy re-run
+
+      // (A) NULL → matching system role.
+      expect((await prisma.user.findUniqueOrThrow({ where: { id: legacyNull.id } })).roleId).toBe(managerRole.id);
+      // (B) existing system assignment untouched.
+      expect((await prisma.user.findUniqueOrThrow({ where: { id: sysUser.id } })).roleId).toBe(managerRole.id);
+      // (C) custom roleId preserved — NOT reverted to the SALES_EXECUTIVE system role.
+      const reloaded = await prisma.user.findUniqueOrThrow({ where: { id: customUser.id } });
+      expect(reloaded.roleId).toBe(custom.id);
+      expect(reloaded.role).toBe('SALES_EXECUTIVE'); // legacy enum compatibility preserved
+      // (D) effective permissions still come from the custom role, unchanged.
+      const keys = (
+        await prisma.rolePermission.findMany({ where: { roleId: reloaded.roleId! }, select: { permission: { select: { key: true } } } })
+      ).map((r) => r.permission.key);
+      expect(keys).toEqual(['dashboard.view']);
+    } finally {
+      await prisma.user.deleteMany({ where: { id: { in: [legacyNull.id, sysUser.id, customUser.id] } } });
+      await prisma.appRole.deleteMany({ where: { id: custom.id } }); // cascades its RolePermission
+    }
+  });
+
   it('is tenant-safe: a second company gets its OWN roles, never company A’s', async () => {
     const companyB = await prisma.company.create({ data: { name: `RBAC B ${stamp}`, slug: `rbac-b-${stamp}` } });
     cleanup.companyBId = companyB.id;
