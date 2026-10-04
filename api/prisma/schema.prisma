@@ -247,6 +247,7 @@ model Company {
   updatedAt DateTime @updatedAt
 
   branches Branch[]
+  roles    AppRole[]
 }
 
 /// A physical branch of a Company. Single primary branch today; the table exists
@@ -277,6 +278,10 @@ model User {
   phone            String?
   passwordHash     String
   role             Role      @default(SALES_EXECUTIVE)
+  // RBAC (additive): nullable FK to the dynamic Role. The legacy `role` enum above remains the
+  // live authority until later migration groups backfill and switch authorization over.
+  roleId           String?
+  roleRef          AppRole?  @relation("UserRole", fields: [roleId], references: [id], onDelete: Restrict)
   isActive         Boolean   @default(true)
   lastLoginAt      DateTime?
   refreshTokenHash String?
@@ -302,6 +307,65 @@ model User {
   @@index([role])
   @@index([isActive])
   @@index([companyId])
+  @@index([roleId])
+}
+
+// ─────────────────────────── Dynamic RBAC (Group 1: schema only) ───────────────────────────
+
+/// A role within a company. The five fixed roles (OWNER…ACCOUNTANT) are seeded as locked system
+/// roles (isSystem); the Owner may create custom roles. companyId is a proper Company FK and is
+/// never accepted from the client. No role CRUD / authorization wiring exists yet (Group 1).
+/// NOTE: named `AppRole` (not `Role`) because the legacy `enum Role` still occupies that name
+/// during the migration; may be renamed to `Role` once the enum is dropped (final phase).
+model AppRole {
+  id          String   @id @default(uuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  /// Stable identifier for seeded system roles (e.g. "OWNER"); null for custom roles.
+  key         String?
+  name        String
+  description String?
+  isSystem    Boolean  @default(false)
+  isProtected Boolean  @default(false)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  permissions RolePermission[]
+  users       User[]           @relation("UserRole")
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+/// System-defined permission catalog (global, not tenant-scoped). Seeded from the shared
+/// PERMISSIONS catalog; the Owner composes these into custom roles but never creates new keys.
+model Permission {
+  id          String  @id @default(uuid())
+  key         String  @unique
+  module      String
+  action      String
+  label       String
+  isDangerous Boolean @default(false)
+  sortOrder   Int     @default(0)
+
+  roles RolePermission[]
+
+  @@index([module])
+}
+
+/// Join table — which permissions a role grants. Reached through the company-scoped Role.
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         AppRole    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
 }
 
 // ─────────────────────────── Customers ───────────────────────────

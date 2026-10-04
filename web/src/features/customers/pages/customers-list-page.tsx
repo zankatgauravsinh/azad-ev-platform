@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { MoreHorizontal, Pencil, Plus, Search, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { LEAD_STATUSES, LeadStatus, type CustomerListItem, type ListCustomersQuery } from '@azad/shared';
+import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { leadStatusLabel } from '@/lib/labels';
 import { useDebounce } from '@/hooks/use-debounce';
@@ -28,6 +29,9 @@ import { CustomerFormDialog } from '../components/customer-form-dialog';
 
 export function CustomersListPage(): JSX.Element {
   const navigate = useNavigate();
+  const canCreate = useCan('customers.create');
+  const canUpdate = useCan('customers.update');
+  const canDelete = useCan('customers.delete');
   const [search, setSearch] = useState('');
   const q = useDebounce(search);
   const [status, setStatus] = useState<LeadStatus | 'ALL'>('ALL');
@@ -73,23 +77,25 @@ export function CustomersListPage(): JSX.Element {
       render: (c) => (c.counts.followUpsPending > 0 ? <Badge variant="warning">{c.counts.followUpsPending}</Badge> : <span className="text-muted-foreground">—</span>),
     },
     { key: 'updatedAt', header: 'Updated', render: (c) => new Date(c.updatedAt).toLocaleDateString('en-IN') },
-    {
-      key: 'actions',
-      header: '',
-      align: 'right',
-      render: (c) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-            <Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-            <DropdownMenuItem onClick={() => { setEditCustomer(c); setFormOpen(true); }}><Pencil className="h-4 w-4" /> Edit</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(c)}><Trash2 className="h-4 w-4" /> Delete</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ),
-    },
+    ...(canUpdate || canDelete
+      ? [{
+          key: 'actions',
+          header: '',
+          align: 'right' as const,
+          render: (c: CustomerListItem) => (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                <Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                {canUpdate && <DropdownMenuItem onClick={() => { setEditCustomer(c); setFormOpen(true); }}><Pencil className="h-4 w-4" /> Edit</DropdownMenuItem>}
+                {canUpdate && canDelete && <DropdownMenuSeparator />}
+                {canDelete && <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(c)}><Trash2 className="h-4 w-4" /> Delete</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ),
+        }]
+      : []),
   ];
 
   return (
@@ -97,7 +103,7 @@ export function CustomersListPage(): JSX.Element {
       <PageHeader
         title="Customers"
         description="Leads, buyers and owners — the heart of the showroom."
-        actions={<Button onClick={() => { setEditCustomer(undefined); setFormOpen(true); }}><Plus className="h-4 w-4" /> Add customer</Button>}
+        actions={canCreate ? <Button onClick={() => { setEditCustomer(undefined); setFormOpen(true); }}><Plus className="h-4 w-4" /> Add customer</Button> : undefined}
       />
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-9">
@@ -133,7 +139,7 @@ export function CustomersListPage(): JSX.Element {
             icon={Users}
             title="No customers found"
             description={q || status !== 'ALL' ? 'Try clearing filters.' : 'Add your first customer.'}
-            action={!q && status === 'ALL' ? <Button onClick={() => { setEditCustomer(undefined); setFormOpen(true); }}><Plus className="h-4 w-4" /> Add customer</Button> : undefined}
+            action={canCreate && !q && status === 'ALL' ? <Button onClick={() => { setEditCustomer(undefined); setFormOpen(true); }}><Plus className="h-4 w-4" /> Add customer</Button> : undefined}
           />
         }
       />

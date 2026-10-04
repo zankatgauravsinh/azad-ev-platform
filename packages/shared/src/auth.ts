@@ -43,6 +43,15 @@ export interface LoginResponse {
   user: AuthUser;
 }
 
+/**
+ * GET /auth/me — the authenticated user plus their effective RBAC permission keys.
+ * `permissions` holds the user's own actual keys (OWNER receives all catalog keys, no "*").
+ * It is UX-only on the client; the backend remains the authorization boundary.
+ */
+export interface MeResponse extends AuthUser {
+  permissions: string[];
+}
+
 export interface JwtPayload {
   sub: string;
   email: string;

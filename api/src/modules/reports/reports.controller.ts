@@ -1,14 +1,14 @@
 import { BadRequestException, Controller, Get, Param, Query, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { EXPORT_FORMATS, REPORT_TYPES, Role, reportRangeSchema, returnsReportQuerySchema, type ExportFormat, type ReportRangeInput, type ReturnsReportQuery, type ReportType } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { EXPORT_FORMATS, REPORT_TYPES, reportRangeSchema, returnsReportQuerySchema, type ExportFormat, type ReportRangeInput, type ReturnsReportQuery, type ReportType } from '@azad/shared';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { ReportsService } from './reports.service';
 
 @ApiTags('Reports')
 @ApiBearerAuth('access-token')
-@Roles(Role.OWNER, Role.MANAGER)
+@Permissions('reports.view')
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly reports: ReportsService) {}

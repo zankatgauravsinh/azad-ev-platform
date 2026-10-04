@@ -40,6 +40,9 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   'AccessoryPurchase', 'AccessoryStockMovement',
   // Vehicle return
   'VehicleReturn', 'CreditNote', 'Refund',
+  // Dynamic RBAC — AppRole is company-scoped. Permission is global (system-defined) and
+  // RolePermission is reached through the company-scoped AppRole, so neither is listed here.
+  'AppRole',
 ]);
 
 @Injectable()

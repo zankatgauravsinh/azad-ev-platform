@@ -28,13 +28,16 @@ const h = vi.hoisted(() => ({
   formProps: { current: null as Record<string, unknown> | null },
   resetProps: { current: null as Record<string, unknown> | null },
   authUser: { current: { id: 'u-self', role: 'OWNER' } as { id: string; role: string } },
+  canManage: { current: true },
 }));
 
 vi.mock('../hooks', () => ({
-  useStaffList: (q: unknown) => h.useStaffListMock(q),
+  useStaffList: (q: unknown, enabled?: boolean) => h.useStaffListMock(q, enabled),
   useSetStaffActive: () => ({ mutateAsync: h.setActiveMutate }),
 }));
-vi.mock('@/features/auth/auth-context', () => ({ useAuth: () => ({ user: h.authUser.current }) }));
+vi.mock('@/features/auth/auth-context', () => ({
+  useAuth: () => ({ user: h.authUser.current, can: (p: string) => (p === 'staff.manage' ? h.canManage.current : false) }),
+}));
 vi.mock('sonner', () => ({ toast: { success: (m: string) => h.toastSuccess(m), error: (m: string) => h.toastError(m) } }));
 
 // The form dialog is covered by its own test; here we only capture the props it receives.
@@ -85,6 +88,8 @@ const mkStaff = (over: Partial<StaffDto> = {}): StaffDto => ({
   email: 'asha@azadev.in',
   phone: '9876543210',
   role: 'MANAGER' as StaffDto['role'],
+  roleId: null,
+  roleName: null,
   isActive: true,
   lastLoginAt: null,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -108,6 +113,7 @@ beforeEach(() => {
   h.formProps.current = null;
   h.resetProps.current = null;
   h.authUser.current = { id: 'u-self', role: 'OWNER' };
+  h.canManage.current = true;
 });
 
 describe('StaffListPage', () => {
@@ -121,6 +127,24 @@ describe('StaffListPage', () => {
     expect(table.getByText('Active')).toBeInTheDocument();
     expect(table.getByText('Technician')).toBeInTheDocument();
     expect(table.getByText('Inactive')).toBeInTheDocument();
+  });
+
+  it('shows the assigned AppRole name (incl. a custom role) over the legacy enum', () => {
+    setList({ data: paged([mkStaff({ roleName: 'Front Desk' }), mkStaff({ id: 's2', name: 'Ravi', role: 'TECHNICIAN', roleName: null })]) });
+    render(<StaffListPage />);
+    const table = within(screen.getByRole('table'));
+    expect(table.getByText('Front Desk')).toBeInTheDocument(); // custom role name
+    expect(table.getByText('Technician')).toBeInTheDocument(); // fallback to roleLabel when roleName is null
+  });
+
+  it('self-gates to an access message when the actor lacks staff.manage', () => {
+    h.canManage.current = false;
+    setList({ data: paged([mkStaff()]) });
+    render(<StaffListPage />);
+    expect(screen.getByText('Access required')).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    // The list query is disabled for a non-owner.
+    expect(h.useStaffListMock).toHaveBeenLastCalledWith(expect.anything(), false);
   });
 
   it('shows a loading state (no rows yet)', () => {
@@ -141,11 +165,11 @@ describe('StaffListPage', () => {
     expect(screen.getByText("Couldn't load staff")).toBeInTheDocument();
   });
 
-  it('shows an "Owner access required" state on a 403 from the backend', () => {
+  it('shows an access-required state on a 403 from the backend', () => {
     const err = new AxiosError('Forbidden', 'ERR', undefined, undefined, { status: 403, data: {} } as never);
     setList({ error: err });
     render(<StaffListPage />);
-    expect(screen.getByText('Owner access required')).toBeInTheDocument();
+    expect(screen.getByText('Access required')).toBeInTheDocument();
   });
 
   it('applies the role filter to the query', () => {

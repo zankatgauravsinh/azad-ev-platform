@@ -3,11 +3,10 @@ import { ApiBearerAuth, ApiParam, ApiTags } from '@nestjs/swagger';
 import {
   createLabourItemSchema,
   updateLabourItemSchema,
-  Role,
   type CreateLabourItemInput,
   type UpdateLabourItemInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { LabourItemsService } from './labour-items.service';
@@ -19,26 +18,26 @@ export class LabourItemsController {
   constructor(private readonly labour: LabourItemsService) {}
 
   @Get()
-  @Roles(Role.OWNER, Role.MANAGER, Role.TECHNICIAN)
+  @Permissions('labour.view')
   list() {
     return this.labour.list();
   }
 
   @Post()
-  @Roles(Role.OWNER, Role.MANAGER)
+  @Permissions('labour.manage')
   create(@Body(new ZodValidationPipe(createLabourItemSchema)) dto: CreateLabourItemInput, @CurrentUser('id') userId: string) {
     return this.labour.create(dto, userId);
   }
 
   @Patch(':id')
-  @Roles(Role.OWNER, Role.MANAGER)
+  @Permissions('labour.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   update(@Param('id') id: string, @Body(new ZodValidationPipe(updateLabourItemSchema)) dto: UpdateLabourItemInput, @CurrentUser('id') userId: string) {
     return this.labour.update(id, dto, userId);
   }
 
   @Delete(':id')
-  @Roles(Role.OWNER, Role.MANAGER)
+  @Permissions('labour.manage')
   @HttpCode(204)
   @ApiParam({ name: 'id', format: 'uuid' })
   async remove(@Param('id') id: string, @CurrentUser('id') userId: string): Promise<void> {

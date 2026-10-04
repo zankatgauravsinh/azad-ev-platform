@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Ban, Banknote, CalendarClock, CheckCircle2, Download, Eye, FileText, Printer, Shield, Truck, Undo2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookingStatus, PaymentStatus } from '@azad/shared';
+import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { openBlob, printBlob, saveBlob } from '@/lib/download';
 import { formatPaise } from '@/lib/money';
@@ -24,6 +25,12 @@ export function BookingDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const invalidate = useSalesInvalidate();
+  // Each booking action is independently authorized on the backend.
+  const canUpdate = useCan('bookings.update');
+  const canPayment = useCan('bookings.payment');
+  const canInvoice = useCan('bookings.invoice');
+  const canCancel = useCan('bookings.cancel');
+  const canRequestReturn = useCan('returns.create'); // POST /returns (Batch 6)
   const { data: b, isLoading } = useBooking(id);
   const [dialog, setDialog] = useState<'payment' | 'finance' | 'insurance' | 'schedule' | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -82,12 +89,12 @@ export function BookingDetailPage(): JSX.Element {
         </div>
         {active && (
           <div className="flex flex-wrap gap-2">
-            {!paid && <Button onClick={() => setDialog('payment')}><Banknote className="h-4 w-4" /> Take payment</Button>}
-            <Button variant="outline" onClick={() => setDialog('finance')}><Banknote className="h-4 w-4" /> Finance</Button>
-            <Button variant="outline" onClick={() => setDialog('insurance')}><Shield className="h-4 w-4" /> Insurance</Button>
-            <Button variant="outline" onClick={() => setDialog('schedule')}><CalendarClock className="h-4 w-4" /> Schedule</Button>
+            {canPayment && !paid && <Button onClick={() => setDialog('payment')}><Banknote className="h-4 w-4" /> Take payment</Button>}
+            {canUpdate && <Button variant="outline" onClick={() => setDialog('finance')}><Banknote className="h-4 w-4" /> Finance</Button>}
+            {canUpdate && <Button variant="outline" onClick={() => setDialog('insurance')}><Shield className="h-4 w-4" /> Insurance</Button>}
+            {canUpdate && <Button variant="outline" onClick={() => setDialog('schedule')}><CalendarClock className="h-4 w-4" /> Schedule</Button>}
             {!b.sale ? (
-              <Button variant="outline" onClick={() => run(() => salesApi.generateInvoice(b.id), 'Invoice generated')} disabled={busy}><FileText className="h-4 w-4" /> Generate invoice</Button>
+              canInvoice && <Button variant="outline" onClick={() => run(() => salesApi.generateInvoice(b.id), 'Invoice generated')} disabled={busy}><FileText className="h-4 w-4" /> Generate invoice</Button>
             ) : (
               <>
                 <Button variant="outline" onClick={viewInvoice}><Eye className="h-4 w-4" /> View invoice</Button>
@@ -95,9 +102,9 @@ export function BookingDetailPage(): JSX.Element {
                 <Button variant="outline" onClick={printInvoice}><Printer className="h-4 w-4" /> Print</Button>
               </>
             )}
-            {b.sale && !b.actualDelivery && <Button variant="accent" onClick={() => run(() => salesApi.deliver(b.id), 'Delivered')} disabled={busy}><Truck className="h-4 w-4" /> Deliver</Button>}
-            {b.sale && b.actualDelivery && <Button variant="outline" onClick={() => setReturnOpen(true)}><Undo2 className="h-4 w-4" /> Request return</Button>}
-            {b.status !== BookingStatus.CONVERTED && <Button variant="outline" className="text-destructive" onClick={() => setCancelOpen(true)}><Ban className="h-4 w-4" /> Cancel</Button>}
+            {canUpdate && b.sale && !b.actualDelivery && <Button variant="accent" onClick={() => run(() => salesApi.deliver(b.id), 'Delivered')} disabled={busy}><Truck className="h-4 w-4" /> Deliver</Button>}
+            {canRequestReturn && b.sale && b.actualDelivery && <Button variant="outline" onClick={() => setReturnOpen(true)}><Undo2 className="h-4 w-4" /> Request return</Button>}
+            {canCancel && b.status !== BookingStatus.CONVERTED && <Button variant="outline" className="text-destructive" onClick={() => setCancelOpen(true)}><Ban className="h-4 w-4" /> Cancel</Button>}
           </div>
         )}
       </div>

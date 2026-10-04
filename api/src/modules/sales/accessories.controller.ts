@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { createAccessorySchema, Role, type CreateAccessoryInput } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { createAccessorySchema, type CreateAccessoryInput } from '@azad/shared';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -13,7 +13,7 @@ export class AccessoriesController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  @Roles(Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE)
+  @Permissions('accessories.view')
   @ApiOperation({ summary: 'List accessories / parts catalogue' })
   list(@Query('q') q?: string, @Query('isPart') isPart?: string) {
     return this.prisma.accessory.findMany({
@@ -27,7 +27,7 @@ export class AccessoriesController {
   }
 
   @Post()
-  @Roles(Role.OWNER, Role.MANAGER)
+  @Permissions('accessories.manage')
   @ApiOperation({ summary: 'Add an accessory / part' })
   create(@Body(new ZodValidationPipe(createAccessorySchema)) dto: CreateAccessoryInput, @CurrentUser('id') userId: string) {
     // avgCost / onHand / reserved are system-maintained (opening stock & purchases) — never set here.

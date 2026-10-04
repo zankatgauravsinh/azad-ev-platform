@@ -1,8 +1,8 @@
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { Role, updateCompanySettingsSchema, type UpdateCompanySettingsInput } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { updateCompanySettingsSchema, type UpdateCompanySettingsInput } from '@azad/shared';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { CompanySettingsService } from './company-settings.service';
@@ -34,14 +34,14 @@ export class CompanySettingsController {
   constructor(private readonly settings: CompanySettingsService) {}
 
   @Get('branding')
-  @Roles(Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE, Role.TECHNICIAN)
+  @Permissions('settings.branding')
   @ApiOperation({ summary: 'Branding subset (name, colours, logo) for app-wide theming — all roles' })
   branding() {
     return this.settings.getBranding();
   }
 
   @Get()
-  @Roles(Role.OWNER, Role.MANAGER)
+  @Permissions('settings.view')
   @ApiOperation({ summary: 'Get company settings (Owner + Manager)' })
   @ApiResponse({ status: 200, description: 'The company settings' })
   get() {
@@ -49,7 +49,7 @@ export class CompanySettingsController {
   }
 
   @Patch()
-  @Roles(Role.OWNER)
+  @Permissions('settings.manage')
   @ApiOperation({ summary: 'Update company settings (Owner only)' })
   @ApiBody({ schema: { example: EXAMPLE } })
   @ApiResponse({ status: 200, description: 'The updated settings' })
@@ -60,7 +60,7 @@ export class CompanySettingsController {
   }
 
   @Post(':kind')
-  @Roles(Role.OWNER)
+  @Permissions('settings.manage')
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload company logo or favicon (kind = logo | favicon)' })
   @ApiBody({ schema: { type: 'object', required: ['file'], properties: { file: { type: 'string', format: 'binary' } } } })
@@ -73,7 +73,7 @@ export class CompanySettingsController {
   }
 
   @Delete(':kind')
-  @Roles(Role.OWNER)
+  @Permissions('settings.manage')
   @ApiOperation({ summary: 'Remove company logo or favicon' })
   remove(@Param('kind') kind: string, @CurrentUser('id') userId: string) {
     return this.settings.removeImage(this.resolveKind(kind), userId);

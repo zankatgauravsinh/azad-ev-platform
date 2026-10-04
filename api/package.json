@@ -10,6 +10,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "ts-node prisma/seed.ts",
+    "rbac:init": "node dist/rbac-init.js",
     "prisma:studio": "prisma studio",
     "lint": "eslint \"src/**/*.ts\"",
     "test": "jest",

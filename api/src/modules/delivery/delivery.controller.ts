@@ -3,7 +3,6 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import {
-  Role,
   completeDeliverySchema,
   listDeliveriesQuerySchema,
   scheduleDeliveryInputSchema,
@@ -13,7 +12,7 @@ import {
   type ScheduleDeliveryInput2,
   type UpdateChecklistInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
@@ -27,11 +26,8 @@ interface MulterFile {
 }
 const IMG_MIME = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const ROLES = [Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE] as const;
-
 @ApiTags('Delivery')
 @ApiBearerAuth('access-token')
-@Roles(...ROLES)
 @Controller('deliveries')
 export class DeliveryController {
   constructor(
@@ -41,24 +37,28 @@ export class DeliveryController {
   ) {}
 
   @Get()
+  @Permissions('delivery.view')
   @ApiOperation({ summary: 'Delivery pipeline (ready / scheduled / overdue / awaiting payment / delivered)' })
   list(@Query(new ZodValidationPipe(listDeliveriesQuerySchema)) query: ListDeliveriesQuery) {
     return this.delivery.list(query);
   }
 
   @Get('dashboard')
+  @Permissions('delivery.view')
   @ApiOperation({ summary: 'Delivery KPIs' })
   dashboard() {
     return this.delivery.dashboard();
   }
 
   @Get(':bookingId')
+  @Permissions('delivery.view')
   @ApiParam({ name: 'bookingId', format: 'uuid' })
   detail(@Param('bookingId') bookingId: string) {
     return this.delivery.detail(bookingId);
   }
 
   @Get(':bookingId/note.pdf')
+  @Permissions('delivery.view')
   @ApiParam({ name: 'bookingId', format: 'uuid' })
   @ApiOperation({ summary: 'Download the branded delivery note' })
   async note(@Param('bookingId') bookingId: string, @Res() res: Response): Promise<void> {
@@ -70,6 +70,7 @@ export class DeliveryController {
   }
 
   @Post(':bookingId/schedule')
+  @Permissions('delivery.manage')
   @ApiParam({ name: 'bookingId', format: 'uuid' })
   @ApiOperation({ summary: 'Set expected delivery date, executive and pending documents' })
   schedule(@Param('bookingId') bookingId: string, @Body(new ZodValidationPipe(scheduleDeliveryInputSchema)) dto: ScheduleDeliveryInput2) {
@@ -77,6 +78,7 @@ export class DeliveryController {
   }
 
   @Post(':bookingId/complete')
+  @Permissions('delivery.manage')
   @ApiParam({ name: 'bookingId', format: 'uuid' })
   @ApiOperation({ summary: 'Complete the delivery (requires an invoice; a partial/outstanding balance is allowed); captures the handover checklist' })
   complete(@Param('bookingId') bookingId: string, @Body(new ZodValidationPipe(completeDeliverySchema)) dto: CompleteDeliveryInput, @CurrentUser('id') userId: string) {
@@ -84,6 +86,7 @@ export class DeliveryController {
   }
 
   @Patch(':bookingId/checklist')
+  @Permissions('delivery.manage')
   @ApiParam({ name: 'bookingId', format: 'uuid' })
   @ApiOperation({ summary: 'Update the handover checklist' })
   checklist(@Param('bookingId') bookingId: string, @Body(new ZodValidationPipe(updateChecklistSchema)) dto: UpdateChecklistInput, @CurrentUser('id') userId: string) {
@@ -91,6 +94,7 @@ export class DeliveryController {
   }
 
   @Post(':bookingId/photos')
+  @Permissions('delivery.manage')
   @ApiParam({ name: 'bookingId', format: 'uuid' })
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Attach a delivery photo' })
@@ -102,6 +106,7 @@ export class DeliveryController {
   }
 
   @Delete(':bookingId/photos/:photoId')
+  @Permissions('delivery.manage')
   @ApiParam({ name: 'bookingId', format: 'uuid' })
   @ApiParam({ name: 'photoId', format: 'uuid' })
   removePhoto(@Param('bookingId') bookingId: string, @Param('photoId') photoId: string) {
@@ -109,6 +114,7 @@ export class DeliveryController {
   }
 
   @Post(':bookingId/signature')
+  @Permissions('delivery.manage')
   @ApiParam({ name: 'bookingId', format: 'uuid' })
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Capture the customer signature image' })

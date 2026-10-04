@@ -20,8 +20,8 @@ import { checklistLabel, deliveryStatusLabel, deliveryStatusTone } from '../meta
 const fmt = (iso: string | null): string => (iso ? new Date(iso).toLocaleDateString('en-IN') : '—');
 
 export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; onOpenChange: (o: boolean) => void }): JSX.Element {
-  const { user } = useAuth();
-  const canWrite = user?.role === 'OWNER' || user?.role === 'MANAGER' || user?.role === 'SALES_EXECUTIVE';
+  const { can } = useAuth();
+  const canManage = can('delivery.manage');
   const { data } = useDelivery(id ?? undefined);
   const { schedule, complete, checklist, addPhoto, removePhoto, setSignature } = useDeliveryMutations();
 
@@ -106,16 +106,16 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
                   <div className="flex flex-wrap items-end gap-3">
                     <div className="space-y-1"><Label>Expected date</Label><Input type="date" className="w-44" value={expected} onChange={(e) => setExpected(e.target.value)} /></div>
                     <div className="flex-1 space-y-1"><Label>Pending documents</Label><Input value={pendingDocs} onChange={(e) => setPendingDocs(e.target.value)} placeholder={b.pendingDocuments ?? 'e.g. Address proof'} /></div>
-                    {canWrite && <Button variant="outline" onClick={doSchedule} disabled={schedule.isPending}><CalendarClock className="h-4 w-4" /> Save</Button>}
+                    {canManage && <Button variant="outline" onClick={doSchedule} disabled={schedule.isPending}><CalendarClock className="h-4 w-4" /> Save</Button>}
                   </div>
                 </Section>
 
                 <Section title="Handover checklist">
-                  <ChecklistGrid value={draft} disabled={!canWrite} onToggle={toggleDraft} />
+                  <ChecklistGrid value={draft} disabled={!canManage} onToggle={toggleDraft} />
                 </Section>
                 <div className="space-y-1"><Label>Notes</Label><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional handover notes" /></div>
                 <div className="space-y-1"><Label>Override reason (delivering with pending docs)</Label><Input value={override} onChange={(e) => setOverride(e.target.value)} placeholder="Optional" /></div>
-                {canWrite && (
+                {canManage && (
                   <Button onClick={doComplete} disabled={complete.isPending}>
                     <CheckCircle2 className="h-4 w-4" /> Complete delivery
                   </Button>
@@ -127,7 +127,7 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
             {d && (
               <>
                 <Section title="Handover checklist">
-                  <ChecklistGrid value={d.checklist} disabled={!canWrite} onToggle={toggleSaved} />
+                  <ChecklistGrid value={d.checklist} disabled={!canManage} onToggle={toggleSaved} />
                 </Section>
 
                 <Section title="Photos">
@@ -135,10 +135,10 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
                     {d.photos.map((p) => (
                       <div key={p.id} className="group relative">
                         <a href={p.url} target="_blank" rel="noreferrer"><img src={p.url} alt={p.label ?? 'delivery'} className="h-20 w-20 rounded-md border object-cover" /></a>
-                        {canWrite && <button type="button" onClick={() => removePhoto.mutate({ id: bookingId, photoId: p.id })} className="absolute -right-2 -top-2 rounded-full bg-background p-0.5 shadow"><Trash2 className="h-3.5 w-3.5 text-destructive" /></button>}
+                        {canManage && <button type="button" onClick={() => removePhoto.mutate({ id: bookingId, photoId: p.id })} className="absolute -right-2 -top-2 rounded-full bg-background p-0.5 shadow"><Trash2 className="h-3.5 w-3.5 text-destructive" /></button>}
                       </div>
                     ))}
-                    {canWrite && (
+                    {canManage && (
                       <>
                         <input ref={photoRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadPhoto(e.target.files?.[0])} />
                         <button type="button" onClick={() => photoRef.current?.click()} className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-md border border-dashed text-xs text-muted-foreground hover:bg-muted"><ImagePlus className="h-5 w-5" /> Add</button>
@@ -153,7 +153,7 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
                   ) : (
                     <p className="text-sm text-muted-foreground">Not captured.</p>
                   )}
-                  {canWrite && (
+                  {canManage && (
                     <>
                       <input ref={signRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadSig(e.target.files?.[0])} />
                       <Button size="sm" variant="outline" className="mt-2 w-fit" onClick={() => signRef.current?.click()}><PenLine className="h-4 w-4" /> {d.signatureUrl ? 'Replace' : 'Capture'} signature</Button>

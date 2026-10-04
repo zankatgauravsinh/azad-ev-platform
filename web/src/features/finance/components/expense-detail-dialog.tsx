@@ -19,8 +19,8 @@ const fmt = (iso: string): string => new Date(iso).toLocaleDateString('en-IN');
 const kb = (b: number): string => `${Math.max(1, Math.round(b / 1024))} KB`;
 
 export function ExpenseDetailDialog({ id, onOpenChange }: { id: string | null; onOpenChange: (o: boolean) => void }): JSX.Element {
-  const { user } = useAuth();
-  const canWrite = user?.role === 'OWNER' || user?.role === 'MANAGER' || user?.role === 'ACCOUNTANT';
+  const { can } = useAuth();
+  const canManage = can('expenses.manage'); // submit / approve / settle / attachments (all expenses endpoints)
   const { data: e } = useExpense(id ?? undefined);
   const { submitExpense, setExpenseStatus, settleExpense, addAttachment, removeAttachment } = useFinanceMutations();
   const [attType, setAttType] = useState('INVOICE');
@@ -55,12 +55,12 @@ export function ExpenseDetailDialog({ id, onOpenChange }: { id: string | null; o
 
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onClick={voucher}><FileDown className="h-4 w-4" /> Voucher</Button>
-              {canWrite && e.status === 'DRAFT' && <Button size="sm" onClick={() => submitExpense.mutate(e.id)}>Submit for approval</Button>}
-              {canWrite && e.status === 'PENDING' && <>
+              {canManage && e.status === 'DRAFT' && <Button size="sm" onClick={() => submitExpense.mutate(e.id)}>Submit for approval</Button>}
+              {canManage && e.status === 'PENDING' && <>
                 <Button size="sm" onClick={() => setExpenseStatus.mutate({ id: e.id, status: 'APPROVED' })}>Approve</Button>
                 <Button size="sm" variant="outline" onClick={() => setExpenseStatus.mutate({ id: e.id, status: 'REJECTED' })}>Reject</Button>
               </>}
-              {canWrite && !e.paid && e.status !== 'REJECTED' && <Button size="sm" variant="outline" onClick={() => settleExpense.mutate(e.id)}>Mark paid</Button>}
+              {canManage && !e.paid && e.status !== 'REJECTED' && <Button size="sm" variant="outline" onClick={() => settleExpense.mutate(e.id)}>Mark paid</Button>}
             </div>
 
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
@@ -86,11 +86,11 @@ export function ExpenseDetailDialog({ id, onOpenChange }: { id: string | null; o
                     <a href={a.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">{a.fileName}</a>
                     <Badge variant="muted">{titleCase(a.type)}</Badge>
                     <span className="text-xs text-muted-foreground">{kb(a.sizeBytes)}</span>
-                    {canWrite && <Button size="sm" variant="ghost" className="ml-auto" onClick={() => removeAttachment.mutate({ id: e.id, attachmentId: a.id })}><Trash2 className="h-4 w-4" /></Button>}
+                    {canManage && <Button size="sm" variant="ghost" className="ml-auto" onClick={() => removeAttachment.mutate({ id: e.id, attachmentId: a.id })}><Trash2 className="h-4 w-4" /></Button>}
                   </li>
                 ))}
               </ul>
-              {canWrite && (
+              {canManage && (
                 <div className="flex flex-wrap items-center gap-2">
                   <Select value={attType} onValueChange={setAttType}>
                     <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>

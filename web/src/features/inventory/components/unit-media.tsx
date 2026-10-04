@@ -17,10 +17,13 @@ export function UnitMedia({
   unitId,
   photos,
   documents,
+  canEdit,
 }: {
   unitId: string;
   photos: InventoryUnitPhotoDto[];
   documents: InventoryUnitDocumentDto[];
+  /** inventory.update — gates photo/document add & remove (backend stays authoritative). */
+  canEdit: boolean;
 }): JSX.Element {
   const qc = useQueryClient();
   const photoInput = useRef<HTMLInputElement>(null);
@@ -74,16 +77,20 @@ export function UnitMedia({
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold">Photos</h3>
-          <Button variant="outline" size="sm" disabled={busy} onClick={() => photoInput.current?.click()}>
-            <ImagePlus className="h-4 w-4" /> Add photo
-          </Button>
-          <input
-            ref={photoInput}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            onChange={(e) => uploadPhoto(e.target.files?.[0])}
-          />
+          {canEdit && (
+            <>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => photoInput.current?.click()}>
+                <ImagePlus className="h-4 w-4" /> Add photo
+              </Button>
+              <input
+                ref={photoInput}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={(e) => uploadPhoto(e.target.files?.[0])}
+              />
+            </>
+          )}
         </div>
         {photos.length === 0 ? (
           <EmptyState icon={ImagePlus} title="No photos" />
@@ -92,14 +99,16 @@ export function UnitMedia({
             {photos.map((photo) => (
               <div key={photo.id} className="group relative overflow-hidden rounded-lg border">
                 <img src={mediaUrl(photo.url)} alt={photo.label ?? 'Scooter'} className="aspect-square w-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => removePhoto(photo.id)}
-                  className="absolute right-1 top-1 rounded-md bg-black/60 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                  aria-label="Delete photo"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => removePhoto(photo.id)}
+                    className="absolute right-1 top-1 rounded-md bg-black/60 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                    aria-label="Delete photo"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -109,30 +118,32 @@ export function UnitMedia({
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold">Documents</h3>
-          <div className="flex items-center gap-2">
-            <Select value={docType} onValueChange={(v) => setDocType(v as DocumentType)}>
-              <SelectTrigger className="h-8 w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {DOCUMENT_TYPES.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t.replace(/_/g, ' ')}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => docInput.current?.click()}>
-              <Upload className="h-4 w-4" /> Upload
-            </Button>
-            <input
-              ref={docInput}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,application/pdf"
-              className="hidden"
-              onChange={(e) => uploadDoc(e.target.files?.[0])}
-            />
-          </div>
+          {canEdit && (
+            <div className="flex items-center gap-2">
+              <Select value={docType} onValueChange={(v) => setDocType(v as DocumentType)}>
+                <SelectTrigger className="h-8 w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DOCUMENT_TYPES.map((t) => (
+                    <SelectItem key={t} value={t}>
+                      {t.replace(/_/g, ' ')}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => docInput.current?.click()}>
+                <Upload className="h-4 w-4" /> Upload
+              </Button>
+              <input
+                ref={docInput}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,application/pdf"
+                className="hidden"
+                onChange={(e) => uploadDoc(e.target.files?.[0])}
+              />
+            </div>
+          )}
         </div>
         {documents.length === 0 ? (
           <EmptyState icon={FileText} title="No documents" />
@@ -150,9 +161,11 @@ export function UnitMedia({
                   <span className="truncate">{doc.fileName}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">{doc.type.replace(/_/g, ' ')}</span>
                 </a>
-                <button type="button" onClick={() => removeDoc(doc.id)} aria-label="Delete document">
-                  <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                </button>
+                {canEdit && (
+                  <button type="button" onClick={() => removeDoc(doc.id)} aria-label="Delete document">
+                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                  </button>
+                )}
               </li>
             ))}
           </ul>

@@ -7,8 +7,8 @@ const keys = {
   list: (q: StaffQuery) => ['staff', 'list', q] as const,
 };
 
-export function useStaffList(query: StaffQuery) {
-  return useQuery({ queryKey: keys.list(query), queryFn: () => staffApi.list(query) });
+export function useStaffList(query: StaffQuery, enabled = true) {
+  return useQuery({ queryKey: keys.list(query), queryFn: () => staffApi.list(query), enabled });
 }
 
 function useInvalidate() {

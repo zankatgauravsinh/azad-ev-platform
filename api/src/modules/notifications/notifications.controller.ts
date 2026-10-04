@@ -1,20 +1,19 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  Role,
   createNotificationSchema,
   listNotificationsQuerySchema,
   type CreateNotificationInput,
   type ListNotificationsQuery,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { NotificationsService } from './notifications.service';
 
 @ApiTags('Notifications')
 @ApiBearerAuth('access-token')
-@Roles(Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE, Role.TECHNICIAN)
+@Permissions('notifications.use')
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notifications: NotificationsService) {}

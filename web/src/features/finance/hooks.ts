@@ -15,7 +15,7 @@ const keys = {
   bank: (q: Partial<ListBankQuery>) => ['finance', 'bank', q] as const,
 };
 
-export const useFinanceDashboard = () => useQuery({ queryKey: keys.dashboard, queryFn: financeApi.dashboard });
+export const useFinanceDashboard = (enabled = true) => useQuery({ queryKey: keys.dashboard, queryFn: financeApi.dashboard, enabled });
 export const useCategories = () => useQuery({ queryKey: keys.categories, queryFn: financeApi.categories });
 export const useCashBook = (date?: string) => useQuery({ queryKey: keys.cashBook(date), queryFn: () => financeApi.cashBook(date) });
 export const usePnl = (r: { from?: string; to?: string }) => useQuery({ queryKey: keys.pnl(r), queryFn: () => financeApi.pnl(r) });

@@ -8,7 +8,7 @@ const keys = {
   detail: (id: string) => ['returns', 'detail', id] as const,
 };
 
-export const useReturns = (q: Partial<ListReturnsQuery>) => useQuery({ queryKey: keys.list(q), queryFn: () => returnsApi.list(q) });
+export const useReturns = (q: Partial<ListReturnsQuery>, enabled = true) => useQuery({ queryKey: keys.list(q), queryFn: () => returnsApi.list(q), enabled });
 export const useReturn = (id: string | undefined) =>
   useQuery({ queryKey: keys.detail(id ?? ''), queryFn: () => returnsApi.detail(id as string), enabled: Boolean(id) });
 

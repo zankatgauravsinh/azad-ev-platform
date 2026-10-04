@@ -38,10 +38,16 @@ import { WarrantyDetailDialog } from '../components/warranty-detail-dialog';
 import { AmcDetailDialog } from '../components/amc-detail-dialog';
 
 export function WarrantyPage(): JSX.Element {
-  const { user } = useAuth();
-  const canWrite = user?.role === 'OWNER' || user?.role === 'MANAGER' || user?.role === 'TECHNICIAN';
+  const { can } = useAuth();
+  // Independent view permissions (same role set in the seed, but gated separately for custom roles).
+  const canViewWarranty = can('warranty.view');
+  const canViewClaims = can('claims.view');
+  const canViewAmc = can('amc.view');
+  const canCreateWarranty = can('warranty.create'); // POST /warranties + /warranties/generate
+  const canManageAmc = can('amc.manage'); // POST /amc
   const { generate } = useWarrantyMutations();
-  const { data: dash } = useWarrantyDashboard();
+  const { data: dash } = useWarrantyDashboard(canViewWarranty);
+  const defaultTab = canViewWarranty ? 'warranties' : canViewClaims ? 'claims' : 'amc';
 
   const [newWarranty, setNewWarranty] = useState(false);
   const [newAmc, setNewAmc] = useState(false);
@@ -58,11 +64,11 @@ export function WarrantyPage(): JSX.Element {
   return (
     <div>
       <PageHeader title="Warranty & AMC" description="Warranties, claims and annual maintenance contracts." actions={
-        canWrite && (
+        (canCreateWarranty || canManageAmc) && (
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={runGenerate} disabled={generate.isPending}><RefreshCw className="h-4 w-4" /> Generate</Button>
-            <Button variant="outline" onClick={() => setNewAmc(true)}><Plus className="h-4 w-4" /> New AMC</Button>
-            <Button onClick={() => setNewWarranty(true)}><Plus className="h-4 w-4" /> New warranty</Button>
+            {canCreateWarranty && <Button variant="outline" onClick={runGenerate} disabled={generate.isPending}><RefreshCw className="h-4 w-4" /> Generate</Button>}
+            {canManageAmc && <Button variant="outline" onClick={() => setNewAmc(true)}><Plus className="h-4 w-4" /> New AMC</Button>}
+            {canCreateWarranty && <Button onClick={() => setNewWarranty(true)}><Plus className="h-4 w-4" /> New warranty</Button>}
           </div>
         )
       } />
@@ -74,19 +80,19 @@ export function WarrantyPage(): JSX.Element {
         <StatCard label="Active AMC" value={dash?.amc.active ?? '—'} hint={`${formatPaise(dash?.amc.revenue ?? 0)} revenue`} tone="positive" />
       </div>
 
-      <Tabs defaultValue="warranties">
+      <Tabs defaultValue={defaultTab}>
         <TabsList>
-          <TabsTrigger value="warranties">Warranties</TabsTrigger>
-          <TabsTrigger value="claims">Claims</TabsTrigger>
-          <TabsTrigger value="amc">AMC</TabsTrigger>
+          {canViewWarranty && <TabsTrigger value="warranties">Warranties</TabsTrigger>}
+          {canViewClaims && <TabsTrigger value="claims">Claims</TabsTrigger>}
+          {canViewAmc && <TabsTrigger value="amc">AMC</TabsTrigger>}
         </TabsList>
-        <TabsContent value="warranties"><WarrantiesTab onOpen={setWarrantyId} /></TabsContent>
-        <TabsContent value="claims"><ClaimsTab onOpen={setWarrantyId} /></TabsContent>
-        <TabsContent value="amc"><AmcTab onOpen={setAmcId} /></TabsContent>
+        {canViewWarranty && <TabsContent value="warranties"><WarrantiesTab onOpen={setWarrantyId} /></TabsContent>}
+        {canViewClaims && <TabsContent value="claims"><ClaimsTab onOpen={setWarrantyId} /></TabsContent>}
+        {canViewAmc && <TabsContent value="amc"><AmcTab onOpen={setAmcId} /></TabsContent>}
       </Tabs>
 
-      {canWrite && <CreateWarrantyDialog open={newWarranty} onOpenChange={setNewWarranty} onCreated={setWarrantyId} />}
-      {canWrite && <CreateAmcDialog open={newAmc} onOpenChange={setNewAmc} onCreated={setAmcId} />}
+      {canCreateWarranty && <CreateWarrantyDialog open={newWarranty} onOpenChange={setNewWarranty} onCreated={setWarrantyId} />}
+      {canManageAmc && <CreateAmcDialog open={newAmc} onOpenChange={setNewAmc} onCreated={setAmcId} />}
       <WarrantyDetailDialog id={warrantyId} onOpenChange={(o) => { if (!o) setWarrantyId(null); }} />
       <AmcDetailDialog id={amcId} onOpenChange={(o) => { if (!o) setAmcId(null); }} />
     </div>

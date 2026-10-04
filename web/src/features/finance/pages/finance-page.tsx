@@ -56,72 +56,81 @@ function ExportMenu({ type }: { type: ReportType }): JSX.Element {
 }
 
 export function FinancePage(): JSX.Element {
-  const { user } = useAuth();
-  const canWrite = user?.role === 'OWNER' || user?.role === 'MANAGER' || user?.role === 'ACCOUNTANT';
-  const { data: dash } = useFinanceDashboard();
+  const { can } = useAuth();
+  // Independent permission families — each module gates its own view/manage; finance.* also covers
+  // the cross-cutting Cash Book, P&L, GST, Closing and Recurring areas (finance controller).
+  const canViewFinance = can('finance.view');
+  const canManageFinance = can('finance.manage');
+  const view = { expenses: can('expenses.view'), income: can('income.view'), vendors: can('vendors.view'), bank: can('bank.view') };
+  const manage = { expenses: can('expenses.manage'), income: can('income.manage'), vendors: can('vendors.manage'), bank: can('bank.manage') };
+  const { data: dash } = useFinanceDashboard(canViewFinance);
   const [dialog, setDialog] = useState<null | 'expense' | 'income' | 'vendor' | 'bank' | 'recurring'>(null);
   const [vendorId, setVendorId] = useState<string | null>(null);
   const [expenseId, setExpenseId] = useState<string | null>(null);
+
+  const defaultTab = view.expenses ? 'expenses' : view.income ? 'income' : view.vendors ? 'vendors' : view.bank ? 'bank' : 'cashbook';
 
   return (
     <div>
       <PageHeader title="Finance" description="Expenses, income, vendors, cash and profitability." />
 
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Today's collection" value={dash ? formatPaise(dash.todayCollection) : '—'} tone="positive" />
-        <StatCard label="Today's expense" value={dash ? formatPaise(dash.todayExpense) : '—'} tone={dash && Number(dash.todayExpense) > 0 ? 'warning' : 'default'} />
-        <StatCard label="Cash in hand" value={dash ? formatPaise(dash.cashInHand) : '—'} tone={dash && Number(dash.cashInHand) < 0 ? 'danger' : 'default'} />
-        <StatCard label="Bank balance" value={dash ? formatPaise(dash.bankBalance) : '—'} />
-        <StatCard label="Month profit" value={dash ? formatPaise(dash.monthProfit) : '—'} tone={dash && Number(dash.monthProfit) < 0 ? 'danger' : 'positive'} />
-        <StatCard label="Month expense" value={dash ? formatPaise(dash.monthExpense) : '—'} />
-        <StatCard label="Vendor payable" value={dash ? formatPaise(dash.pendingVendorPayments) : '—'} tone={dash && Number(dash.pendingVendorPayments) > 0 ? 'warning' : 'default'} hint={`${dash?.upcomingPayments ?? 0} due soon`} />
-        <StatCard label="Top vendor" value={dash?.topVendors[0]?.name ?? '—'} hint={dash?.topVendors[0] ? formatPaise(dash.topVendors[0].amount) : undefined} />
-      </div>
+      {canViewFinance && (
+        <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard label="Today's collection" value={dash ? formatPaise(dash.todayCollection) : '—'} tone="positive" />
+          <StatCard label="Today's expense" value={dash ? formatPaise(dash.todayExpense) : '—'} tone={dash && Number(dash.todayExpense) > 0 ? 'warning' : 'default'} />
+          <StatCard label="Cash in hand" value={dash ? formatPaise(dash.cashInHand) : '—'} tone={dash && Number(dash.cashInHand) < 0 ? 'danger' : 'default'} />
+          <StatCard label="Bank balance" value={dash ? formatPaise(dash.bankBalance) : '—'} />
+          <StatCard label="Month profit" value={dash ? formatPaise(dash.monthProfit) : '—'} tone={dash && Number(dash.monthProfit) < 0 ? 'danger' : 'positive'} />
+          <StatCard label="Month expense" value={dash ? formatPaise(dash.monthExpense) : '—'} />
+          <StatCard label="Vendor payable" value={dash ? formatPaise(dash.pendingVendorPayments) : '—'} tone={dash && Number(dash.pendingVendorPayments) > 0 ? 'warning' : 'default'} hint={`${dash?.upcomingPayments ?? 0} due soon`} />
+          <StatCard label="Top vendor" value={dash?.topVendors[0]?.name ?? '—'} hint={dash?.topVendors[0] ? formatPaise(dash.topVendors[0].amount) : undefined} />
+        </div>
+      )}
 
-      <Tabs defaultValue="expenses">
-        {/* Horizontal scroll strip so the 8 tabs never wrap/overlap on narrow screens. */}
+      <Tabs defaultValue={defaultTab}>
+        {/* Horizontal scroll strip so the tabs never wrap/overlap on narrow screens. Each tab is gated by its view permission. */}
         <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <TabsList className="w-max">
-            <TabsTrigger value="expenses">Expenses</TabsTrigger>
-            <TabsTrigger value="income">Income</TabsTrigger>
-            <TabsTrigger value="vendors">Vendors</TabsTrigger>
-            <TabsTrigger value="bank">Bank</TabsTrigger>
-            <TabsTrigger value="cashbook">Cash Book</TabsTrigger>
-            <TabsTrigger value="pnl">P&amp;L</TabsTrigger>
-            <TabsTrigger value="gst">GST</TabsTrigger>
-            <TabsTrigger value="closing">Closing</TabsTrigger>
+            {view.expenses && <TabsTrigger value="expenses">Expenses</TabsTrigger>}
+            {view.income && <TabsTrigger value="income">Income</TabsTrigger>}
+            {view.vendors && <TabsTrigger value="vendors">Vendors</TabsTrigger>}
+            {view.bank && <TabsTrigger value="bank">Bank</TabsTrigger>}
+            {canViewFinance && <TabsTrigger value="cashbook">Cash Book</TabsTrigger>}
+            {canViewFinance && <TabsTrigger value="pnl">P&amp;L</TabsTrigger>}
+            {canViewFinance && <TabsTrigger value="gst">GST</TabsTrigger>}
+            {canViewFinance && <TabsTrigger value="closing">Closing</TabsTrigger>}
           </TabsList>
         </div>
 
-        <TabsContent value="expenses"><ExpensesTab canWrite={canWrite} onNew={() => setDialog('expense')} onRecurring={() => setDialog('recurring')} onOpen={setExpenseId} /></TabsContent>
-        <TabsContent value="income"><IncomeTab canWrite={canWrite} onNew={() => setDialog('income')} /></TabsContent>
-        <TabsContent value="vendors"><VendorsTab canWrite={canWrite} onNew={() => setDialog('vendor')} onOpen={setVendorId} /></TabsContent>
-        <TabsContent value="bank"><BankTab canWrite={canWrite} onNew={() => setDialog('bank')} /></TabsContent>
-        <TabsContent value="cashbook"><CashBookTab canWrite={canWrite} /></TabsContent>
-        <TabsContent value="pnl"><PnlTab /></TabsContent>
-        <TabsContent value="gst"><GstTab /></TabsContent>
-        <TabsContent value="closing"><ClosingTab canWrite={canWrite} /></TabsContent>
+        {view.expenses && <TabsContent value="expenses"><ExpensesTab canManage={manage.expenses} canManageRecurring={canManageFinance} onNew={() => setDialog('expense')} onRecurring={() => setDialog('recurring')} onOpen={setExpenseId} /></TabsContent>}
+        {view.income && <TabsContent value="income"><IncomeTab canManage={manage.income} onNew={() => setDialog('income')} /></TabsContent>}
+        {view.vendors && <TabsContent value="vendors"><VendorsTab canManage={manage.vendors} onNew={() => setDialog('vendor')} onOpen={setVendorId} /></TabsContent>}
+        {view.bank && <TabsContent value="bank"><BankTab canManage={manage.bank} onNew={() => setDialog('bank')} /></TabsContent>}
+        {canViewFinance && <TabsContent value="cashbook"><CashBookTab canManage={canManageFinance} /></TabsContent>}
+        {canViewFinance && <TabsContent value="pnl"><PnlTab /></TabsContent>}
+        {canViewFinance && <TabsContent value="gst"><GstTab /></TabsContent>}
+        {canViewFinance && <TabsContent value="closing"><ClosingTab canManage={canManageFinance} /></TabsContent>}
       </Tabs>
 
-      {canWrite && <CreateExpenseDialog open={dialog === 'expense'} onOpenChange={(o) => setDialog(o ? 'expense' : null)} />}
-      {canWrite && <CreateIncomeDialog open={dialog === 'income'} onOpenChange={(o) => setDialog(o ? 'income' : null)} />}
-      {canWrite && <CreateVendorDialog open={dialog === 'vendor'} onOpenChange={(o) => setDialog(o ? 'vendor' : null)} />}
-      {canWrite && <CreateBankDialog open={dialog === 'bank'} onOpenChange={(o) => setDialog(o ? 'bank' : null)} />}
-      {canWrite && <RecurringDialog open={dialog === 'recurring'} onOpenChange={(o) => setDialog(o ? 'recurring' : null)} />}
+      {manage.expenses && <CreateExpenseDialog open={dialog === 'expense'} onOpenChange={(o) => setDialog(o ? 'expense' : null)} />}
+      {manage.income && <CreateIncomeDialog open={dialog === 'income'} onOpenChange={(o) => setDialog(o ? 'income' : null)} />}
+      {manage.vendors && <CreateVendorDialog open={dialog === 'vendor'} onOpenChange={(o) => setDialog(o ? 'vendor' : null)} />}
+      {manage.bank && <CreateBankDialog open={dialog === 'bank'} onOpenChange={(o) => setDialog(o ? 'bank' : null)} />}
+      {canManageFinance && <RecurringDialog open={dialog === 'recurring'} onOpenChange={(o) => setDialog(o ? 'recurring' : null)} />}
       <VendorDetailDialog id={vendorId} onOpenChange={(o) => { if (!o) setVendorId(null); }} />
       <ExpenseDetailDialog id={expenseId} onOpenChange={(o) => { if (!o) setExpenseId(null); }} />
     </div>
   );
 }
 
-function Toolbar({ children, onNew, canWrite, newLabel, exportType, extra }: { children?: React.ReactNode; onNew?: () => void; canWrite?: boolean; newLabel: string; exportType?: ReportType; extra?: React.ReactNode }): JSX.Element {
+function Toolbar({ children, onNew, canManage, newLabel, exportType, extra }: { children?: React.ReactNode; onNew?: () => void; canManage?: boolean; newLabel: string; exportType?: ReportType; extra?: React.ReactNode }): JSX.Element {
   return (
     <div className="mb-4 flex flex-col gap-2 sm:flex-row">
       {children}
       <div className="flex flex-wrap gap-2 sm:ml-auto">
         {extra}
         {exportType && <ExportMenu type={exportType} />}
-        {canWrite && onNew && <Button onClick={onNew}><Plus className="h-4 w-4" /> {newLabel}</Button>}
+        {canManage && onNew && <Button onClick={onNew}><Plus className="h-4 w-4" /> {newLabel}</Button>}
       </div>
     </div>
   );
@@ -136,7 +145,7 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
   );
 }
 
-function ExpensesTab({ canWrite, onNew, onRecurring, onOpen }: { canWrite: boolean; onNew: () => void; onRecurring: () => void; onOpen: (id: string) => void }): JSX.Element {
+function ExpensesTab({ canManage, canManageRecurring, onNew, onRecurring, onOpen }: { canManage: boolean; canManageRecurring: boolean; onNew: () => void; onRecurring: () => void; onOpen: (id: string) => void }): JSX.Element {
   const { settleExpense, setExpenseStatus, submitExpense } = useFinanceMutations();
   const [search, setSearch] = useState('');
   const q = useDebounce(search);
@@ -155,9 +164,9 @@ function ExpensesTab({ canWrite, onNew, onRecurring, onOpen }: { canWrite: boole
     {
       key: 'actions', header: '', render: (r) => (
         <div className="flex justify-end gap-1" onClick={(ev) => ev.stopPropagation()}>
-          {canWrite && r.status === 'DRAFT' && <Button size="sm" variant="outline" onClick={() => submitExpense.mutate(r.id)}>Submit</Button>}
-          {canWrite && r.status === 'PENDING' && <Button size="sm" variant="outline" onClick={() => setExpenseStatus.mutate({ id: r.id, status: 'APPROVED' })}>Approve</Button>}
-          {canWrite && !r.paid && r.status !== 'REJECTED' && <Button size="sm" variant="outline" onClick={() => settleExpense.mutate(r.id)}>Settle</Button>}
+          {canManage && r.status === 'DRAFT' && <Button size="sm" variant="outline" onClick={() => submitExpense.mutate(r.id)}>Submit</Button>}
+          {canManage && r.status === 'PENDING' && <Button size="sm" variant="outline" onClick={() => setExpenseStatus.mutate({ id: r.id, status: 'APPROVED' })}>Approve</Button>}
+          {canManage && !r.paid && r.status !== 'REJECTED' && <Button size="sm" variant="outline" onClick={() => settleExpense.mutate(r.id)}>Settle</Button>}
           {r.attachments.length > 0 && <Paperclip className="h-4 w-4 self-center text-muted-foreground" />}
           <Button size="sm" variant="ghost" onClick={() => downloadVoucher(r.id, r.expenseNumber)}><FileDown className="h-4 w-4" /></Button>
         </div>
@@ -167,7 +176,7 @@ function ExpensesTab({ canWrite, onNew, onRecurring, onOpen }: { canWrite: boole
 
   return (
     <>
-      <Toolbar canWrite={canWrite} onNew={onNew} newLabel="Record expense" exportType="expenses" extra={canWrite ? <Button variant="outline" onClick={onRecurring}><Repeat className="h-4 w-4" /> Recurring</Button> : undefined}>
+      <Toolbar canManage={canManage} onNew={onNew} newLabel="Record expense" exportType="expenses" extra={canManageRecurring ? <Button variant="outline" onClick={onRecurring}><Repeat className="h-4 w-4" /> Recurring</Button> : undefined}>
         <SearchBox value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search number, reference, vendor…" />
         <Select value={status} onValueChange={(v) => { setStatus(v as ExpenseStatus | 'ALL'); setPage(1); }}>
           <SelectTrigger className="sm:w-40"><SelectValue /></SelectTrigger>
@@ -184,7 +193,7 @@ async function downloadVoucher(id: string, number: string): Promise<void> {
   try { saveBlob(await expensesApi.voucher(id), `expense-${number}.pdf`); } catch (e) { toast.error(apiErrorMessage(e)); }
 }
 
-function IncomeTab({ canWrite, onNew }: { canWrite: boolean; onNew: () => void }): JSX.Element {
+function IncomeTab({ canManage, onNew }: { canManage: boolean; onNew: () => void }): JSX.Element {
   const [search, setSearch] = useState('');
   const q = useDebounce(search);
   const [source, setSource] = useState<string>('ALL');
@@ -203,7 +212,7 @@ function IncomeTab({ canWrite, onNew }: { canWrite: boolean; onNew: () => void }
 
   return (
     <>
-      <Toolbar canWrite={canWrite} onNew={onNew} newLabel="Record income" exportType="income">
+      <Toolbar canManage={canManage} onNew={onNew} newLabel="Record income" exportType="income">
         <SearchBox value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search number, reference, customer…" />
         <Select value={source} onValueChange={(v) => { setSource(v); setPage(1); }}>
           <SelectTrigger className="sm:w-44"><SelectValue /></SelectTrigger>
@@ -216,7 +225,7 @@ function IncomeTab({ canWrite, onNew }: { canWrite: boolean; onNew: () => void }
   );
 }
 
-function VendorsTab({ canWrite, onNew, onOpen }: { canWrite: boolean; onNew: () => void; onOpen: (id: string) => void }): JSX.Element {
+function VendorsTab({ canManage, onNew, onOpen }: { canManage: boolean; onNew: () => void; onOpen: (id: string) => void }): JSX.Element {
   const [search, setSearch] = useState('');
   const q = useDebounce(search);
   const [status, setStatus] = useState<string>('ALL');
@@ -235,7 +244,7 @@ function VendorsTab({ canWrite, onNew, onOpen }: { canWrite: boolean; onNew: () 
 
   return (
     <>
-      <Toolbar canWrite={canWrite} onNew={onNew} newLabel="New vendor" exportType="vendors">
+      <Toolbar canManage={canManage} onNew={onNew} newLabel="New vendor" exportType="vendors">
         <SearchBox value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search vendor, number, GSTIN…" />
         <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
           <SelectTrigger className="sm:w-40"><SelectValue /></SelectTrigger>
@@ -248,7 +257,7 @@ function VendorsTab({ canWrite, onNew, onOpen }: { canWrite: boolean; onNew: () 
   );
 }
 
-function BankTab({ canWrite, onNew }: { canWrite: boolean; onNew: () => void }): JSX.Element {
+function BankTab({ canManage, onNew }: { canManage: boolean; onNew: () => void }): JSX.Element {
   const [search, setSearch] = useState('');
   const q = useDebounce(search);
   const [page, setPage] = useState(1);
@@ -264,7 +273,7 @@ function BankTab({ canWrite, onNew }: { canWrite: boolean; onNew: () => void }):
     { key: 'amount', header: 'Amount', render: (r) => formatPaise(r.amount) },
     { key: 'direction', header: 'Direction', render: (r) => <Badge variant={bankDirectionTone[r.direction]}>{titleCase(r.direction)}</Badge> },
     {
-      key: 'recon', header: 'Reconciliation', render: (r) => canWrite ? (
+      key: 'recon', header: 'Reconciliation', render: (r) => canManage ? (
         <Select value={r.reconStatus} onValueChange={(v) => reconcileBank.mutate({ id: r.id, reconStatus: v })}>
           <SelectTrigger className="h-8 w-36"><SelectValue /></SelectTrigger>
           <SelectContent>{BANK_RECON_STATUSES.map((s: BankReconStatus) => <SelectItem key={s} value={s}>{titleCase(s)}</SelectItem>)}</SelectContent>
@@ -275,7 +284,7 @@ function BankTab({ canWrite, onNew }: { canWrite: boolean; onNew: () => void }):
 
   return (
     <>
-      <Toolbar canWrite={canWrite} onNew={onNew} newLabel="Record transaction" exportType="bank">
+      <Toolbar canManage={canManage} onNew={onNew} newLabel="Record transaction" exportType="bank">
         <SearchBox value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="Search number, reference, bank…" />
       </Toolbar>
       <DataTable columns={columns} rows={data?.data ?? []} getRowId={(r) => r.id} page={data?.meta} onPageChange={setPage} loading={isLoading || isFetching}
@@ -284,7 +293,7 @@ function BankTab({ canWrite, onNew }: { canWrite: boolean; onNew: () => void }):
   );
 }
 
-function CashBookTab({ canWrite }: { canWrite: boolean }): JSX.Element {
+function CashBookTab({ canManage }: { canManage: boolean }): JSX.Element {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const { data } = useCashBook(date);
   const { addAdjustment } = useFinanceMutations();
@@ -313,11 +322,11 @@ function CashBookTab({ canWrite }: { canWrite: boolean }): JSX.Element {
         <Input type="date" className="sm:w-44" value={date} onChange={(e) => setDate(e.target.value)} />
         <div className="flex gap-2 sm:ml-auto">
           <Button variant="outline" onClick={pdf}><FileDown className="h-4 w-4" /> PDF</Button>
-          {canWrite && <Button onClick={() => setAdjOpen((o) => !o)}><Plus className="h-4 w-4" /> Adjustment</Button>}
+          {canManage && <Button onClick={() => setAdjOpen((o) => !o)}><Plus className="h-4 w-4" /> Adjustment</Button>}
         </div>
       </div>
 
-      {adjOpen && canWrite && (
+      {adjOpen && canManage && (
         <div className="flex flex-wrap items-end gap-3 rounded-lg border p-3">
           <div className="space-y-1"><label className="text-xs text-muted-foreground">Amount (₹, − for out)</label><Input type="number" className="w-40" value={adjAmount} onChange={(e) => setAdjAmount(e.target.value)} /></div>
           <div className="flex-1 space-y-1"><label className="text-xs text-muted-foreground">Note</label><Input value={adjNote} onChange={(e) => setAdjNote(e.target.value)} /></div>
@@ -438,7 +447,7 @@ function GstTab(): JSX.Element {
   );
 }
 
-function ClosingTab({ canWrite }: { canWrite: boolean }): JSX.Element {
+function ClosingTab({ canManage }: { canManage: boolean }): JSX.Element {
   const { data } = useClosings();
   const { closeMonth, reopenMonth } = useFinanceMutations();
   const now = new Date();
@@ -453,7 +462,7 @@ function ClosingTab({ canWrite }: { canWrite: boolean }): JSX.Element {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">Lock a completed month so its transactions can no longer be added, edited or deleted.</p>
-      {canWrite && (
+      {canManage && (
         <div className="flex flex-wrap items-end gap-3 rounded-lg border p-3">
           <div className="space-y-1"><label className="text-xs text-muted-foreground">Year</label><Input type="number" className="w-28" value={year} onChange={(e) => setYear(e.target.value)} /></div>
           <div className="space-y-1"><label className="text-xs text-muted-foreground">Month</label><Input type="number" min={1} max={12} className="w-24" value={month} onChange={(e) => setMonth(e.target.value)} /></div>
@@ -462,14 +471,14 @@ function ClosingTab({ canWrite }: { canWrite: boolean }): JSX.Element {
       )}
       <div className="overflow-auto rounded-lg border">
         <Table>
-          <TableHeader><TableRow><TableHead>Month</TableHead><TableHead>Closed on</TableHead>{canWrite && <TableHead />}</TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Month</TableHead><TableHead>Closed on</TableHead>{canManage && <TableHead />}</TableRow></TableHeader>
           <TableBody>
             {(data?.length ?? 0) === 0 && <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground">No closed months</TableCell></TableRow>}
             {data?.map((c: MonthlyClosingDto) => (
               <TableRow key={c.id}>
                 <TableCell className="font-medium">{c.label}</TableCell>
                 <TableCell className="text-muted-foreground">{iso(c.closedAt)}</TableCell>
-                {canWrite && <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => reopenMonth.mutate(c.id)}><Unlock className="h-4 w-4" /> Reopen</Button></TableCell>}
+                {canManage && <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => reopenMonth.mutate(c.id)}><Unlock className="h-4 w-4" /> Reopen</Button></TableCell>}
               </TableRow>
             ))}
           </TableBody>

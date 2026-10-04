@@ -49,12 +49,14 @@ describe('AuthService', () => {
       verifyRefresh: jest.fn(),
     } as never;
     activityLog = { record: jest.fn().mockResolvedValue(undefined) } as never;
+    const permissions = { resolve: jest.fn().mockResolvedValue(new Set<string>()) } as never;
 
     service = new AuthService(
       users as unknown as UsersService,
       passwords as unknown as PasswordService,
       tokens as unknown as TokenService,
       activityLog as unknown as ActivityLogService,
+      permissions,
     );
   });
 

@@ -6,7 +6,6 @@ import {
   convertQuotationSchema,
   createQuotationSchema,
   listQuotationsQuerySchema,
-  Role,
   updateQuotationSchema,
   type ChangeQuotationStatusInput,
   type ConvertQuotationInput,
@@ -14,21 +13,19 @@ import {
   type ListQuotationsQuery,
   type UpdateQuotationInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { QuotationsService } from './quotations.service';
 
-const ROLES = [Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE] as const;
-
 @ApiTags('Quotations')
 @ApiBearerAuth('access-token')
-@Roles(...ROLES)
 @Controller('quotations')
 export class QuotationsController {
   constructor(private readonly quotations: QuotationsService) {}
 
   @Get()
+  @Permissions('quotations.view')
   @ApiOperation({ summary: 'List / filter quotations' })
   @ApiQuery({ name: 'status', required: false, enum: ['DRAFT', 'SENT', 'ACCEPTED', 'EXPIRED', 'CANCELLED'] })
   @ApiQuery({ name: 'customerId', required: false, format: 'uuid' })
@@ -37,6 +34,7 @@ export class QuotationsController {
   }
 
   @Post()
+  @Permissions('quotations.create')
   @ApiOperation({ summary: 'Create a quotation' })
   @ApiResponse({ status: 201, description: 'The quotation with computed on-road total' })
   create(@Body(new ZodValidationPipe(createQuotationSchema)) dto: CreateQuotationInput, @CurrentUser('id') userId: string) {
@@ -44,12 +42,14 @@ export class QuotationsController {
   }
 
   @Get(':id')
+  @Permissions('quotations.view')
   @ApiParam({ name: 'id', format: 'uuid' })
   getById(@Param('id') id: string) {
     return this.quotations.getById(id);
   }
 
   @Get(':id/pdf')
+  @Permissions('quotations.view')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Download the quotation as a PDF' })
   async pdf(@Param('id') id: string, @Res() res: Response): Promise<void> {
@@ -60,6 +60,7 @@ export class QuotationsController {
   }
 
   @Patch(':id')
+  @Permissions('quotations.update')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Edit a draft/sent quotation' })
   update(@Param('id') id: string, @Body(new ZodValidationPipe(updateQuotationSchema)) dto: UpdateQuotationInput, @CurrentUser('id') userId: string) {
@@ -67,6 +68,7 @@ export class QuotationsController {
   }
 
   @Patch(':id/status')
+  @Permissions('quotations.update')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Change quotation status (Draft/Sent/Accepted/Expired/Cancelled)' })
   changeStatus(@Param('id') id: string, @Body(new ZodValidationPipe(changeQuotationStatusSchema)) dto: ChangeQuotationStatusInput, @CurrentUser('id') userId: string) {
@@ -74,6 +76,7 @@ export class QuotationsController {
   }
 
   @Post(':id/duplicate')
+  @Permissions('quotations.create')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Duplicate a quotation as a new draft' })
   duplicate(@Param('id') id: string, @CurrentUser('id') userId: string) {
@@ -81,6 +84,7 @@ export class QuotationsController {
   }
 
   @Post(':id/convert')
+  @Permissions('quotations.convert')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Convert quotation → booking (allocates a VIN)' })
   @ApiResponse({ status: 201, description: 'The created booking' })
@@ -90,6 +94,7 @@ export class QuotationsController {
   }
 
   @Delete(':id')
+  @Permissions('quotations.delete')
   @HttpCode(204)
   @ApiParam({ name: 'id', format: 'uuid' })
   async remove(@Param('id') id: string): Promise<void> {

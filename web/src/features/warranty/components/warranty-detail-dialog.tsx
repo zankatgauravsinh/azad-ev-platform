@@ -18,9 +18,10 @@ import { CreateClaimDialog } from './create-claim-dialog';
 const fmt = (iso: string): string => new Date(iso).toLocaleDateString('en-IN');
 
 export function WarrantyDetailDialog({ id, onOpenChange }: { id: string | null; onOpenChange: (o: boolean) => void }): JSX.Element {
-  const { user } = useAuth();
-  const canWrite = user?.role === 'OWNER' || user?.role === 'MANAGER' || user?.role === 'TECHNICIAN';
-  const canCancel = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const { can } = useAuth();
+  const canManageClaims = can('claims.manage'); // new claim + approve/reject/complete (warranty-claims)
+  const canUpdateWarranty = can('warranty.update'); // free-service completion
+  const canCancel = can('warranty.cancel');
   const { data } = useWarranty(id ?? undefined);
   const { cancel, completeFreeService, updateClaim } = useWarrantyMutations();
   const [claimOpen, setClaimOpen] = useState(false);
@@ -58,7 +59,7 @@ export function WarrantyDetailDialog({ id, onOpenChange }: { id: string | null; 
 
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onClick={download}><FileDown className="h-4 w-4" /> Certificate</Button>
-              {canWrite && w.status !== 'CANCELLED' && <Button size="sm" onClick={() => setClaimOpen(true)}><Plus className="h-4 w-4" /> New claim</Button>}
+              {canManageClaims && w.status !== 'CANCELLED' && <Button size="sm" onClick={() => setClaimOpen(true)}><Plus className="h-4 w-4" /> New claim</Button>}
               {canCancel && w.status !== 'CANCELLED' && <Button size="sm" variant="outline" onClick={doCancel} disabled={cancel.isPending}><ShieldX className="h-4 w-4" /> Cancel</Button>}
             </div>
 
@@ -91,7 +92,7 @@ export function WarrantyDetailDialog({ id, onOpenChange }: { id: string | null; 
 
             <Section title="Free services">
               <Table>
-                <TableHeader><TableRow><TableHead>#</TableHead><TableHead>Due</TableHead><TableHead>Status</TableHead><TableHead>Technician</TableHead>{canWrite && <TableHead />}</TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>#</TableHead><TableHead>Due</TableHead><TableHead>Status</TableHead><TableHead>Technician</TableHead>{canUpdateWarranty && <TableHead />}</TableRow></TableHeader>
                 <TableBody>
                   {data.freeServices.map((f) => (
                     <TableRow key={f.id}>
@@ -99,7 +100,7 @@ export function WarrantyDetailDialog({ id, onOpenChange }: { id: string | null; 
                       <TableCell>{fmt(f.dueDate)}</TableCell>
                       <TableCell><Badge variant={freeServiceTone[f.status]}>{titleCase(f.status)}</Badge></TableCell>
                       <TableCell>{f.technicianName ?? '—'}</TableCell>
-                      {canWrite && (
+                      {canUpdateWarranty && (
                         <TableCell className="text-right">
                           {f.status === 'PENDING' && (
                             <Button size="sm" variant="outline" onClick={() => completeFreeService.mutate({ id: f.id, status: 'COMPLETED' })}>Mark done</Button>
@@ -115,7 +116,7 @@ export function WarrantyDetailDialog({ id, onOpenChange }: { id: string | null; 
             {data.claims.length > 0 && (
               <Section title="Claims">
                 <Table>
-                  <TableHeader><TableRow><TableHead>Claim</TableHead><TableHead>Complaint</TableHead><TableHead>Cost</TableHead><TableHead>Status</TableHead>{canWrite && <TableHead />}</TableRow></TableHeader>
+                  <TableHeader><TableRow><TableHead>Claim</TableHead><TableHead>Complaint</TableHead><TableHead>Cost</TableHead><TableHead>Status</TableHead>{canManageClaims && <TableHead />}</TableRow></TableHeader>
                   <TableBody>
                     {data.claims.map((c) => (
                       <TableRow key={c.id}>
@@ -123,7 +124,7 @@ export function WarrantyDetailDialog({ id, onOpenChange }: { id: string | null; 
                         <TableCell className="max-w-[10rem] truncate">{c.complaint}</TableCell>
                         <TableCell>{formatPaise(c.claimCost)}</TableCell>
                         <TableCell><Badge variant={claimTone[c.status]}>{titleCase(c.status)}</Badge></TableCell>
-                        {canWrite && (
+                        {canManageClaims && (
                           <TableCell className="space-x-1 text-right">
                             {c.status === 'PENDING' && (
                               <>

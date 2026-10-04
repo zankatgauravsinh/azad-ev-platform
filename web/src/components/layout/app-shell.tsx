@@ -10,7 +10,7 @@ import { ThemeToggle } from './theme-toggle';
 import { UserMenu } from './user-menu';
 
 export function AppShell(): JSX.Element {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // Android hardware back button closes the drawer when it's open (see lib/native).
@@ -56,9 +56,9 @@ export function AppShell(): JSX.Element {
           >
             <Menu className="h-5 w-5" />
           </Button>
-          <GlobalSearch />
+          {can('search.use') && <GlobalSearch />}
           <div className="flex-1" />
-          <NotificationBell />
+          {can('notifications.use') && <NotificationBell />}
           <ThemeToggle />
           <UserMenu />
         </header>

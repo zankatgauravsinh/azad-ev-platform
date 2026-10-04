@@ -64,8 +64,15 @@ type StatShape = {
 
 export function InventoryListPage(): JSX.Element {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const canWrite = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const { can } = useAuth();
+  // Inventory actions are independently authorized — do not collapse into one flag.
+  const canCreate = can('inventory.create');
+  const canUpdate = can('inventory.update');
+  const canDelete = can('inventory.delete');
+  const canStatus = can('inventory.status');
+  const canExport = can('inventory.export');
+  const canDashboard = can('inventory.dashboard');
+  const canRowActions = canStatus || canUpdate || canDelete;
 
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search);
@@ -83,7 +90,7 @@ export function InventoryListPage(): JSX.Element {
   const [exporting, setExporting] = useState(false);
 
   const { data: models = [] } = useModels();
-  const { data: dashboard } = useInventoryDashboard();
+  const { data: dashboard } = useInventoryDashboard(canDashboard);
   const deleteMutation = useDeleteUnit();
 
   const query: Partial<ListUnitsQuery> = useMemo(
@@ -175,7 +182,7 @@ export function InventoryListPage(): JSX.Element {
     },
   ];
 
-  if (canWrite) {
+  if (canRowActions) {
     columns.push({
       key: 'actions',
       header: '',
@@ -188,22 +195,28 @@ export function InventoryListPage(): JSX.Element {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-            <DropdownMenuItem onClick={() => setStatusUnit(u)}>
-              <RefreshCw className="h-4 w-4" /> Change status
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={async () => {
-                const detail = await inventoryApi.getById(u.id);
-                setEditUnit(detail);
-                setFormOpen(true);
-              }}
-            >
-              <Pencil className="h-4 w-4" /> Edit
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteUnit(u)}>
-              <Trash2 className="h-4 w-4" /> Delete
-            </DropdownMenuItem>
+            {canStatus && (
+              <DropdownMenuItem onClick={() => setStatusUnit(u)}>
+                <RefreshCw className="h-4 w-4" /> Change status
+              </DropdownMenuItem>
+            )}
+            {canUpdate && (
+              <DropdownMenuItem
+                onClick={async () => {
+                  const detail = await inventoryApi.getById(u.id);
+                  setEditUnit(detail);
+                  setFormOpen(true);
+                }}
+              >
+                <Pencil className="h-4 w-4" /> Edit
+              </DropdownMenuItem>
+            )}
+            {canDelete && (canStatus || canUpdate) && <DropdownMenuSeparator />}
+            {canDelete && (
+              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteUnit(u)}>
+                <Trash2 className="h-4 w-4" /> Delete
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       ),
@@ -218,37 +231,43 @@ export function InventoryListPage(): JSX.Element {
         title="Inventory"
         description="Every scooter, its status, and full history."
         actions={
-          canWrite && (
+          (canCreate || canExport) && (
             <>
-              <Button variant="outline" onClick={() => setImportOpen(true)}>
-                <Upload className="h-4 w-4" /> Import
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" disabled={exporting}>
-                    <Download className="h-4 w-4" /> Export
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => runExport('xlsx')}>
-                    <FileSpreadsheet className="h-4 w-4" /> Excel (.xlsx)
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => runExport('pdf')}>
-                    <FileText className="h-4 w-4" /> PDF
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => window.print()}>
-                    <Printer className="h-4 w-4" /> Print
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button
-                onClick={() => {
-                  setEditUnit(undefined);
-                  setFormOpen(true);
-                }}
-              >
-                <Plus className="h-4 w-4" /> Add scooter
-              </Button>
+              {canCreate && (
+                <Button variant="outline" onClick={() => setImportOpen(true)}>
+                  <Upload className="h-4 w-4" /> Import
+                </Button>
+              )}
+              {canExport && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" disabled={exporting}>
+                      <Download className="h-4 w-4" /> Export
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => runExport('xlsx')}>
+                      <FileSpreadsheet className="h-4 w-4" /> Excel (.xlsx)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => runExport('pdf')}>
+                      <FileText className="h-4 w-4" /> PDF
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => window.print()}>
+                      <Printer className="h-4 w-4" /> Print
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              {canCreate && (
+                <Button
+                  onClick={() => {
+                    setEditUnit(undefined);
+                    setFormOpen(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4" /> Add scooter
+                </Button>
+              )}
             </>
           )
         }
@@ -349,7 +368,7 @@ export function InventoryListPage(): JSX.Element {
                 : 'Add your first scooter to get started.'
             }
             action={
-              canWrite && !search && status === 'ALL' && modelId === 'ALL' ? (
+              canCreate && !search && status === 'ALL' && modelId === 'ALL' ? (
                 <Button
                   onClick={() => {
                     setEditUnit(undefined);

@@ -142,3 +142,14 @@ export const servicePriorityTone = (s: ServicePriority): BadgeTone => SERVICE_PR
 
 export const titleCase = (s: string): string =>
   s.toLowerCase().split('_').map((w) => w[0]?.toUpperCase() + w.slice(1)).join(' ');
+
+/** Polished display names for permission-catalog module keys (Role editor grouping headers). */
+const PERMISSION_MODULE_LABELS: Record<string, string> = {
+  spareparts: 'Spare Parts',
+  amc: 'AMC',
+  gst: 'GST',
+  pnl: 'P&L',
+};
+export function permissionModuleLabel(moduleKey: string): string {
+  return PERMISSION_MODULE_LABELS[moduleKey] ?? titleCase(moduleKey);
+}

@@ -1,4 +1,4 @@
-import type { AuthUser, ChangePasswordInput, LoginInput, LoginResponse } from '@azad/shared';
+import type { ChangePasswordInput, LoginInput, LoginResponse, MeResponse } from '@azad/shared';
 import { apiClient } from '@/lib/api-client';
 
 export const authApi = {
@@ -6,8 +6,8 @@ export const authApi = {
     const { data } = await apiClient.post<LoginResponse>('/auth/login', input);
     return data;
   },
-  async me(): Promise<AuthUser> {
-    const { data } = await apiClient.get<AuthUser>('/auth/me');
+  async me(): Promise<MeResponse> {
+    const { data } = await apiClient.get<MeResponse>('/auth/me');
     return data;
   },
   async logout(): Promise<void> {

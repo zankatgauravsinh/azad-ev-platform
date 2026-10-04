@@ -17,8 +17,10 @@ import { ServiceJobFormDialog } from '../components/service-job-form-dialog';
 
 export function ServiceListPage(): JSX.Element {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const canCreate = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const { can } = useAuth();
+  const canView = can('service.view');
+  const canCreate = can('service.create'); // POST /service/jobs
+  const canViewReports = can('reports.view'); // Service Reports entry (GET /service/reports)
   const [search, setSearch] = useState('');
   const q = useDebounce(search);
   const [status, setStatus] = useState<ServiceStatus | 'ALL'>('ALL');
@@ -29,7 +31,7 @@ export function ServiceListPage(): JSX.Element {
     () => ({ page, pageSize: 20, q: q || undefined, status: status === 'ALL' ? undefined : status }),
     [page, q, status],
   );
-  const { data, isLoading, isFetching } = useServiceJobs(query);
+  const { data, isLoading, isFetching } = useServiceJobs(query, canView);
 
   const columns: Column<ServiceJobDto>[] = [
     { key: 'code', header: 'Job card', render: (r) => <span className="font-mono text-xs">{r.code}</span> },
@@ -45,7 +47,7 @@ export function ServiceListPage(): JSX.Element {
     <div>
       <PageHeader title="Service" description="Job cards, repairs and after-sales." actions={
         <div className="flex gap-2">
-          {canCreate && <Button variant="outline" onClick={() => navigate('/service/reports')}><BarChart3 className="h-4 w-4" /> Reports</Button>}
+          {canViewReports && <Button variant="outline" onClick={() => navigate('/service/reports')}><BarChart3 className="h-4 w-4" /> Reports</Button>}
           {canCreate && <Button onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" /> New job card</Button>}
         </div>
       } />

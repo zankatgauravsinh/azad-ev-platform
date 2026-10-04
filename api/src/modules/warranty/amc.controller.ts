@@ -2,7 +2,6 @@ import { Body, Controller, Get, Param, Post, Query, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import {
-  Role,
   createAmcSchema,
   createAmcVisitSchema,
   listAmcQuerySchema,
@@ -10,7 +9,7 @@ import {
   type CreateAmcVisitInput,
   type ListAmcQuery,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
@@ -19,7 +18,7 @@ import { WarrantyPdfService } from './warranty-pdf.service';
 
 @ApiTags('AMC')
 @ApiBearerAuth('access-token')
-@Roles(Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE, Role.TECHNICIAN)
+@Permissions('amc.view')
 @Controller('amc')
 export class AmcController {
   constructor(
@@ -53,14 +52,14 @@ export class AmcController {
   }
 
   @Post()
-  @Roles(Role.OWNER, Role.MANAGER, Role.TECHNICIAN)
+  @Permissions('amc.manage')
   @ApiOperation({ summary: 'Create an AMC plan' })
   create(@Body(new ZodValidationPipe(createAmcSchema)) dto: CreateAmcInput, @CurrentUser('id') userId: string) {
     return this.amc.create(dto, userId);
   }
 
   @Post(':id/visits')
-  @Roles(Role.OWNER, Role.MANAGER, Role.TECHNICIAN)
+  @Permissions('amc.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Record an AMC service visit (decrements remaining visits)' })
   recordVisit(@Param('id') id: string, @Body(new ZodValidationPipe(createAmcVisitSchema)) dto: CreateAmcVisitInput, @CurrentUser('id') userId: string) {

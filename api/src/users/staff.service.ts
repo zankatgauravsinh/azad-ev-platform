@@ -11,7 +11,7 @@ import {
   type StaffDto,
   type UpdateStaffInput,
 } from '@azad/shared';
-import { UsersRepository } from './users.repository';
+import { UsersRepository, type UserWithRole } from './users.repository';
 import { PasswordService } from '../auth/password.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 
@@ -44,14 +44,18 @@ export class StaffService {
     if (await this.repo.findByEmail(email)) {
       throw new ConflictException('A user with this email already exists');
     }
+    // Resolve the dynamic role BEFORE creating the user so roleId is set atomically with the row —
+    // a staff member must never exist without the role that grants their permissions.
+    const resolved = await this.resolveRole({ role: dto.role, roleId: dto.roleId });
     const passwordHash = await this.passwords.hash(dto.password);
-    let user: User;
+    let user: UserWithRole;
     try {
       user = await this.repo.create({
         name: dto.name,
         email,
         phone: dto.phone ?? null,
-        role: dto.role,
+        role: resolved.roleEnum ?? dto.role,
+        roleId: resolved.roleId,
         passwordHash,
         isActive: true,
         createdById: actor.id,
@@ -94,7 +98,12 @@ export class StaffService {
     this.assertOwner(actor);
     const target = await this.loadOrThrow(id);
 
-    const demotingOwner = dto.role !== undefined && target.role === Role.OWNER && dto.role !== Role.OWNER;
+    // A role change may come as a legacy enum (`role`) or an explicit `roleId` (custom/system role).
+    const roleRequested = dto.role !== undefined || dto.roleId !== undefined;
+    const resolved = roleRequested ? await this.resolveRole({ role: dto.role, roleId: dto.roleId }) : undefined;
+
+    // "Demotion" = the target is an OWNER and the new role is not an owner role (whichever form it came in).
+    const demotingOwner = resolved !== undefined && target.role === Role.OWNER && !resolved.isOwner;
     if (demotingOwner) {
       if (target.id === actor.id) throw new ForbiddenException('You cannot change your own role');
       await this.assertNotLastActiveOwner(target, 'demote');
@@ -103,11 +112,15 @@ export class StaffService {
     const data: Prisma.UserUpdateInput = { updatedById: actor.id };
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.phone !== undefined) data.phone = dto.phone;
-    if (dto.role !== undefined) data.role = dto.role;
+    if (resolved) {
+      data.roleRef = { connect: { id: resolved.roleId } };
+      // Keep the legacy enum in sync for system roles; leave it untouched for custom roles (no enum).
+      if (resolved.roleEnum !== undefined) data.role = resolved.roleEnum;
+    }
     const updated = await this.repo.update(id, data);
 
-    const roleChanged = dto.role !== undefined && dto.role !== target.role;
-    await this.audit(actor, ActivityAction.UPDATE, updated, roleChanged ? `Updated staff ${updated.name}; role ${target.role} → ${updated.role}` : `Updated staff ${updated.name}`);
+    const roleChanged = resolved !== undefined && resolved.roleId !== target.roleId;
+    await this.audit(actor, ActivityAction.UPDATE, updated, roleChanged ? `Updated staff ${updated.name}; role → ${updated.role}` : `Updated staff ${updated.name}`);
     return StaffService.toDto(updated);
   }
 
@@ -143,7 +156,31 @@ export class StaffService {
     if (actor.role !== Role.OWNER) throw new ForbiddenException('Only an owner can manage staff');
   }
 
-  private async loadOrThrow(id: string): Promise<User> {
+  /**
+   * Maps a role request to the AppRole to assign (effective permissions) + the legacy enum to store.
+   * Tenant isolation: both lookups go through the tenant-scoped repository, so an id/key from another
+   * company is invisible → "Role not found". An explicit `roleId` wins over the enum.
+   *  - roleId → that exact role; its enum (for a system role) keeps User.role in sync, else left as-is.
+   *  - role (enum) → this company's seeded system role for that enum.
+   * `isOwner` lets update's last-owner / self-demotion guards reason about either form.
+   */
+  private async resolveRole(input: { role?: Role; roleId?: string }): Promise<{ roleId: string; roleEnum?: Role; isOwner: boolean }> {
+    if (input.roleId !== undefined) {
+      const role = await this.repo.findRoleById(input.roleId);
+      if (!role || role.deletedAt) throw new BadRequestException('Role not found');
+      const roleEnum = role.isSystem && role.key ? (role.key as Role) : undefined;
+      return { roleId: role.id, roleEnum, isOwner: role.key === Role.OWNER };
+    }
+    if (input.role !== undefined) {
+      const role = await this.repo.findSystemRoleByKey(input.role);
+      // RBAC must be initialized (see `npm run rbac:init`); failing here beats creating a role-less user.
+      if (!role) throw new BadRequestException('Roles are not initialized for this company');
+      return { roleId: role.id, roleEnum: input.role, isOwner: input.role === Role.OWNER };
+    }
+    throw new BadRequestException('No role provided');
+  }
+
+  private async loadOrThrow(id: string): Promise<UserWithRole> {
     // Tenant-scoped: a user in another company reads back as null → NotFound (no cross-tenant leak).
     const user = await this.repo.findById(id);
     if (!user) throw new NotFoundException('Staff member not found');
@@ -169,13 +206,15 @@ export class StaffService {
   }
 
   /** Client-safe projection — never leaks passwordHash / refreshTokenHash. */
-  static toDto(user: User): StaffDto {
+  static toDto(user: UserWithRole): StaffDto {
     return {
       id: user.id,
       name: user.name,
       email: user.email,
       phone: user.phone,
       role: user.role as Role,
+      roleId: user.roleId ?? null,
+      roleName: user.roleRef?.name ?? null,
       isActive: user.isActive,
       lastLoginAt: user.lastLoginAt ? user.lastLoginAt.toISOString() : null,
       createdAt: user.createdAt.toISOString(),

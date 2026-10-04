@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { SERVICE_JOB_TYPES, SERVICE_PRIORITIES } from '@azad/shared';
+import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { titleCase } from '@/lib/labels';
 import { useDebounce } from '@/hooks/use-debounce';
@@ -21,6 +22,7 @@ interface ComplaintRow {
 }
 
 export function ServiceJobFormDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; onCreated: (id: string) => void }): JSX.Element {
+  const canAssign = useCan('service.assign'); // technician lookup/assignment (GET /service/jobs/technicians)
   const [customerId, setCustomerId] = useState('');
   const [unitId, setUnitId] = useState('');
   const [vinSearch, setVinSearch] = useState('');
@@ -34,7 +36,7 @@ export function ServiceJobFormDialog({ open, onOpenChange, onCreated }: { open: 
 
   const vinQ = useDebounce(vinSearch);
   const { data: units } = useQuery({ queryKey: ['service', 'unit-search', vinQ], queryFn: () => inventoryApi.list({ q: vinQ || undefined, pageSize: 6 }), enabled: open && vinQ.length > 1 });
-  const { data: technicians } = useQuery({ queryKey: ['service', 'technicians'], queryFn: serviceApi.technicians, enabled: open });
+  const { data: technicians } = useQuery({ queryKey: ['service', 'technicians'], queryFn: serviceApi.technicians, enabled: open && canAssign });
 
   const setComplaint = (i: number, patch: Partial<ComplaintRow>): void => setComplaints((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
 
@@ -100,16 +102,18 @@ export function ServiceJobFormDialog({ open, onOpenChange, onCreated }: { open: 
               <SelectContent>{SERVICE_PRIORITIES.map((p) => <SelectItem key={p} value={p}>{titleCase(p)}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5">
-            <Label>Technician</Label>
-            <Select value={technicianId || 'none'} onValueChange={(v) => setTechnicianId(v === 'none' ? '' : v)}>
-              <SelectTrigger><SelectValue placeholder="Unassigned" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Unassigned</SelectItem>
-                {(technicians ?? []).map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
+          {canAssign && (
+            <div className="space-y-1.5">
+              <Label>Technician</Label>
+              <Select value={technicianId || 'none'} onValueChange={(v) => setTechnicianId(v === 'none' ? '' : v)}>
+                <SelectTrigger><SelectValue placeholder="Unassigned" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Unassigned</SelectItem>
+                  {(technicians ?? []).map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-1.5"><Label>Odometer (km)</Label><Input type="number" min={0} value={odometerKm} onChange={(e) => setOdometerKm(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Scheduled date</Label><Input type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} /></div>
         </div>

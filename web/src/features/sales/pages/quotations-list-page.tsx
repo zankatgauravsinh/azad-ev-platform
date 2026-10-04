@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Copy, FileText, MoreHorizontal, Plus, Search, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
 import { QUOTATION_STATUSES, QuotationStatus, type ListQuotationsQuery } from '@azad/shared';
+import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaise } from '@/lib/money';
 import { saveBlob } from '@/lib/download';
@@ -24,6 +25,9 @@ import { ConvertQuotationDialog } from '../components/convert-quotation-dialog';
 export function QuotationsListPage(): JSX.Element {
   const navigate = useNavigate();
   const invalidate = useSalesInvalidate();
+  const canCreate = useCan('quotations.create');
+  const canUpdate = useCan('quotations.update');
+  const canConvert = useCan('quotations.convert');
   const [search, setSearch] = useState('');
   const q = useDebounce(search);
   const [status, setStatus] = useState<QuotationStatus | 'ALL'>('ALL');
@@ -60,9 +64,9 @@ export function QuotationsListPage(): JSX.Element {
           <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
             <DropdownMenuItem onClick={() => downloadPdf(r.id, r.code)}><FileText className="h-4 w-4" /> Download PDF</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => duplicate(r.id)}><Copy className="h-4 w-4" /> Duplicate</DropdownMenuItem>
-            {!r.booking && <DropdownMenuItem onClick={() => setConvertId(r.id)}><ShoppingCart className="h-4 w-4" /> Convert to booking</DropdownMenuItem>}
-            {r.status === QuotationStatus.DRAFT && <DropdownMenuItem onClick={() => setStatusOf(r.id, QuotationStatus.SENT)}>Mark Sent</DropdownMenuItem>}
+            {canCreate && <DropdownMenuItem onClick={() => duplicate(r.id)}><Copy className="h-4 w-4" /> Duplicate</DropdownMenuItem>}
+            {canConvert && !r.booking && <DropdownMenuItem onClick={() => setConvertId(r.id)}><ShoppingCart className="h-4 w-4" /> Convert to booking</DropdownMenuItem>}
+            {canUpdate && r.status === QuotationStatus.DRAFT && <DropdownMenuItem onClick={() => setStatusOf(r.id, QuotationStatus.SENT)}>Mark Sent</DropdownMenuItem>}
           </DropdownMenuContent>
         </DropdownMenu>
       ),
@@ -71,7 +75,7 @@ export function QuotationsListPage(): JSX.Element {
 
   return (
     <div>
-      <PageHeader title="Quotations" description="Estimates that convert into bookings." actions={<Button onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" /> New quotation</Button>} />
+      <PageHeader title="Quotations" description="Estimates that convert into bookings." actions={canCreate ? <Button onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" /> New quotation</Button> : undefined} />
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -83,7 +87,7 @@ export function QuotationsListPage(): JSX.Element {
         </Select>
       </div>
       <DataTable columns={columns} rows={data?.data ?? []} getRowId={(r) => r.id} page={data?.meta} onPageChange={setPage} loading={isLoading || isFetching} onRowClick={(r) => navigate(`/quotations/${r.id}`)}
-        emptyState={<EmptyState icon={FileText} title="No quotations" description="Create your first estimate." action={<Button onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" /> New quotation</Button>} />} />
+        emptyState={<EmptyState icon={FileText} title="No quotations" description="Create your first estimate." action={canCreate ? <Button onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" /> New quotation</Button> : undefined} />} />
       <QuotationFormDialog open={formOpen} onOpenChange={setFormOpen} />
       {convertId && <ConvertQuotationDialog open={Boolean(convertId)} onOpenChange={(o) => !o && setConvertId(null)} quotationId={convertId} />}
     </div>

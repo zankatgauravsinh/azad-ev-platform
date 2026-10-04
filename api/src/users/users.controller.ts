@@ -1,7 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
-  Role,
   createStaffSchema,
   listStaffQuerySchema,
   resetStaffPasswordSchema,
@@ -14,7 +13,7 @@ import {
   type SetStaffActiveInput,
   type UpdateStaffInput,
 } from '@azad/shared';
-import { Roles } from '../common/decorators/roles.decorator';
+import { Permissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { StaffService, type StaffActor } from './staff.service';
@@ -22,13 +21,13 @@ import { StaffService, type StaffActor } from './staff.service';
 const actorOf = (u: AuthUser): StaffActor => ({ id: u.id, role: u.role });
 
 /**
- * Staff management — OWNER-only (class-level @Roles is defense-in-depth; StaffService
- * re-asserts OWNER). The actor (id + role) comes only from the authenticated token, never
+ * Staff management — gated by @Permissions('staff.manage') (OWNER-only in the seed; StaffService
+ * re-asserts OWNER as a second layer). The actor (id + role) comes only from the authenticated token, never
  * the body/query, and companyId is never accepted from the client (tenant middleware scopes it).
  */
 @ApiTags('Staff')
 @ApiBearerAuth('access-token')
-@Roles(Role.OWNER)
+@Permissions('staff.manage')
 @Controller('users/staff')
 export class UsersController {
   constructor(private readonly staff: StaffService) {}

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ClipboardList, Plus, Search } from 'lucide-react';
 import { BOOKING_STATUSES, BookingStatus, type ListBookingsQuery } from '@azad/shared';
+import { useCan } from '@/features/auth/auth-context';
 import { formatPaise } from '@/lib/money';
 import { titleCase } from '@/lib/labels';
 import { useDebounce } from '@/hooks/use-debounce';
@@ -18,6 +19,7 @@ import { BookingFormDialog } from '../components/booking-form-dialog';
 
 export function BookingsListPage(): JSX.Element {
   const navigate = useNavigate();
+  const canCreate = useCan('bookings.create');
   const [search, setSearch] = useState('');
   const q = useDebounce(search);
   const [status, setStatus] = useState<BookingStatus | 'ALL'>('ALL');
@@ -39,7 +41,7 @@ export function BookingsListPage(): JSX.Element {
 
   return (
     <div>
-      <PageHeader title="Bookings" description="Confirmed orders through to delivery." actions={<Button onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" /> New booking</Button>} />
+      <PageHeader title="Bookings" description="Confirmed orders through to delivery." actions={canCreate ? <Button onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" /> New booking</Button> : undefined} />
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -51,7 +53,7 @@ export function BookingsListPage(): JSX.Element {
         </Select>
       </div>
       <DataTable columns={columns} rows={data?.data ?? []} getRowId={(r) => r.id} page={data?.meta} onPageChange={setPage} loading={isLoading || isFetching} onRowClick={(r) => navigate(`/bookings/${r.id}`)}
-        emptyState={<EmptyState icon={ClipboardList} title="No bookings" description="Create a booking to allocate a scooter." action={<Button onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" /> New booking</Button>} />} />
+        emptyState={<EmptyState icon={ClipboardList} title="No bookings" description="Create a booking to allocate a scooter." action={canCreate ? <Button onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" /> New booking</Button> : undefined} />} />
       <BookingFormDialog open={formOpen} onOpenChange={setFormOpen} />
     </div>
   );

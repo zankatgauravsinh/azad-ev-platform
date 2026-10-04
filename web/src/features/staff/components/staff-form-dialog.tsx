@@ -1,10 +1,12 @@
+import { useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm, type Resolver } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { ROLES, Role, type StaffDto } from '@azad/shared';
+import { Role, type RoleListItem, type StaffDto } from '@azad/shared';
 import { apiErrorMessage } from '@/lib/api-client';
-import { roleLabel } from '@/lib/labels';
+import { useAuth } from '@/features/auth/auth-context';
+import { useRoles } from '@/features/roles/hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,7 +24,8 @@ import { useCreateStaff, useUpdateStaff } from '../hooks';
 const baseFields = {
   name: z.string().trim().min(1, 'Name is required'),
   phone: z.string().trim().max(20, 'Too long').or(z.literal('')).optional(),
-  role: z.enum(ROLES as [Role, ...Role[]]),
+  // The staff member is assigned a company AppRole (system or custom) — it drives their permissions.
+  roleId: z.string().uuid('Select a role'),
 };
 // Password rule mirrors the backend (staffPassword): ≥8 chars, a letter and a number.
 const createSchema = z.object({
@@ -51,8 +54,18 @@ export function StaffFormDialog({
   disableRole?: boolean;
 }): JSX.Element {
   const isEdit = Boolean(staff);
+  const { can } = useAuth();
   const create = useCreateStaff();
   const update = useUpdateStaff(staff?.id ?? '');
+
+  // Only an owner (staff.manage) can manage staff, so only then is the role catalog worth fetching.
+  // Gate on `open` so the list isn't queried while the dialog is closed.
+  const { data: rolesPage, isLoading: rolesLoading } = useRoles({ page: 1, pageSize: 100 }, open && can('staff.manage'));
+  const roles = useMemo<RoleListItem[]>(() => {
+    const rows = rolesPage?.data ?? [];
+    // System roles first (Owner, Manager, …), then custom roles; each group alphabetical.
+    return [...rows].sort((a, b) => Number(b.isSystem) - Number(a.isSystem) || a.name.localeCompare(b.name));
+  }, [rolesPage]);
 
   const {
     control,
@@ -65,7 +78,7 @@ export function StaffFormDialog({
     defaultValues: {
       name: staff?.name ?? '',
       phone: staff?.phone ?? '',
-      role: staff?.role ?? Role.SALES_EXECUTIVE,
+      roleId: staff?.roleId ?? '',
       email: '',
       password: '',
     },
@@ -73,15 +86,18 @@ export function StaffFormDialog({
 
   const onSubmit = handleSubmit(async (v) => {
     try {
+      // Always send the selected AppRole id. `role` is the required legacy enum: for a system role the
+      // backend overrides it from the role's key; for a custom role (no enum) it stays the fallback.
       if (isEdit) {
-        await update.mutateAsync({ name: v.name, phone: v.phone ? v.phone : null, role: v.role });
+        await update.mutateAsync({ name: v.name, phone: v.phone ? v.phone : null, role: Role.SALES_EXECUTIVE, roleId: v.roleId });
         toast.success('Staff updated');
       } else {
         await create.mutateAsync({
           name: v.name,
           email: v.email,
           phone: v.phone || undefined,
-          role: v.role,
+          role: Role.SALES_EXECUTIVE,
+          roleId: v.roleId,
           password: v.password,
         });
         // The temporary password is never displayed again or stored — the owner shares it out of band.
@@ -120,19 +136,19 @@ export function StaffFormDialog({
           <Field label="Phone (optional)" error={errors.phone?.message}>
             <Input inputMode="tel" autoComplete="off" {...register('phone')} />
           </Field>
-          <Field label="Role" error={errors.role?.message}>
+          <Field label="Role" error={errors.roleId?.message}>
             <Controller
               control={control}
-              name="role"
+              name="roleId"
               render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange} disabled={disableRole}>
+                <Select value={field.value} onValueChange={field.onChange} disabled={disableRole || rolesLoading}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select role" />
+                    <SelectValue placeholder={rolesLoading ? 'Loading roles…' : 'Select role'} />
                   </SelectTrigger>
                   <SelectContent>
-                    {ROLES.map((r) => (
-                      <SelectItem key={r} value={r}>
-                        {roleLabel(r)}
+                    {roles.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.name} <span className="text-xs text-muted-foreground">· {r.isSystem ? 'System' : 'Custom'}</span>
                       </SelectItem>
                     ))}
                   </SelectContent>

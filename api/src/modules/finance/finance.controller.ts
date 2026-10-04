@@ -21,7 +21,7 @@ import {
   type UpdateExpenseCategoryInput,
   type UpdateRecurringExpenseInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
@@ -32,11 +32,10 @@ import { FinanceDashboardService } from './finance-dashboard.service';
 import { FinancePdfService } from './finance-pdf.service';
 import { RecurringExpensesService } from './recurring-expenses.service';
 import { MonthlyClosingService } from './monthly-closing.service';
-import { FINANCE_READ, FINANCE_WRITE } from './finance.roles';
 
 @ApiTags('Finance')
 @ApiBearerAuth('access-token')
-@Roles(...FINANCE_READ)
+@Permissions('finance.view')
 @Controller('finance')
 export class FinanceController {
   constructor(
@@ -63,13 +62,13 @@ export class FinanceController {
   }
 
   @Post('categories')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('finance.manage')
   createCategory(@Body(new ZodValidationPipe(createExpenseCategorySchema)) dto: CreateExpenseCategoryInput, @CurrentUser('id') userId: string) {
     return this.categories.create(dto, userId);
   }
 
   @Patch('categories/:id')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('finance.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   updateCategory(@Param('id') id: string, @Body(new ZodValidationPipe(updateExpenseCategorySchema)) dto: UpdateExpenseCategoryInput, @CurrentUser('id') userId: string) {
     return this.categories.update(id, dto, userId);
@@ -91,7 +90,7 @@ export class FinanceController {
   }
 
   @Post('cash-book/adjustments')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('finance.manage')
   @ApiOperation({ summary: 'Record a manual cash adjustment (signed paise)' })
   adjust(@Body(new ZodValidationPipe(createCashAdjustmentSchema)) dto: CreateCashAdjustmentInput, @CurrentUser('id') userId: string) {
     return this.cashbook.createAdjustment(dto, userId);
@@ -117,20 +116,20 @@ export class FinanceController {
   }
 
   @Post('recurring')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('finance.manage')
   createRecurring(@Body(new ZodValidationPipe(createRecurringExpenseSchema)) dto: CreateRecurringExpenseInput, @CurrentUser('id') userId: string) {
     return this.recurring.create(dto, userId);
   }
 
   @Patch('recurring/:id')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('finance.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   updateRecurring(@Param('id') id: string, @Body(new ZodValidationPipe(updateRecurringExpenseSchema)) dto: UpdateRecurringExpenseInput, @CurrentUser('id') userId: string) {
     return this.recurring.update(id, dto, userId);
   }
 
   @Delete('recurring/:id')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('finance.manage')
   @HttpCode(204)
   @ApiParam({ name: 'id', format: 'uuid' })
   async removeRecurring(@Param('id') id: string, @CurrentUser('id') userId: string): Promise<void> {
@@ -138,7 +137,7 @@ export class FinanceController {
   }
 
   @Post('recurring/run')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('finance.manage')
   @ApiOperation({ summary: 'Generate this month’s expenses from active templates (idempotent)' })
   runRecurring(@CurrentUser('id') userId: string) {
     return this.recurring.runDue(userId);
@@ -152,14 +151,14 @@ export class FinanceController {
   }
 
   @Post('closings')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('finance.manage')
   @ApiOperation({ summary: 'Close (lock) a month — transactions inside become read-only' })
   closeMonth(@Body(new ZodValidationPipe(closeMonthSchema)) dto: CloseMonthInput, @CurrentUser('id') userId: string) {
     return this.closings.close(dto, userId);
   }
 
   @Delete('closings/:id')
-  @Roles(...FINANCE_WRITE)
+  @Permissions('finance.manage')
   @HttpCode(204)
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Reopen a closed month' })

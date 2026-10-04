@@ -2,7 +2,6 @@ import { Body, Controller, Get, Param, Patch, Post, Query, Res } from '@nestjs/c
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import {
-  Role,
   completeFreeServiceSchema,
   createWarrantySchema,
   listWarrantiesQuerySchema,
@@ -12,7 +11,7 @@ import {
   type ListWarrantiesQuery,
   type UpdateWarrantyInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
@@ -21,7 +20,7 @@ import { WarrantyPdfService } from './warranty-pdf.service';
 
 @ApiTags('Warranty')
 @ApiBearerAuth('access-token')
-@Roles(Role.OWNER, Role.MANAGER, Role.SALES_EXECUTIVE, Role.TECHNICIAN)
+@Permissions('warranty.view')
 @Controller('warranties')
 export class WarrantiesController {
   constructor(
@@ -61,21 +60,21 @@ export class WarrantiesController {
   }
 
   @Post()
-  @Roles(Role.OWNER, Role.MANAGER, Role.TECHNICIAN)
+  @Permissions('warranty.create')
   @ApiOperation({ summary: 'Create a warranty for a delivered vehicle (seeds coverage + free services)' })
   create(@Body(new ZodValidationPipe(createWarrantySchema)) dto: CreateWarrantyInput, @CurrentUser('id') userId: string) {
     return this.warranty.create(dto, userId);
   }
 
   @Post('generate')
-  @Roles(Role.OWNER, Role.MANAGER, Role.TECHNICIAN)
+  @Permissions('warranty.create')
   @ApiOperation({ summary: 'Backfill warranties for delivered vehicles that have none (idempotent)' })
   generate(@CurrentUser('id') userId: string) {
     return this.warranty.generateMissing(userId);
   }
 
   @Patch(':id')
-  @Roles(Role.OWNER, Role.MANAGER, Role.TECHNICIAN)
+  @Permissions('warranty.update')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Update coverage / notes / status' })
   update(@Param('id') id: string, @Body(new ZodValidationPipe(updateWarrantySchema)) dto: UpdateWarrantyInput, @CurrentUser('id') userId: string) {
@@ -83,7 +82,7 @@ export class WarrantiesController {
   }
 
   @Post(':id/cancel')
-  @Roles(Role.OWNER, Role.MANAGER)
+  @Permissions('warranty.cancel')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Cancel a warranty' })
   cancel(@Param('id') id: string, @CurrentUser('id') userId: string) {
@@ -91,7 +90,7 @@ export class WarrantiesController {
   }
 
   @Patch('free-service/:id')
-  @Roles(Role.OWNER, Role.MANAGER, Role.TECHNICIAN)
+  @Permissions('warranty.update')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Mark a free service completed / missed' })
   completeFreeService(@Param('id') id: string, @Body(new ZodValidationPipe(completeFreeServiceSchema)) dto: CompleteFreeServiceInput, @CurrentUser('id') userId: string) {

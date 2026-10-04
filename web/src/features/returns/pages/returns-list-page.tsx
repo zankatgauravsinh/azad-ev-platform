@@ -19,8 +19,9 @@ import { CreateReturnDialog } from '../components/create-return-dialog';
 const iso = (d: string | null): string => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
 
 export function ReturnsListPage(): JSX.Element {
-  const { user } = useAuth();
-  const canRequest = user?.role === 'OWNER' || user?.role === 'MANAGER' || user?.role === 'SALES_EXECUTIVE';
+  const { can } = useAuth();
+  const canView = can('returns.view');
+  const canCreate = can('returns.create'); // POST /returns (request a return)
   const [params] = useSearchParams();
   const customerId = params.get('customerId') ?? undefined;
 
@@ -31,7 +32,7 @@ export function ReturnsListPage(): JSX.Element {
   const [createOpen, setCreateOpen] = useState(false);
 
   const query = useMemo(() => ({ page, pageSize: 20, status: status === 'ALL' ? undefined : status, customerId }), [page, status, customerId]);
-  const { data, isLoading, isFetching } = useReturns(query);
+  const { data, isLoading, isFetching } = useReturns(query, canView);
 
   // The list API filters by status/customer server-side; this box quick-filters the loaded page.
   const rows = useMemo(() => {
@@ -53,7 +54,7 @@ export function ReturnsListPage(): JSX.Element {
   return (
     <div>
       <PageHeader title="Vehicle Returns" description="Post-delivery sales returns — request, inspect, approve and complete."
-        actions={canRequest ? <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Request return</Button> : undefined} />
+        actions={canCreate ? <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Request return</Button> : undefined} />
 
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">

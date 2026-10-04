@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Eye, FileText, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { DOCUMENT_TYPES, type DocumentType } from '@azad/shared';
+import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -15,6 +16,7 @@ const mediaUrl = (url: string): string => (url.startsWith('http') ? url : `${API
 
 export function DocumentsPanel({ customerId }: { customerId: string }): JSX.Element {
   const qc = useQueryClient();
+  const canEdit = useCan('customers.update');
   const { data: documents = [] } = useCustomerDocuments(customerId);
   const addInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
@@ -62,15 +64,17 @@ export function DocumentsPanel({ customerId }: { customerId: string }): JSX.Elem
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Select value={type} onValueChange={(v) => setType(v as DocumentType)}>
-          <SelectTrigger className="h-8 w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>{DOCUMENT_TYPES.map((t) => <SelectItem key={t} value={t}>{t.replace(/_/g, ' ')}</SelectItem>)}</SelectContent>
-        </Select>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => addInput.current?.click()}><Upload className="h-4 w-4" /> Upload</Button>
-        <input ref={addInput} type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="hidden" onChange={(e) => add(e.target.files?.[0])} />
-        <input ref={replaceInput} type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="hidden" onChange={(e) => replace(e.target.files?.[0])} />
-      </div>
+      {canEdit && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Select value={type} onValueChange={(v) => setType(v as DocumentType)}>
+            <SelectTrigger className="h-8 w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>{DOCUMENT_TYPES.map((t) => <SelectItem key={t} value={t}>{t.replace(/_/g, ' ')}</SelectItem>)}</SelectContent>
+          </Select>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => addInput.current?.click()}><Upload className="h-4 w-4" /> Upload</Button>
+          <input ref={addInput} type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="hidden" onChange={(e) => add(e.target.files?.[0])} />
+          <input ref={replaceInput} type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="hidden" onChange={(e) => replace(e.target.files?.[0])} />
+        </div>
+      )}
 
       {documents.length === 0 ? (
         <EmptyState icon={FileText} title="No documents" description="Aadhaar, DL, PAN, finance papers, insurance…" />
@@ -85,8 +89,8 @@ export function DocumentsPanel({ customerId }: { customerId: string }): JSX.Elem
               </div>
               <div className="flex shrink-0 gap-1">
                 <a href={mediaUrl(doc.url)} target="_blank" rel="noreferrer" aria-label="Preview"><Eye className="h-4 w-4 text-muted-foreground hover:text-foreground" /></a>
-                <button type="button" onClick={() => { setReplacingId(doc.id); replaceInput.current?.click(); }} aria-label="Replace"><RefreshCw className="h-4 w-4 text-muted-foreground hover:text-foreground" /></button>
-                <button type="button" onClick={() => remove(doc.id)} aria-label="Delete"><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></button>
+                {canEdit && <button type="button" onClick={() => { setReplacingId(doc.id); replaceInput.current?.click(); }} aria-label="Replace"><RefreshCw className="h-4 w-4 text-muted-foreground hover:text-foreground" /></button>}
+                {canEdit && <button type="button" onClick={() => remove(doc.id)} aria-label="Delete"><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></button>}
               </div>
             </li>
           ))}

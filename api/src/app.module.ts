@@ -27,8 +27,11 @@ import { CompanySettingsModule } from './modules/settings/company-settings.modul
 import { PdfBrandModule } from './common/pdf/pdf-brand.module';
 import { ReturnsModule } from './modules/returns/returns.module';
 import { StaffModule } from './users/staff.module';
+import { RolesModule } from './modules/roles/roles.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
+import { PermissionsGuard } from './common/guards/permissions.guard';
+import { RbacModule } from './common/rbac/rbac.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
@@ -63,12 +66,16 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     PdfBrandModule,
     ReturnsModule,
     StaffModule,
+    RolesModule,
+    RbacModule,
   ],
   providers: [
     // Order matters: authenticate → throttle → authorize.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
+    // Permission-based guard sits after RolesGuard; it is a no-op until routes adopt @Permissions.
+    { provide: APP_GUARD, useClass: PermissionsGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     // Tenant context must wrap the handler (outermost) so every query is scoped.
     { provide: APP_INTERCEPTOR, useClass: TenantInterceptor },

@@ -23,8 +23,13 @@ type Action = 'inspect' | 'reject' | 'cancel' | 'approve' | 'complete' | null;
 
 export function ReturnDetailDialog({ id, onOpenChange }: { id: string | null; onOpenChange: (o: boolean) => void }): JSX.Element {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const canManage = user?.role === 'OWNER' || user?.role === 'MANAGER';
+  const { can } = useAuth();
+  // Each return action is an independent backend permission — do not collapse into one flag.
+  const canInspect = can('returns.inspect');
+  const canApprove = can('returns.approve');
+  const canComplete = can('returns.complete');
+  const canReject = can('returns.reject');
+  const canCancel = can('returns.cancel');
   const { data: w, isLoading, isError, error } = useReturn(id ?? undefined);
   const { inspect, approve, reject, cancel } = useReturnMutations();
   const [action, setAction] = useState<Action>(null);
@@ -56,14 +61,15 @@ export function ReturnDetailDialog({ id, onOpenChange }: { id: string | null; on
               <DialogDescription>Post-delivery vehicle return · {w.customerName} · {w.vin}</DialogDescription>
             </DialogHeader>
 
-            {/* State- and role-aware actions. Hidden buttons are convenience only — the API enforces. */}
-            {canManage && (
+            {/* State- and permission-aware actions. Each gate is independent; status conditions preserve the
+                backend state machine, and the API remains authoritative (incl. the requester≠approver rule). */}
+            {(canInspect || canApprove || canComplete || canReject || canCancel) && (
               <div className="flex flex-wrap gap-2">
-                {w.status === 'REQUESTED' && <Button size="sm" onClick={() => setAction('inspect')}><ClipboardCheck className="h-4 w-4" /> Record inspection</Button>}
-                {w.status === 'INSPECTION' && <Button size="sm" onClick={() => setAction('approve')}><ThumbsUp className="h-4 w-4" /> Approve</Button>}
-                {w.status === 'APPROVED' && <Button size="sm" onClick={() => setAction('complete')}><CheckCircle2 className="h-4 w-4" /> Complete return</Button>}
-                {(w.status === 'REQUESTED' || w.status === 'INSPECTION') && <Button size="sm" variant="outline" className="text-destructive" onClick={() => setAction('reject')}><XCircle className="h-4 w-4" /> Reject</Button>}
-                {(w.status === 'REQUESTED' || w.status === 'INSPECTION' || w.status === 'APPROVED') && <Button size="sm" variant="outline" onClick={() => setAction('cancel')}><Ban className="h-4 w-4" /> Cancel</Button>}
+                {canInspect && w.status === 'REQUESTED' && <Button size="sm" onClick={() => setAction('inspect')}><ClipboardCheck className="h-4 w-4" /> Record inspection</Button>}
+                {canApprove && w.status === 'INSPECTION' && <Button size="sm" onClick={() => setAction('approve')}><ThumbsUp className="h-4 w-4" /> Approve</Button>}
+                {canComplete && w.status === 'APPROVED' && <Button size="sm" onClick={() => setAction('complete')}><CheckCircle2 className="h-4 w-4" /> Complete return</Button>}
+                {canReject && (w.status === 'REQUESTED' || w.status === 'INSPECTION') && <Button size="sm" variant="outline" className="text-destructive" onClick={() => setAction('reject')}><XCircle className="h-4 w-4" /> Reject</Button>}
+                {canCancel && (w.status === 'REQUESTED' || w.status === 'INSPECTION' || w.status === 'APPROVED') && <Button size="sm" variant="outline" onClick={() => setAction('cancel')}><Ban className="h-4 w-4" /> Cancel</Button>}
               </div>
             )}
 

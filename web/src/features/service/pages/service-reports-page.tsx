@@ -1,12 +1,17 @@
+import { useCan } from '@/features/auth/auth-context';
 import { formatPaise } from '@/lib/money';
 import { PageHeader } from '@/components/common/page-header';
 import { StatCard } from '@/components/common/stat-card';
 import { Card, CardContent } from '@/components/ui/card';
+import { EmptyState } from '@/components/common/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useServiceReports } from '../hooks';
 
 export function ServiceReportsPage(): JSX.Element {
-  const { data, isLoading } = useServiceReports();
+  // Service reports read is gated by reports.view (the GET /service/reports boundary).
+  const canView = useCan('reports.view');
+  const { data, isLoading } = useServiceReports(canView);
+  if (!canView) return <EmptyState title="Service Reports" description="You don’t have permission to view service reports." />;
   if (isLoading || !data) return <div className="space-y-4"><Skeleton className="h-8 w-56" /><Skeleton className="h-40 w-full" /></div>;
 
   return (

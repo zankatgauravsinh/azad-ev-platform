@@ -5,13 +5,12 @@ import {
   createSparePartSchema,
   listSparePartsQuerySchema,
   updateSparePartSchema,
-  Role,
   type AdjustStockInput,
   type CreateSparePartInput,
   type ListSparePartsQuery,
   type UpdateSparePartInput,
 } from '@azad/shared';
-import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { SparePartsService } from './spare-parts.service';
@@ -23,34 +22,34 @@ export class SparePartsController {
   constructor(private readonly parts: SparePartsService) {}
 
   @Get()
-  @Roles(Role.OWNER, Role.MANAGER, Role.TECHNICIAN)
+  @Permissions('spareparts.view')
   @ApiOperation({ summary: 'List spare parts (filter by q / lowStock)' })
   list(@Query(new ZodValidationPipe(listSparePartsQuerySchema)) query: ListSparePartsQuery) {
     return this.parts.list(query);
   }
 
   @Get(':id')
-  @Roles(Role.OWNER, Role.MANAGER, Role.TECHNICIAN)
+  @Permissions('spareparts.view')
   @ApiParam({ name: 'id', format: 'uuid' })
   getById(@Param('id') id: string) {
     return this.parts.getById(id);
   }
 
   @Post()
-  @Roles(Role.OWNER, Role.MANAGER)
+  @Permissions('spareparts.manage')
   create(@Body(new ZodValidationPipe(createSparePartSchema)) dto: CreateSparePartInput, @CurrentUser('id') userId: string) {
     return this.parts.create(dto, userId);
   }
 
   @Patch(':id')
-  @Roles(Role.OWNER, Role.MANAGER)
+  @Permissions('spareparts.manage')
   @ApiParam({ name: 'id', format: 'uuid' })
   update(@Param('id') id: string, @Body(new ZodValidationPipe(updateSparePartSchema)) dto: UpdateSparePartInput, @CurrentUser('id') userId: string) {
     return this.parts.update(id, dto, userId);
   }
 
   @Post(':id/adjust')
-  @Roles(Role.OWNER, Role.MANAGER)
+  @Permissions('spareparts.adjust')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Adjust stock by a delta (+restock / −correction)' })
   adjust(@Param('id') id: string, @Body(new ZodValidationPipe(adjustStockSchema)) dto: AdjustStockInput, @CurrentUser('id') userId: string) {
@@ -58,7 +57,7 @@ export class SparePartsController {
   }
 
   @Delete(':id')
-  @Roles(Role.OWNER, Role.MANAGER)
+  @Permissions('spareparts.manage')
   @HttpCode(204)
   @ApiParam({ name: 'id', format: 'uuid' })
   async remove(@Param('id') id: string, @CurrentUser('id') userId: string): Promise<void> {
