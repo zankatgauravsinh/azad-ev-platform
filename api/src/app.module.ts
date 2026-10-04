@@ -28,6 +28,7 @@ import { PdfBrandModule } from './common/pdf/pdf-brand.module';
 import { ReturnsModule } from './modules/returns/returns.module';
 import { StaffModule } from './users/staff.module';
 import { RolesModule } from './modules/roles/roles.module';
+import { TaxModule } from './modules/tax/tax.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
@@ -67,6 +68,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     ReturnsModule,
     StaffModule,
     RolesModule,
+    TaxModule,
     RbacModule,
   ],
   providers: [

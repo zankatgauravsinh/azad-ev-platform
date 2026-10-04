@@ -1478,6 +1478,8 @@ model CompanySetting {
   gstEnabled    Boolean @default(false)
   gstNumber     String?
   taxPercentage Decimal @default(0) @db.Decimal(5, 2)
+  // GST registration state code (place-of-supply basis for a future tax engine; config only).
+  gstStateCode  String?
 
   // Document prefixes
   invoicePrefix   String @default("INV")
@@ -2167,4 +2169,65 @@ model MonthlyClosing {
 
   @@unique([companyId, year, month])
   @@index([companyId, year, month])
+}
+
+// ─────────────────────────── GST / Tax management (Stage A: config/master data only) ───────────────────────────
+// Reusable tax classification + effective-dated rate master. No calculation, Booking/Sale, invoice,
+// or Delivery behavior depends on these yet — they are configuration consumed by a future tax engine.
+
+enum TaxCodeType {
+  HSN
+  SAC
+}
+
+enum TaxTreatment {
+  TAXABLE
+  EXEMPT
+  NON_TAXABLE
+  NIL_RATED
+}
+
+/// A tax classification (an HSN for goods or SAC for services) with its treatment. Company-scoped.
+model TaxClassification {
+  id          String       @id @default(uuid())
+  companyId   String       @default("")
+  name        String
+  codeType    TaxCodeType
+  /// The HSN/SAC code. Required for TAXABLE; optional otherwise.
+  code        String?
+  treatment   TaxTreatment @default(TAXABLE)
+  description String?
+  isActive    Boolean      @default(true)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  rates TaxRate[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+/// A single combined GST rate for a classification, effective over a date range. The CGST/SGST/IGST
+/// split is NOT stored here — the future engine derives it per transaction from place of supply.
+model TaxRate {
+  id               String            @id @default(uuid())
+  companyId        String            @default("")
+  classificationId String
+  classification   TaxClassification @relation(fields: [classificationId], references: [id], onDelete: Cascade)
+  ratePercent      Decimal           @db.Decimal(5, 2)
+  effectiveFrom    DateTime
+  effectiveTo      DateTime?
+  isActive         Boolean           @default(true)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([classificationId, effectiveFrom])
 }

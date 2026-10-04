@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useBlocker } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
-import { ChevronRight, ImagePlus, KeyRound, Trash2 } from 'lucide-react';
+import { ChevronRight, ImagePlus, KeyRound, Receipt, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   BACKUP_FREQUENCIES, CURRENCIES, DATE_FORMATS, LANGUAGES, TIME_FORMATS, WEEKDAYS,
@@ -38,6 +38,7 @@ export function SettingsPage(): JSX.Element {
   // them with can('settings.branding')); intentionally NOT done here to avoid a structural change.
   const canManageSettings = can('settings.manage');
   const canManageRoles = can('roles.manage');
+  const canViewSettings = can('settings.view');
   const { data: settings, isLoading } = useCompanySettings();
   const update = useUpdateSettings();
 
@@ -114,6 +115,21 @@ export function SettingsPage(): JSX.Element {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">Roles &amp; permissions</p>
                 <p className="text-xs text-muted-foreground">Create custom roles and control exactly what each role can do.</p>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+            </CardContent>
+          </Card>
+        </Link>
+      )}
+
+      {canViewSettings && (
+        <Link to="/settings/gst" className="mb-6 block">
+          <Card className="transition-colors hover:border-accent">
+            <CardContent className="flex items-center gap-3 p-4">
+              <span className="rounded-lg bg-primary/10 p-2 text-primary"><Receipt className="h-5 w-5" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">GST Management</p>
+                <p className="text-xs text-muted-foreground">Tax classifications (HSN/SAC) and effective-dated rates. Configuration only.</p>
               </div>
               <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
             </CardContent>

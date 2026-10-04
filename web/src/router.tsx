@@ -19,6 +19,7 @@ import { SparePartsPage } from '@/features/service/pages/spare-parts-page';
 import { ServiceReportsPage } from '@/features/service/pages/service-reports-page';
 import { SettingsPage } from '@/features/settings/pages/settings-page';
 import { RolesPage } from '@/features/roles/pages/roles-page';
+import { GstManagementPage } from '@/features/tax/pages/gst-management-page';
 import { ReportsPage } from '@/features/reports/pages/reports-page';
 import { WarrantyPage } from '@/features/warranty/pages/warranty-page';
 import { FinancePage } from '@/features/finance/pages/finance-page';
@@ -58,6 +59,7 @@ export const router = createBrowserRouter([
           { path: '/reports', element: <ReportsPage /> },
           { path: '/settings', element: <SettingsPage /> },
           { path: '/settings/roles', element: <RolesPage /> },
+          { path: '/settings/gst', element: <GstManagementPage /> },
           { path: '/staff', element: <StaffListPage /> },
           { path: '*', element: <NotFound /> },
         ],

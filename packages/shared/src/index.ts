@@ -19,3 +19,4 @@ export * from './notification';
 export * from './warranty';
 export * from './finance';
 export * from './delivery';
+export * from './tax';

@@ -21,6 +21,8 @@ const SOFT_DELETE_MODELS = new Set<Prisma.ModelName>([
   'LabourItem',
   'Vendor',
   'ServiceJob',
+  // GST config — classifications are soft-deleted so a future snapshot/audit trail never dangles.
+  'TaxClassification',
 ]);
 
 /** Every model that carries a companyId column (child/join tables are scoped via their parent). */
@@ -43,6 +45,8 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   // Dynamic RBAC — AppRole is company-scoped. Permission is global (system-defined) and
   // RolePermission is reached through the company-scoped AppRole, so neither is listed here.
   'AppRole',
+  // GST / tax config (Stage A). TaxRate is reached per-company too; both carry companyId.
+  'TaxClassification', 'TaxRate',
 ]);
 
 @Injectable()
