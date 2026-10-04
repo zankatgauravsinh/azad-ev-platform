@@ -179,4 +179,77 @@ describe('Sales domain (e2e)', () => {
     await http().post(`/api/v1/bookings/${booking.body.id}/cancel`).set('Authorization', auth()).send({ reason: 'test' }).expect(201);
     expect((await http().get(`/api/v1/inventory/units/${unit.body.id}`).set('Authorization', auth())).body.status).toBe('AVAILABLE');
   });
+
+  it('editing a booking cannot change its commercial terms (pricing frozen after creation)', async () => {
+    const unit = await http()
+      .post('/api/v1/inventory/units')
+      .set('Authorization', auth())
+      .send({ modelId, variant: `E2E-edit-${stamp}`, colour: 'Green', vin: `EDITC${stamp}`, motorNumber: `EDM${stamp}`, batteryNumber: `EDB${stamp}` })
+      .expect(201);
+    const created = await http()
+      .post('/api/v1/bookings')
+      .set('Authorization', auth())
+      .send({ customerId, unitId: unit.body.id, exShowroom: 9500000, rto: 500000 })
+      .expect(201);
+    const originalEx = created.body.exShowroom;
+    const originalTotal = created.body.total;
+
+    // Attempt to mutate pricing/accessories/advance alongside the allowed fields.
+    const edited = await http()
+      .patch(`/api/v1/bookings/${created.body.id}`)
+      .set('Authorization', auth())
+      .send({ exShowroom: 1, discount: 9000000, extendedWarranty: 5000000, accessories: [], advanceAmount: 12345, notes: 'edited note', expectedDelivery: '2026-03-01' })
+      .expect(200);
+
+    // Commercial terms unchanged; only the non-financial fields were applied.
+    expect(edited.body.exShowroom).toBe(originalEx);
+    expect(edited.body.total).toBe(originalTotal);
+    expect(edited.body.paymentSummary.total).toBe(originalTotal);
+    expect(edited.body.notes).toBe('edited note');
+  });
+
+  it('cancelling a PAID booking preserves the payment history (advance retained, not refunded)', async () => {
+    const unit = await http()
+      .post('/api/v1/inventory/units')
+      .set('Authorization', auth())
+      .send({ modelId, variant: `E2E-paid-${stamp}`, colour: 'Blue', vin: `PAIDC${stamp}`, motorNumber: `PCM${stamp}`, batteryNumber: `PCB${stamp}` })
+      .expect(201);
+    const booking = await http()
+      .post('/api/v1/bookings')
+      .set('Authorization', auth())
+      .send({ customerId, unitId: unit.body.id, exShowroom: 10000000, advanceAmount: 1000000 })
+      .expect(201);
+    // The advance was recorded as a booking payment.
+    const before = await http().get(`/api/v1/bookings/${booking.body.id}/payments`).set('Authorization', auth()).expect(200);
+    expect(before.body.length).toBe(1);
+
+    await http().post(`/api/v1/bookings/${booking.body.id}/cancel`).set('Authorization', auth()).send({ reason: 'customer backed out' }).expect(201);
+
+    const b = await http().get(`/api/v1/bookings/${booking.body.id}`).set('Authorization', auth()).expect(200);
+    expect(b.body.status).toBe('CANCELLED');
+    // Payment history is intact and the advance is retained (no refund invented on cancellation).
+    expect(b.body.payments.length).toBe(1);
+    expect(b.body.paymentSummary.paid).toBe('1000000');
+    expect((await http().get(`/api/v1/inventory/units/${unit.body.id}`).set('Authorization', auth())).body.status).toBe('AVAILABLE');
+  });
+
+  it('a converted (invoiced) booking cannot be cancelled and keeps its vehicle allocated', async () => {
+    const unit = await http()
+      .post('/api/v1/inventory/units')
+      .set('Authorization', auth())
+      .send({ modelId, variant: `E2E-conv-${stamp}`, colour: 'Black', vin: `CONVC${stamp}`, motorNumber: `CVM${stamp}`, batteryNumber: `CVB${stamp}` })
+      .expect(201);
+    const booking = await http()
+      .post('/api/v1/bookings')
+      .set('Authorization', auth())
+      .send({ customerId, unitId: unit.body.id, exShowroom: 10000000 })
+      .expect(201);
+    await http().post(`/api/v1/bookings/${booking.body.id}/invoice`).set('Authorization', auth()).expect(201);
+    expect((await http().get(`/api/v1/bookings/${booking.body.id}`).set('Authorization', auth())).body.status).toBe('CONVERTED');
+
+    await http().post(`/api/v1/bookings/${booking.body.id}/cancel`).set('Authorization', auth()).send({ reason: 'too late' }).expect(409);
+    // Still converted, vehicle still allocated — post-sale undo goes through Vehicle Returns, not cancel.
+    expect((await http().get(`/api/v1/bookings/${booking.body.id}`).set('Authorization', auth())).body.status).toBe('CONVERTED');
+    expect((await http().get(`/api/v1/inventory/units/${unit.body.id}`).set('Authorization', auth())).body.status).toBe('BOOKED');
+  });
 });

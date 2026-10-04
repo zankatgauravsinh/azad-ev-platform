@@ -18,7 +18,9 @@ const booking = {
   sale: { id: 's1', invoiceNumber: 'INV-1' }, finance: null, insurance: null, pendingDocuments: null,
 };
 vi.mock('../hooks', () => ({ useBooking: () => ({ data: booking, isLoading: false }), useSalesInvalidate: () => () => {} }));
-vi.mock('../components/booking-dialogs', () => ({ PaymentDialog: () => null, FinanceDialog: () => null, InsuranceDialog: () => null, ScheduleDeliveryDialog: () => null }));
+vi.mock('../components/booking-dialogs', () => ({ PaymentDialog: () => null, FinanceDialog: () => null, InsuranceDialog: () => null, ScheduleDeliveryDialog: () => null, CancelBookingDialog: () => null }));
+vi.mock('../components/booking-form-dialog', () => ({ BookingFormDialog: () => null }));
+vi.mock('../components/vehicle-details-dialog', () => ({ VehicleDetailsDialog: () => null }));
 vi.mock('@/features/customers/components/customer-detail-dialog', () => ({ CustomerDetailDialog: () => null }));
 vi.mock('@/features/returns/components/create-return-dialog', () => ({ CreateReturnDialog: () => null }));
 vi.mock('@/features/returns/components/return-detail-dialog', () => ({ ReturnDetailDialog: () => null }));

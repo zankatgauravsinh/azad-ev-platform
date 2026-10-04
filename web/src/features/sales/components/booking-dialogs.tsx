@@ -10,7 +10,7 @@ import {
 } from '@azad/shared';
 import type { BookingDto } from '../api';
 import { apiErrorMessage } from '@/lib/api-client';
-import { rupeesToPaise, paiseToRupees } from '@/lib/money';
+import { rupeesToPaise, paiseToRupees, formatPaise } from '@/lib/money';
 import { titleCase } from '@/lib/labels';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -120,6 +120,44 @@ export function InsuranceDialog({ open, onOpenChange, booking }: Props): JSX.Ele
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button disabled={busy || !v.provider} onClick={() => run(() => salesApi.upsertInsurance(booking.id, { provider: v.provider, policyNumber: v.policyNumber || undefined, premium: Number(rupeesToPaise(v.premium)), startDate: v.startDate ? new Date(v.startDate) : undefined, endDate: v.endDate ? new Date(v.endDate) : undefined, status: v.status }), 'Insurance saved')}>Save</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function CancelBookingDialog({
+  open,
+  onOpenChange,
+  booking,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  booking: Pick<BookingDto, 'id' | 'code' | 'paymentSummary'>;
+}): JSX.Element {
+  const { busy, run } = useSubmit(onOpenChange);
+  const [reason, setReason] = useState('');
+  const paid = BigInt(booking.paymentSummary.paid) > 0n;
+  const trimmed = reason.trim();
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Cancel booking {booking.code}</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">The reserved scooter is released back to Available. This cannot be undone.</p>
+          {paid && (
+            <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
+              {formatPaise(booking.paymentSummary.paid)} already paid will be <strong>retained</strong> (not refunded). The payment history is preserved.
+            </p>
+          )}
+          <div className="space-y-1.5">
+            <Label>Reason for cancellation</Label>
+            <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this booking being cancelled?" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Keep booking</Button>
+          <Button variant="destructive" disabled={busy || !trimmed} onClick={() => run(() => salesApi.cancelBooking(booking.id, trimmed), 'Booking cancelled')}>Cancel booking</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

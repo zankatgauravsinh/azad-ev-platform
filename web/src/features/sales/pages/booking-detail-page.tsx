@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, Banknote, CalendarClock, CheckCircle2, Download, Eye, FileText, Printer, Shield, Truck, Undo2, User } from 'lucide-react';
+import { ArrowLeft, Ban, Banknote, Bike, CalendarClock, CheckCircle2, Download, Eye, FileText, Pencil, Printer, Shield, Truck, Undo2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookingStatus, PaymentStatus } from '@azad/shared';
 import { useCan } from '@/features/auth/auth-context';
@@ -11,12 +11,13 @@ import { titleCase } from '@/lib/labels';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { EmptyState } from '@/components/common/empty-state';
 import { useBooking, useSalesInvalidate } from '../hooks';
 import { salesApi } from '../api';
-import { BookingStatusBadge, FinanceStatusBadge, InsuranceStatusBadge, PaymentStatusBadge } from '../components/status-badges';
-import { FinanceDialog, InsuranceDialog, PaymentDialog, ScheduleDeliveryDialog } from '../components/booking-dialogs';
+import { BookingStatusBadge, DeliveryStatusBadge, FinanceStatusBadge, InsuranceStatusBadge, PaymentStatusBadge } from '../components/status-badges';
+import { CancelBookingDialog, FinanceDialog, InsuranceDialog, PaymentDialog, ScheduleDeliveryDialog } from '../components/booking-dialogs';
+import { BookingFormDialog } from '../components/booking-form-dialog';
+import { VehicleDetailsDialog } from '../components/vehicle-details-dialog';
 import { CustomerDetailDialog } from '@/features/customers/components/customer-detail-dialog';
 import { CreateReturnDialog } from '@/features/returns/components/create-return-dialog';
 import { ReturnDetailDialog } from '@/features/returns/components/return-detail-dialog';
@@ -34,6 +35,8 @@ export function BookingDetailPage(): JSX.Element {
   const { data: b, isLoading } = useBooking(id);
   const [dialog, setDialog] = useState<'payment' | 'finance' | 'insurance' | 'schedule' | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [vehicleOpen, setVehicleOpen] = useState(false);
   const [viewCustomer, setViewCustomer] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [viewReturnId, setViewReturnId] = useState<string | null>(null);
@@ -42,7 +45,10 @@ export function BookingDetailPage(): JSX.Element {
   if (isLoading || !b) return <div className="space-y-4"><Skeleton className="h-8 w-56" /><Skeleton className="h-40 w-full" /></div>;
 
   const active = b.status !== BookingStatus.CANCELLED;
+  // Editable only before conversion — a CONVERTED (invoiced) or CANCELLED booking is immutable.
+  const editable = b.status === BookingStatus.DRAFT || b.status === BookingStatus.CONFIRMED;
   const paid = b.paymentSummary.status === PaymentStatus.PAID;
+  const advanceRetained = b.status === BookingStatus.CANCELLED && BigInt(b.paymentSummary.paid) > 0n;
 
   const run = async (fn: () => Promise<unknown>, ok: string): Promise<void> => {
     setBusy(true);
@@ -78,17 +84,20 @@ export function BookingDetailPage(): JSX.Element {
 
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight">{b.code}</h1>
             <BookingStatusBadge status={b.status} />
+            <DeliveryStatusBadge hasSale={Boolean(b.sale)} delivered={Boolean(b.actualDelivery)} />
             <PaymentStatusBadge status={b.paymentSummary.status} />
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             {b.unit.variant.model.name} {b.unit.variant.name} · {b.unit.variant.colour} · <span className="font-mono">{b.unit.vin}</span>
           </p>
+          <Button size="sm" variant="outline" className="mt-2" onClick={() => setVehicleOpen(true)}><Bike className="h-4 w-4" /> View vehicle details</Button>
         </div>
         {active && (
           <div className="flex flex-wrap gap-2">
+            {canUpdate && editable && <Button variant="outline" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" /> Edit</Button>}
             {canPayment && !paid && <Button onClick={() => setDialog('payment')}><Banknote className="h-4 w-4" /> Take payment</Button>}
             {canUpdate && <Button variant="outline" onClick={() => setDialog('finance')}><Banknote className="h-4 w-4" /> Finance</Button>}
             {canUpdate && <Button variant="outline" onClick={() => setDialog('insurance')}><Shield className="h-4 w-4" /> Insurance</Button>}
@@ -124,8 +133,15 @@ export function BookingDetailPage(): JSX.Element {
               <div className="mt-2 flex justify-between border-t pt-2 text-base font-bold">
                 <span>On-road total</span><span className="tabular-nums">{formatPaise(b.total)}</span>
               </div>
-              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Paid</span><span className="tabular-nums text-emerald-600">{formatPaise(b.paymentSummary.paid)}</span></div>
-              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Balance</span><span className="tabular-nums text-destructive">{formatPaise(b.paymentSummary.balance)}</span></div>
+              {/* For a cancelled booking the pre-cancellation shortfall is NOT money owed, so we never show it
+                  as a "Pending" balance — only the historical total, the amount received, and (if any) the
+                  retained advance. Active DRAFT/CONFIRMED bookings keep the normal Paid / Balance view. */}
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">{active ? 'Paid' : 'Received'}</span><span className="tabular-nums text-emerald-600">{formatPaise(b.paymentSummary.paid)}</span></div>
+              {active ? (
+                <div className="flex justify-between text-sm"><span className="text-muted-foreground">Balance</span><span className="tabular-nums text-destructive">{formatPaise(b.paymentSummary.balance)}</span></div>
+              ) : advanceRetained ? (
+                <div className="flex justify-between text-sm"><span className="text-muted-foreground">Retained (not refunded)</span><span className="tabular-nums">{formatPaise(b.paymentSummary.paid)}</span></div>
+              ) : null}
             </div>
           </CardContent>
         </Card>
@@ -163,6 +179,11 @@ export function BookingDetailPage(): JSX.Element {
         <Card className="lg:col-span-2">
           <CardContent className="p-6">
             <h3 className="mb-3 text-sm font-semibold">Payments</h3>
+            {advanceRetained && (
+              <p className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
+                Booking cancelled — {formatPaise(b.paymentSummary.paid)} paid is retained (not refunded). Payment history is preserved below.
+              </p>
+            )}
             {b.payments.length === 0 ? <EmptyState icon={Banknote} title="No payments yet" /> : (
               <ul className="divide-y text-sm">
                 {b.payments.map((p) => (
@@ -210,7 +231,9 @@ export function BookingDetailPage(): JSX.Element {
         />
       )}
       <ReturnDetailDialog id={viewReturnId} onOpenChange={(o) => { if (!o) setViewReturnId(null); }} />
-      <ConfirmDialog open={cancelOpen} onOpenChange={setCancelOpen} title={`Cancel booking ${b.code}?`} description="The reserved scooter is released back to Available." confirmLabel="Cancel booking" destructive onConfirm={() => run(() => salesApi.cancelBooking(b.id, 'Cancelled by staff'), 'Booking cancelled')} />
+      <CancelBookingDialog open={cancelOpen} onOpenChange={setCancelOpen} booking={b} />
+      {editable && <BookingFormDialog open={editOpen} onOpenChange={setEditOpen} booking={b} />}
+      <VehicleDetailsDialog open={vehicleOpen} onOpenChange={setVehicleOpen} unit={b.unit} />
     </div>
   );
 }

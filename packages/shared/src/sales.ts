@@ -85,7 +85,18 @@ export const createBookingSchema = z.object({
   notes: z.string().trim().max(1000).optional(),
 });
 export type CreateBookingInput = z.infer<typeof createBookingSchema>;
-export const updateBookingSchema = createBookingSchema.partial().omit({ customerId: true, unitId: true });
+/**
+ * Editing a booking after creation must NOT change its commercial terms. Pricing, accessories,
+ * advance, customer and vehicle are frozen at creation — only non-financial, operational fields may
+ * change here. Any other key sent to PATCH /bookings/:id is ignored (stripped by this object schema),
+ * so the restriction cannot be bypassed through the API. Creation pricing is unaffected.
+ */
+export const updateBookingSchema = z.object({
+  financeRequired: z.boolean().optional(),
+  insuranceRequired: z.boolean().optional(),
+  expectedDelivery: z.coerce.date().optional(),
+  notes: z.string().trim().max(1000).optional(),
+});
 export type UpdateBookingInput = z.infer<typeof updateBookingSchema>;
 
 export const listBookingsQuerySchema = paginationQuerySchema.extend({

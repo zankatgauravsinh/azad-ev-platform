@@ -13,6 +13,7 @@ import type {
   PaymentStatus,
   QuotationStatus,
   ScheduleDeliveryInput,
+  UnitStatus,
   UpdateBookingInput,
   UpdateQuotationInput,
   UpsertFinanceInput,
@@ -39,6 +40,39 @@ export interface VariantRef {
   name: string;
   colour: string;
   model: { id: string; name: string; brand: string };
+}
+
+/**
+ * Full vehicle (InventoryUnit → variant → model) as already returned by the bookings read `include`.
+ * These fields are present on the wire today; typing them lets the Vehicle Details modal render them
+ * without any duplication into Booking. Dealer-margin fields (purchaseCost, supplier) are intentionally
+ * omitted — they are not surfaced to the booking UI.
+ */
+export interface VehicleVariantDetail {
+  id: string;
+  name: string;
+  colour: string;
+  hexColour: string | null;
+  batteryType: string | null;
+  batteryCapacity: string | null;
+  rangeKm: number | null;
+  topSpeedKmph: number | null;
+  chargingTimeHrs: string | null;
+  motorPowerW: number | null;
+  warrantyMonths: number | null;
+  model: { id: string; name: string; brand: string; description: string | null };
+}
+export interface VehicleUnitDetail {
+  id: string;
+  vin: string;
+  motorNumber: string;
+  batteryNumber: string;
+  status: UnitStatus;
+  purchaseDate: string | null;
+  sellingPrice: string;
+  location: string | null;
+  notes: string | null;
+  variant: VehicleVariantDetail;
 }
 export interface QuotationDto {
   id: string;
@@ -70,7 +104,7 @@ export interface BookingDto {
   code: string;
   status: BookingStatus;
   customer: CustomerRef;
-  unit: { id: string; vin: string; variant: VariantRef };
+  unit: VehicleUnitDetail;
   salesExecutive: { id: string; name: string } | null;
   deliveryExecutive: { id: string; name: string } | null;
   exShowroom: string;

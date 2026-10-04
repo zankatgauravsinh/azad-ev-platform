@@ -150,45 +150,25 @@ export class BookingsService {
     return this.getById(booking.id);
   }
 
+  /**
+   * Edit a booking's non-financial / operational fields only. Commercial terms (pricing, accessories,
+   * advance) and identity (customer, vehicle) are frozen at creation and are NOT accepted here — the
+   * contract (updateBookingSchema) carries no such fields, and this method never writes them, so the
+   * stored price breakup, total and GST stay exactly as created. Payments and status are untouched.
+   * A CONVERTED / CANCELLED booking is immutable (assertEditable).
+   */
   async update(id: string, dto: UpdateBookingInput, userId: string) {
     const existing = await this.getById(id);
     this.assertEditable(existing);
-    const accessories = dto.accessories;
-    await this.prisma.$transaction(async (tx) => {
-      if (accessories) await tx.bookingAccessory.deleteMany({ where: { bookingId: id } });
-      const lines = accessories ?? existing.accessories.map((a) => ({ accessoryId: a.accessoryId, qty: a.qty, unitPrice: Number(a.unitPrice) }));
-      const accessoriesTotal = sumAccessories(lines);
-      const merged = {
-        exShowroom: dto.exShowroom ?? Number(existing.exShowroom),
-        discount: dto.discount ?? Number(existing.discount),
-        exchangeValue: dto.exchangeValue ?? Number(existing.exchangeValue),
-        rto: dto.rto ?? Number(existing.rto),
-        insurance: dto.insurance ?? Number(existing.insuranceCharge),
-        registration: dto.registration ?? Number(existing.registration),
-        extendedWarranty: dto.extendedWarranty ?? Number(existing.extendedWarranty),
-      };
-      const total = computeTotal({ ...merged, accessoriesTotal });
-      await tx.booking.update({
-        where: { id },
-        data: {
-          exShowroom: BigInt(merged.exShowroom),
-          discount: BigInt(merged.discount),
-          exchangeValue: BigInt(merged.exchangeValue),
-          rto: BigInt(merged.rto),
-          insuranceCharge: BigInt(merged.insurance),
-          registration: BigInt(merged.registration),
-          extendedWarranty: BigInt(merged.extendedWarranty),
-          accessoriesTotal,
-          total,
-          financeRequired: dto.financeRequired,
-          insuranceRequired: dto.insuranceRequired,
-          advanceAmount: dto.advanceAmount !== undefined ? BigInt(dto.advanceAmount) : undefined,
-          expectedDelivery: dto.expectedDelivery,
-          notes: dto.notes,
-          updatedById: userId,
-          ...(accessories ? { accessories: { create: accessories.map((a) => ({ accessoryId: a.accessoryId, qty: a.qty, unitPrice: BigInt(a.unitPrice), createdById: userId, updatedById: userId })) } } : {}),
-        },
-      });
+    await this.prisma.booking.update({
+      where: { id },
+      data: {
+        financeRequired: dto.financeRequired,
+        insuranceRequired: dto.insuranceRequired,
+        expectedDelivery: dto.expectedDelivery,
+        notes: dto.notes,
+        updatedById: userId,
+      },
     });
     return this.getById(id);
   }
