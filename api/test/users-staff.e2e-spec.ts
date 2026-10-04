@@ -122,6 +122,8 @@ describe('Staff Management (e2e)', () => {
     const res = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(body).expect(201);
     staffId = res.body.id;
     expect(res.body.role).toBe('MANAGER');
+    expect(res.body.roleId).toBeTruthy(); // assigned system AppRole id surfaced to the client
+    expect(res.body.roleName).toBe('MANAGER'); // system AppRole display name
     expect(res.body.isActive).toBe(true);
     assertNoSecrets(res.body);
     expect(JSON.stringify(res.body)).not.toContain('Abcd1234');
@@ -260,6 +262,9 @@ describe('Staff Management (e2e)', () => {
 
     const res = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(newStaff({ role: 'SALES_EXECUTIVE', roleId: custom.id, password: 'Cst@12345' })).expect(201);
     track(res.body.id);
+    // The DTO surfaces the assigned AppRole so the UI can display/edit the real role (not just the enum).
+    expect(res.body.roleId).toBe(custom.id);
+    expect(res.body.roleName).toBe(`Custom ${stamp}`);
     const row = await prisma.user.findUniqueOrThrow({ where: { id: res.body.id } });
     expect(row.roleId).toBe(custom.id);
     expect(row.role).toBe('SALES_EXECUTIVE'); // legacy enum kept (a custom role has no enum)

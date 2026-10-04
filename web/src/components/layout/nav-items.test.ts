@@ -54,8 +54,15 @@ describe('Batch 1 nav items are permission-gated', () => {
     expect(l).toContain('Home'); // ungated item still visible
   });
 
-  it('OWNER still sees the OWNER-only Staff item (legacy role-gated, later batch)', () => {
+  it('Staff is permission-gated by staff.manage (OWNER-only in the system catalog)', () => {
+    const staff = NAV_ITEMS.find((i) => i.label === 'Staff')!;
+    expect(staff.permission).toBe('staff.manage');
+    expect(staff.roles).toBeUndefined();
+    // staff.manage is granted only to OWNER among the system roles.
     expect(labels('OWNER', canFor('OWNER'))).toContain('Staff');
     expect(labels('MANAGER', canFor('MANAGER'))).not.toContain('Staff');
+    // A custom role that grants staff.manage sees Staff even though its legacy enum would not.
+    const customCan = (p: string): boolean => p === 'staff.manage';
+    expect(labels('TECHNICIAN', customCan)).toContain('Staff');
   });
 });

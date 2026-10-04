@@ -8,7 +8,8 @@ const keys = {
   detail: (id: string) => ['roles', 'detail', id] as const,
 };
 
-export const useRoles = (q: RolesQuery) => useQuery({ queryKey: keys.list(q), queryFn: () => rolesApi.list(q) });
+export const useRoles = (q: RolesQuery, enabled = true) =>
+  useQuery({ queryKey: keys.list(q), queryFn: () => rolesApi.list(q), enabled });
 export const useRole = (id: string | undefined, enabled = true) =>
   useQuery({ queryKey: keys.detail(id ?? ''), queryFn: () => rolesApi.get(id as string), enabled: Boolean(id) && enabled });
 

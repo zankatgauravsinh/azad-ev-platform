@@ -11,7 +11,7 @@ import {
   type StaffDto,
   type UpdateStaffInput,
 } from '@azad/shared';
-import { UsersRepository } from './users.repository';
+import { UsersRepository, type UserWithRole } from './users.repository';
 import { PasswordService } from '../auth/password.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
 
@@ -48,7 +48,7 @@ export class StaffService {
     // a staff member must never exist without the role that grants their permissions.
     const resolved = await this.resolveRole({ role: dto.role, roleId: dto.roleId });
     const passwordHash = await this.passwords.hash(dto.password);
-    let user: User;
+    let user: UserWithRole;
     try {
       user = await this.repo.create({
         name: dto.name,
@@ -180,7 +180,7 @@ export class StaffService {
     throw new BadRequestException('No role provided');
   }
 
-  private async loadOrThrow(id: string): Promise<User> {
+  private async loadOrThrow(id: string): Promise<UserWithRole> {
     // Tenant-scoped: a user in another company reads back as null → NotFound (no cross-tenant leak).
     const user = await this.repo.findById(id);
     if (!user) throw new NotFoundException('Staff member not found');
@@ -206,13 +206,15 @@ export class StaffService {
   }
 
   /** Client-safe projection — never leaks passwordHash / refreshTokenHash. */
-  static toDto(user: User): StaffDto {
+  static toDto(user: UserWithRole): StaffDto {
     return {
       id: user.id,
       name: user.name,
       email: user.email,
       phone: user.phone,
       role: user.role as Role,
+      roleId: user.roleId ?? null,
+      roleName: user.roleRef?.name ?? null,
       isActive: user.isActive,
       lastLoginAt: user.lastLoginAt ? user.lastLoginAt.toISOString() : null,
       createdAt: user.createdAt.toISOString(),

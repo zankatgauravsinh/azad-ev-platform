@@ -30,7 +30,8 @@ type ActiveFilter = 'ALL' | 'true' | 'false';
 const fmtDate = (iso: string | null): string => (iso ? new Date(iso).toLocaleDateString('en-IN') : '—');
 
 export function StaffListPage(): JSX.Element {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  const canManage = can('staff.manage');
   const [roleFilter, setRoleFilter] = useState<Role | 'ALL'>('ALL');
   const [active, setActive] = useState<ActiveFilter>('ALL');
   const [page, setPage] = useState(1);
@@ -48,7 +49,7 @@ export function StaffListPage(): JSX.Element {
     }),
     [page, roleFilter, active],
   );
-  const { data, isLoading, isFetching, error } = useStaffList(query);
+  const { data, isLoading, isFetching, error } = useStaffList(query, canManage);
   const setActiveMut = useSetStaffActive();
 
   const openCreate = (): void => {
@@ -80,12 +81,13 @@ export function StaffListPage(): JSX.Element {
     }
   };
 
-  // The backend is authoritative for authorization; a 403 here means a non-OWNER reached the page.
-  if (isAxiosError(error) && error.response?.status === 403) {
+  // Self-gate: show an access message instead of the UI when the actor lacks staff.manage. The backend
+  // remains authoritative (the list query is also disabled above); this just avoids an empty shell + 403.
+  if (!canManage || (isAxiosError(error) && error.response?.status === 403)) {
     return (
       <div>
         <PageHeader title="Staff" description="Manage staff accounts and roles." />
-        <EmptyState icon={ShieldAlert} title="Owner access required" description="Only an owner can manage staff accounts." />
+        <EmptyState icon={ShieldAlert} title="Access required" description="You don’t have permission to manage staff accounts." />
       </div>
     );
   }
@@ -94,7 +96,7 @@ export function StaffListPage(): JSX.Element {
     { key: 'name', header: 'Name', render: (s) => <span className="font-medium">{s.name}</span> },
     { key: 'email', header: 'Email', render: (s) => <span className="text-sm">{s.email}</span> },
     { key: 'phone', header: 'Phone', render: (s) => (s.phone ? <span className="font-mono text-xs">{s.phone}</span> : '—') },
-    { key: 'role', header: 'Role', render: (s) => roleLabel(s.role) },
+    { key: 'role', header: 'Role', render: (s) => s.roleName ?? roleLabel(s.role) },
     {
       key: 'status',
       header: 'Status',

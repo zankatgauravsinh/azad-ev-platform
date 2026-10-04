@@ -62,7 +62,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Warranty & AMC', to: '/warranty', icon: ShieldCheck, enabled: true, permission: 'warranty.view' },
   { label: 'Finance', to: '/finance', icon: Wallet, enabled: true, anyPermission: ['finance.view', 'expenses.view', 'income.view', 'vendors.view', 'bank.view'] },
   { label: 'Reports', to: '/reports', icon: BarChart3, enabled: true, permission: 'reports.view' },
-  { label: 'Staff', to: '/staff', icon: UserCog, enabled: true, roles: ['OWNER'] },
+  { label: 'Staff', to: '/staff', icon: UserCog, enabled: true, permission: 'staff.manage' },
   { label: 'Settings', to: '/settings', icon: Settings, enabled: true, permission: 'settings.view' },
 ];
 

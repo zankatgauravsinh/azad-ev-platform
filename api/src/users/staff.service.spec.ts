@@ -2,20 +2,21 @@ import { BadRequestException, ConflictException, ForbiddenException, NotFoundExc
 import { Prisma, type AppRole, type User } from '@prisma/client';
 import { ActivityAction, type Role } from '@azad/shared';
 import { StaffService, type StaffActor } from './staff.service';
-import type { UsersRepository } from './users.repository';
+import type { UsersRepository, UserWithRole } from './users.repository';
 import type { PasswordService } from '../auth/password.service';
 import type { ActivityLogService } from '../activity-log/activity-log.service';
 
 const owner: StaffActor = { id: 'owner1', role: 'OWNER' as Role };
 const manager: StaffActor = { id: 'mgr1', role: 'MANAGER' as Role };
 
-const makeUser = (over: Partial<User> = {}): User =>
+const makeUser = (over: Partial<User> = {}): UserWithRole =>
   ({
     id: 'u1', companyId: 'c1', name: 'Asha', email: 'asha@x.in', phone: null,
-    passwordHash: 'HASH', role: 'MANAGER', isActive: true, lastLoginAt: null, refreshTokenHash: 'r',
+    passwordHash: 'HASH', role: 'MANAGER', roleId: null, isActive: true, lastLoginAt: null, refreshTokenHash: 'r',
     createdById: null, updatedById: null, createdAt: new Date('2026-01-01'), updatedAt: new Date('2026-01-01'),
+    roleRef: null,
     ...over,
-  }) as User;
+  }) as UserWithRole;
 
 const fakeRole = (over: Partial<AppRole> = {}): AppRole =>
   ({
@@ -247,6 +248,22 @@ describe('StaffService', () => {
     it('rejects an owner resetting their own password here', async () => {
       repo.findById.mockResolvedValue(makeUser({ id: 'owner1', role: 'OWNER' }));
       await expect(service.resetPassword(owner, 'owner1', { password: 'NewPass123' })).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('role exposure (StaffDto.roleId / roleName)', () => {
+    it('exposes the assigned roleId and the AppRole display name', async () => {
+      repo.findById.mockResolvedValue({ ...makeUser({ roleId: 'custom1' }), roleRef: { name: 'Front Desk' } });
+      const dto = await service.get(owner, 'u1');
+      expect(dto.roleId).toBe('custom1');
+      expect(dto.roleName).toBe('Front Desk');
+    });
+
+    it('returns null role name when no AppRole relation is present', async () => {
+      repo.findById.mockResolvedValue(makeUser({ roleId: null }));
+      const dto = await service.get(owner, 'u1');
+      expect(dto.roleId).toBeNull();
+      expect(dto.roleName).toBeNull();
     });
   });
 

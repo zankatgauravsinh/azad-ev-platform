@@ -23,6 +23,8 @@ const staff: StaffDto = {
   email: 'ravi@azadev.in',
   phone: null,
   role: 'MANAGER' as StaffDto['role'],
+  roleId: null,
+  roleName: null,
   isActive: true,
   lastLoginAt: null,
   createdAt: '2026-01-01T00:00:00.000Z',

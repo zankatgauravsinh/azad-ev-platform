@@ -63,7 +63,12 @@ export interface StaffDto {
   name: string;
   email: string;
   phone: string | null;
+  /** Legacy base role enum — kept for back-compat / coarse filtering. */
   role: Role;
+  /** The assigned company AppRole id (system or custom); drives effective permissions. */
+  roleId: string | null;
+  /** The assigned AppRole's display name (e.g. "Manager" or a custom role name). */
+  roleName: string | null;
   isActive: boolean;
   lastLoginAt: string | null;
   createdAt: string;
