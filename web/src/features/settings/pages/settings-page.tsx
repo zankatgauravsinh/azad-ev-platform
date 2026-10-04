@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { useBlocker } from 'react-router-dom';
+import { Link, useBlocker } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
-import { ImagePlus, Trash2 } from 'lucide-react';
+import { ChevronRight, ImagePlus, KeyRound, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   BACKUP_FREQUENCIES, CURRENCIES, DATE_FORMATS, LANGUAGES, TIME_FORMATS, WEEKDAYS,
@@ -37,6 +37,7 @@ export function SettingsPage(): JSX.Element {
   // extra roles needs a separate focused UI change (lift the ImageUploads out of this fieldset and gate
   // them with can('settings.branding')); intentionally NOT done here to avoid a structural change.
   const canManageSettings = can('settings.manage');
+  const canManageRoles = can('roles.manage');
   const { data: settings, isLoading } = useCompanySettings();
   const update = useUpdateSettings();
 
@@ -104,6 +105,21 @@ export function SettingsPage(): JSX.Element {
         title="Settings"
         description={canManageSettings ? 'Configure how your showroom works.' : 'Company configuration (read-only for your role).'}
       />
+
+      {canManageRoles && (
+        <Link to="/settings/roles" className="mb-6 block">
+          <Card className="transition-colors hover:border-accent">
+            <CardContent className="flex items-center gap-3 p-4">
+              <span className="rounded-lg bg-primary/10 p-2 text-primary"><KeyRound className="h-5 w-5" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">Roles &amp; permissions</p>
+                <p className="text-xs text-muted-foreground">Create custom roles and control exactly what each role can do.</p>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+            </CardContent>
+          </Card>
+        </Link>
+      )}
 
       <form onSubmit={onSubmit}>
         <fieldset disabled={!canManageSettings}>
