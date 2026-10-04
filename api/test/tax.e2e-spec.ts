@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -58,10 +59,10 @@ describe('Tax management (e2e)', () => {
   }, 30000);
 
   afterAll(async () => {
-    await prisma.taxRate.deleteMany({ where: { classificationId: { in: createdClassIds } } });
-    await prisma.taxClassification.deleteMany({ where: { id: { in: createdClassIds } } });
-    await prisma.taxRate.deleteMany({ where: { classification: { companyId: companyBId } } });
-    await prisma.taxClassification.deleteMany({ where: { companyId: companyBId } });
+    // TaxClassification is a soft-delete model (deleteMany only archives), so remove this suite's own
+    // rows with raw SQL — rates go with them via ON DELETE CASCADE. Nothing else is touched.
+    if (createdClassIds.length > 0) await prisma.$executeRaw(Prisma.sql`DELETE FROM "TaxClassification" WHERE id IN (${Prisma.join(createdClassIds)})`);
+    await prisma.$executeRaw(Prisma.sql`DELETE FROM "TaxClassification" WHERE "companyId" = ${companyBId}`);
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await prisma.company.deleteMany({ where: { id: companyBId } });
     await app.close();
@@ -118,6 +119,36 @@ describe('Tax management (e2e)', () => {
       .set('Authorization', auth(ownerToken))
       .send({ ratePercent: 12, effectiveFrom: '2026-07-01' })
       .expect(201);
+  });
+
+  // Calendar-date semantics: effectiveFrom and effectiveTo are both inclusive.
+  it('treats the boundary day as inclusive: a rate starting on another’s last day overlaps (409)', async () => {
+    // Existing: 5% 2026-01-01 → 2026-06-30 and 12% 2026-07-01 → open (adjacent, accepted above).
+    await http()
+      .post(`/api/v1/tax/classifications/${classId}/rates`)
+      .set('Authorization', auth(ownerToken))
+      .send({ ratePercent: 18, effectiveFrom: '2025-06-01', effectiveTo: '2026-01-01' }) // ends ON 1 Jan
+      .expect(409);
+    // Ending the day before is adjacent and fine.
+    const ok = await http()
+      .post(`/api/v1/tax/classifications/${classId}/rates`)
+      .set('Authorization', auth(ownerToken))
+      .send({ ratePercent: 18, effectiveFrom: '2025-06-01', effectiveTo: '2025-12-31' })
+      .expect(201);
+    expect(ok.body.effectiveFrom).toBe('2025-06-01T00:00:00.000Z');
+    expect(ok.body.effectiveTo).toBe('2025-12-31T00:00:00.000Z');
+    await http().delete(`/api/v1/tax/rates/${ok.body.id}`).set('Authorization', auth(ownerToken)).expect(200);
+  });
+
+  it('accepts a single-day rate (effectiveFrom === effectiveTo) and ignores time-of-day', async () => {
+    const res = await http()
+      .post(`/api/v1/tax/classifications/${classId}/rates`)
+      .set('Authorization', auth(ownerToken))
+      .send({ ratePercent: 3, effectiveFrom: '2025-01-15T10:30:00.000Z', effectiveTo: '2025-01-15T22:00:00.000Z' })
+      .expect(201);
+    expect(res.body.effectiveFrom).toBe('2025-01-15T00:00:00.000Z');
+    expect(res.body.effectiveTo).toBe('2025-01-15T00:00:00.000Z');
+    await http().delete(`/api/v1/tax/rates/${res.body.id}`).set('Authorization', auth(ownerToken)).expect(200);
   });
 
   it('rejects a rate whose effectiveTo precedes effectiveFrom (400)', async () => {

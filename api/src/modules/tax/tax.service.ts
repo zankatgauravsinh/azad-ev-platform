@@ -12,6 +12,7 @@ import {
 } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
+import { periodsOverlap, startOfCalendarDay, toCalendarDate } from './tax-calendar';
 
 type ClassificationWithRates = Prisma.TaxClassificationGetPayload<{ include: { rates: true } }>;
 type RateRow = Prisma.TaxRateGetPayload<Record<string, never>>;
@@ -99,14 +100,18 @@ export class TaxService {
   // ── Rates ────────────────────────────────────────────────
   async addRate(classificationId: string, dto: CreateTaxRateInput, userId: string): Promise<TaxRateDto> {
     await this.loadClassification(classificationId);
+    // Effective dates are calendar dates (both inclusive) — any time-of-day is dropped.
+    const from = startOfCalendarDay(dto.effectiveFrom);
+    const to = dto.effectiveTo ? startOfCalendarDay(dto.effectiveTo) : null;
+    if (to !== null && to < from) throw new BadRequestException('Effective-to cannot be before effective-from');
     const isActive = dto.isActive ?? true;
-    if (isActive) await this.assertNoOverlap(classificationId, dto.effectiveFrom, dto.effectiveTo ?? null, null);
+    if (isActive) await this.assertNoOverlap(classificationId, from, to, null);
     const created = await this.prisma.taxRate.create({
       data: {
         classificationId,
         ratePercent: new Prisma.Decimal(dto.ratePercent),
-        effectiveFrom: dto.effectiveFrom,
-        effectiveTo: dto.effectiveTo ?? null,
+        effectiveFrom: from,
+        effectiveTo: to,
         isActive,
         createdById: userId,
         updatedById: userId,
@@ -118,17 +123,19 @@ export class TaxService {
 
   async updateRate(rateId: string, dto: UpdateTaxRateInput, userId: string): Promise<TaxRateDto> {
     const existing = await this.loadRate(rateId);
-    const from = dto.effectiveFrom ?? existing.effectiveFrom;
-    const to = dto.effectiveTo !== undefined ? dto.effectiveTo : existing.effectiveTo;
-    if (to != null && to <= from) throw new BadRequestException('Effective-to must be after effective-from');
+    // Effective dates are calendar dates (both inclusive) — any time-of-day is dropped.
+    const from = startOfCalendarDay(dto.effectiveFrom ?? existing.effectiveFrom);
+    const rawTo = dto.effectiveTo !== undefined ? dto.effectiveTo : existing.effectiveTo;
+    const to = rawTo ? startOfCalendarDay(rawTo) : null;
+    if (to !== null && to < from) throw new BadRequestException('Effective-to cannot be before effective-from');
     const isActive = dto.isActive ?? existing.isActive;
     if (isActive) await this.assertNoOverlap(existing.classificationId, from, to, rateId);
     await this.prisma.taxRate.update({
       where: { id: rateId },
       data: {
         ratePercent: dto.ratePercent !== undefined ? new Prisma.Decimal(dto.ratePercent) : undefined,
-        effectiveFrom: dto.effectiveFrom,
-        effectiveTo: dto.effectiveTo,
+        effectiveFrom: dto.effectiveFrom !== undefined ? from : undefined,
+        effectiveTo: dto.effectiveTo !== undefined ? to : undefined,
         isActive: dto.isActive,
         updatedById: userId,
       },
@@ -163,16 +170,18 @@ export class TaxService {
     if (clash) throw new ConflictException('A tax classification with this name already exists');
   }
 
-  /** Active rate periods for a classification may not overlap. Open-ended (effectiveTo null) = +∞. */
+  /**
+   * Active rate periods for a classification may not share a calendar day. Periods are inclusive on
+   * both ends (see tax-calendar.ts); open-ended (effectiveTo null) = no end. Adjacent periods such as
+   * …→2026-06-30 and 2026-07-01→… are allowed.
+   */
   private async assertNoOverlap(classificationId: string, from: Date, to: Date | null, excludeRateId: string | null): Promise<void> {
     const actives = await this.prisma.taxRate.findMany({ where: { classificationId, isActive: true } });
+    const fromDay = toCalendarDate(from);
+    const toDay = to ? toCalendarDate(to) : null;
     for (const r of actives) {
       if (excludeRateId && r.id === excludeRateId) continue;
-      const rTo = r.effectiveTo;
-      // [from,to) overlaps [r.from,r.to) when each starts before the other ends.
-      const startsBeforeOtherEnds = rTo == null || from < rTo;
-      const otherStartsBeforeThisEnds = to == null || r.effectiveFrom < to;
-      if (startsBeforeOtherEnds && otherStartsBeforeThisEnds) {
+      if (periodsOverlap(fromDay, toDay, toCalendarDate(r.effectiveFrom), r.effectiveTo ? toCalendarDate(r.effectiveTo) : null)) {
         throw new ConflictException('An active rate already covers part of this period');
       }
     }

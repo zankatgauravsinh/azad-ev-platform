@@ -52,6 +52,9 @@ export type UpdateTaxClassificationInput = z.infer<typeof updateTaxClassificatio
 
 // ── Rates ──────────────────────────────────────────────────
 // A single combined GST rate (e.g. 5.00). effectiveTo = null means open-ended.
+// effectiveFrom / effectiveTo are CALENDAR DATES ('YYYY-MM-DD'), both inclusive: a rate ending
+// 2026-06-30 and the next starting 2026-07-01 are adjacent with no gap. Any time-of-day is ignored.
+const calendarDay = (d: Date): string => d.toISOString().slice(0, 10);
 export const createTaxRateSchema = z
   .object({
     ratePercent: z.number().min(0, 'Rate cannot be negative').max(100, 'Rate cannot exceed 100%'),
@@ -60,8 +63,8 @@ export const createTaxRateSchema = z
     // Optional on input; the service defaults a new rate to active.
     isActive: z.boolean().optional(),
   })
-  .refine((v) => v.effectiveTo == null || v.effectiveTo > v.effectiveFrom, {
-    message: 'Effective-to must be after effective-from',
+  .refine((v) => v.effectiveTo == null || calendarDay(v.effectiveTo) >= calendarDay(v.effectiveFrom), {
+    message: 'Effective-to cannot be before effective-from',
     path: ['effectiveTo'],
   });
 export type CreateTaxRateInput = z.infer<typeof createTaxRateSchema>;
