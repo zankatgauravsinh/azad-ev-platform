@@ -31,6 +31,12 @@ export interface NavItem {
    */
   permission?: string;
   /**
+   * OR/union of effective-permission keys — the item is shown when the user has ANY of them.
+   * For a destination (e.g. Finance) that aggregates several independent permission families,
+   * each still independently gated inside the page. Takes precedence over `permission`/`roles`.
+   */
+  anyPermission?: string[];
+  /**
    * LEGACY role gate — still used by nav items whose module has not yet been migrated to
    * permissions (later batches). Ignored when `permission` is set. Empty = all authenticated roles.
    */
@@ -54,7 +60,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Service', to: '/service', icon: Wrench, enabled: true, permission: 'service.view' },
   { label: 'Spare Parts', to: '/service/spare-parts', icon: Package, enabled: true, permission: 'spareparts.view' },
   { label: 'Warranty & AMC', to: '/warranty', icon: ShieldCheck, enabled: true, permission: 'warranty.view' },
-  { label: 'Finance', to: '/finance', icon: Wallet, enabled: true, roles: ['OWNER', 'MANAGER', 'ACCOUNTANT'] },
+  { label: 'Finance', to: '/finance', icon: Wallet, enabled: true, anyPermission: ['finance.view', 'expenses.view', 'income.view', 'vendors.view', 'bank.view'] },
   { label: 'Reports', to: '/reports', icon: BarChart3, enabled: true, permission: 'reports.view' },
   { label: 'Staff', to: '/staff', icon: UserCog, enabled: true, roles: ['OWNER'] },
   { label: 'Settings', to: '/settings', icon: Settings, enabled: true, permission: 'settings.view' },
@@ -67,6 +73,7 @@ export const NAV_ITEMS: NavItem[] = [
  */
 export function visibleNavItems(role: Role, can: (permission: string) => boolean): NavItem[] {
   return NAV_ITEMS.filter((item) => {
+    if (item.anyPermission) return item.anyPermission.some((p) => can(p));
     if (item.permission) return can(item.permission);
     if (item.roles) return item.roles.includes(role);
     return true;
