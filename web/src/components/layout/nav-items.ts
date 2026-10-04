@@ -50,7 +50,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Quotations', to: '/quotations', icon: IndianRupee, enabled: true, permission: 'quotations.view' },
   { label: 'Bookings', to: '/bookings', icon: ClipboardList, enabled: true, permission: 'bookings.view' },
   { label: 'Delivery', to: '/delivery', icon: Bike, enabled: true, permission: 'delivery.view' },
-  { label: 'Returns', to: '/returns', icon: Undo2, enabled: true, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
+  { label: 'Returns', to: '/returns', icon: Undo2, enabled: true, permission: 'returns.view' },
   { label: 'Service', to: '/service', icon: Wrench, enabled: true, permission: 'service.view' },
   { label: 'Spare Parts', to: '/service/spare-parts', icon: Package, enabled: true, permission: 'spareparts.view' },
   { label: 'Warranty & AMC', to: '/warranty', icon: ShieldCheck, enabled: true, permission: 'warranty.view' },

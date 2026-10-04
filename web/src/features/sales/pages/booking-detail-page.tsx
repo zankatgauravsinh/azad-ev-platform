@@ -30,6 +30,7 @@ export function BookingDetailPage(): JSX.Element {
   const canPayment = useCan('bookings.payment');
   const canInvoice = useCan('bookings.invoice');
   const canCancel = useCan('bookings.cancel');
+  const canRequestReturn = useCan('returns.create'); // POST /returns (Batch 6)
   const { data: b, isLoading } = useBooking(id);
   const [dialog, setDialog] = useState<'payment' | 'finance' | 'insurance' | 'schedule' | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -102,7 +103,7 @@ export function BookingDetailPage(): JSX.Element {
               </>
             )}
             {canUpdate && b.sale && !b.actualDelivery && <Button variant="accent" onClick={() => run(() => salesApi.deliver(b.id), 'Delivered')} disabled={busy}><Truck className="h-4 w-4" /> Deliver</Button>}
-            {b.sale && b.actualDelivery && <Button variant="outline" onClick={() => setReturnOpen(true)}><Undo2 className="h-4 w-4" /> Request return</Button>}
+            {canRequestReturn && b.sale && b.actualDelivery && <Button variant="outline" onClick={() => setReturnOpen(true)}><Undo2 className="h-4 w-4" /> Request return</Button>}
             {canCancel && b.status !== BookingStatus.CONVERTED && <Button variant="outline" className="text-destructive" onClick={() => setCancelOpen(true)}><Ban className="h-4 w-4" /> Cancel</Button>}
           </div>
         )}
