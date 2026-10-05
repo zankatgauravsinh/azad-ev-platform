@@ -1,8 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { CompanySetting } from '@prisma/client';
 import {
   ActivityAction,
   BackupFrequency,
+  gstActivationBlockers,
   type CompanySettingsDto,
   type UpdateCompanySettingsInput,
 } from '@azad/shared';
@@ -51,10 +52,25 @@ export class CompanySettingsService {
     const current = await this.getSettings();
     // Money settings arrive as integer paise but are stored as BigInt.
     const { openingCash, openingBank, lowCashThreshold, largeExpenseThreshold, ...rest } = dto;
+
+    // GST registration. An empty GSTIN clears it. GST can only be (or stay) enabled with a well-formed
+    // GSTIN and a matching two-digit state code — checked here, on the resulting state, whenever a
+    // request touches the registration. This is the backend gate; the UI check is a convenience.
+    const gstNumber = dto.gstNumber === undefined ? undefined : dto.gstNumber === '' ? null : dto.gstNumber;
+    const touchesGstRegistration = dto.gstEnabled !== undefined || dto.gstNumber !== undefined || dto.gstStateCode !== undefined;
+    if (touchesGstRegistration && (dto.gstEnabled ?? current.gstEnabled)) {
+      const blockers = gstActivationBlockers({
+        gstNumber: gstNumber === undefined ? current.gstNumber : gstNumber,
+        gstStateCode: dto.gstStateCode === undefined ? current.gstStateCode : dto.gstStateCode,
+      });
+      if (blockers.length > 0) throw new BadRequestException(`GST cannot be enabled: ${blockers.join('; ')}`);
+    }
+
     const updated = await this.prisma.companySetting.update({
       where: { id: current.id },
       data: {
         ...rest,
+        ...(gstNumber !== undefined ? { gstNumber } : {}),
         ...(openingCash !== undefined ? { openingCash: BigInt(openingCash) } : {}),
         ...(openingBank !== undefined ? { openingBank: BigInt(openingBank) } : {}),
         ...(lowCashThreshold !== undefined ? { lowCashThreshold: BigInt(lowCashThreshold) } : {}),
@@ -70,7 +86,26 @@ export class CompanySettingsService {
       entityId: updated.id,
       summary: 'Updated company settings',
     });
+    await this.auditGstChanges(current, updated, userId);
     return this.toDto(updated);
+  }
+
+  /** A dedicated audit entry (old → new) whenever a GST setting actually changes. */
+  private async auditGstChanges(before: CompanySetting, after: CompanySetting, userId: string): Promise<void> {
+    const fields = ['gstEnabled', 'gstNumber', 'gstStateCode', 'gstDiscountTreatment', 'gstExchangeTreatment'] as const;
+    const changes: Record<string, { from: string | boolean | null; to: string | boolean | null }> = {};
+    for (const f of fields) if (before[f] !== after[f]) changes[f] = { from: before[f], to: after[f] };
+    const changed = Object.keys(changes);
+    if (changed.length === 0) return;
+    const show = (v: string | boolean | null): string => (v === null ? '—' : String(v));
+    await this.activityLog.record({
+      actorId: userId,
+      action: ActivityAction.UPDATE,
+      entityType: 'CompanySetting',
+      entityId: after.id,
+      summary: `GST settings changed: ${changed.map((f) => `${f} ${show(changes[f]!.from)} → ${show(changes[f]!.to)}`).join('; ')}`,
+      metadata: { gstChanges: changes },
+    });
   }
 
   async setImage(kind: 'companyLogo' | 'favicon', file: UploadedFile, userId: string): Promise<CompanySettingsDto> {
@@ -120,6 +155,9 @@ export class CompanySettingsService {
       timeFormat: s.timeFormat,
       gstEnabled: s.gstEnabled,
       gstNumber: s.gstNumber,
+      gstStateCode: s.gstStateCode,
+      gstDiscountTreatment: s.gstDiscountTreatment,
+      gstExchangeTreatment: s.gstExchangeTreatment,
       taxPercentage: s.taxPercentage.toString(),
       invoicePrefix: s.invoicePrefix,
       bookingPrefix: s.bookingPrefix,

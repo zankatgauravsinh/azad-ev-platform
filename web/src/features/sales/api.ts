@@ -24,6 +24,8 @@ import { apiClient } from '@/lib/api-client';
 export interface AccessoryRef {
   id: string;
   name: string;
+  /** GST classification assigned to the accessory (null / absent = not classified). */
+  taxClassificationId?: string | null;
   sellPrice: string;
   avgCost: string;
   isPart: boolean;

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BackupFrequency, BACKUP_FREQUENCIES } from './enums';
+import { GST_ADJUSTMENT_TREATMENTS, GST_STATE_CODE_PATTERN, type GstAdjustmentTreatment } from './tax';
 
 export const DATE_FORMATS = ['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD'] as const;
 export type DateFormat = (typeof DATE_FORMATS)[number];
@@ -37,7 +38,17 @@ export const updateCompanySettingsSchema = z
     timeFormat: z.enum(TIME_FORMATS).optional(),
     // GST / tax
     gstEnabled: z.boolean().optional(),
-    gstNumber: z.string().trim().max(20).optional(),
+    // Stored upper-cased. Structure is checked by the API only when GST is (being) enabled.
+    gstNumber: z.string().trim().max(20).optional().transform((v) => (v === undefined ? undefined : v.toUpperCase())),
+    // Two-digit GST state code; '' or null clears it. Never derived from the free-text state.
+    gstStateCode: z
+      .union([z.literal(''), z.string().trim().regex(GST_STATE_CODE_PATTERN, 'GST state code must be two digits')])
+      .nullable()
+      .optional()
+      .transform((v) => (v === '' ? null : v)),
+    // GST treatment of discount / exchange. No default — null means "not decided".
+    gstDiscountTreatment: z.enum(GST_ADJUSTMENT_TREATMENTS as [GstAdjustmentTreatment, ...GstAdjustmentTreatment[]]).nullable().optional(),
+    gstExchangeTreatment: z.enum(GST_ADJUSTMENT_TREATMENTS as [GstAdjustmentTreatment, ...GstAdjustmentTreatment[]]).nullable().optional(),
     taxPercentage: z.coerce.number().min(0).max(100).optional(),
     // Prefixes
     invoicePrefix: prefix('Invoice prefix').optional(),
@@ -118,6 +129,9 @@ export interface CompanySettingsDto {
   timeFormat: string;
   gstEnabled: boolean;
   gstNumber: string | null;
+  gstStateCode: string | null;
+  gstDiscountTreatment: GstAdjustmentTreatment | null;
+  gstExchangeTreatment: GstAdjustmentTreatment | null;
   taxPercentage: string;
   invoicePrefix: string;
   bookingPrefix: string;

@@ -1,6 +1,10 @@
 import type {
   CreateTaxClassificationInput,
   CreateTaxRateInput,
+  GstReadinessDto,
+  ProductTaxClassificationDto,
+  TaxComponentMappingDto,
+  TaxMappedComponent,
   TaxClassificationDto,
   TaxRateDto,
   UpdateTaxClassificationInput,
@@ -26,4 +30,16 @@ export const taxApi = {
   removeRate: async (rateId: string): Promise<void> => {
     await apiClient.delete(`/tax/rates/${rateId}`);
   },
+
+  // ── GST configuration (ids travel in the path / body only — never in a query string) ──
+  readiness: async (): Promise<GstReadinessDto> => (await apiClient.get<GstReadinessDto>('/tax/readiness')).data,
+  componentMappings: async (): Promise<TaxComponentMappingDto[]> => (await apiClient.get<TaxComponentMappingDto[]>('/tax/component-mappings')).data,
+  setComponentMapping: async (component: TaxMappedComponent, classificationId: string): Promise<TaxComponentMappingDto> =>
+    (await apiClient.put<TaxComponentMappingDto>(`/tax/component-mappings/${component}`, { classificationId })).data,
+  clearComponentMapping: async (component: TaxMappedComponent): Promise<TaxComponentMappingDto> =>
+    (await apiClient.delete<TaxComponentMappingDto>(`/tax/component-mappings/${component}`)).data,
+  setScooterModelClassification: async (modelId: string, taxClassificationId: string | null): Promise<ProductTaxClassificationDto> =>
+    (await apiClient.put<ProductTaxClassificationDto>(`/tax/scooter-models/${modelId}/classification`, { taxClassificationId })).data,
+  setAccessoryClassification: async (accessoryId: string, taxClassificationId: string | null): Promise<ProductTaxClassificationDto> =>
+    (await apiClient.put<ProductTaxClassificationDto>(`/tax/accessories/${accessoryId}/classification`, { taxClassificationId })).data,
 };

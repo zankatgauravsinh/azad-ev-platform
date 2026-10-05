@@ -24,6 +24,16 @@ vi.mock('../hooks', () => ({
 }));
 vi.mock('../components/classification-form-dialog', () => ({ ClassificationFormDialog: (p: { open: boolean }) => (p.open ? <div data-testid="class-form" /> : null) }));
 vi.mock('../components/rates-dialog', () => ({ RatesDialog: (p: { open: boolean }) => (p.open ? <div data-testid="rates" /> : null) }));
+// The configuration cards have their own tests; here they are stand-ins that expose the props the page passes.
+vi.mock('../components/gst-registration-card', () => ({
+  GstRegistrationCard: (p: { canManage: boolean }) => <div data-testid="registration-card" data-can-manage={String(p.canManage)} />,
+  GstReadinessCard: () => <div data-testid="readiness-card" />,
+}));
+vi.mock('../components/gst-config-cards', () => ({
+  GstPolicyCard: (p: { canManage: boolean }) => <div data-testid="policy-card" data-can-manage={String(p.canManage)} />,
+  ComponentMappingCard: (p: { canManage: boolean; classifications: unknown[] }) => <div data-testid="mapping-card" data-can-manage={String(p.canManage)} data-options={p.classifications.length} />,
+  ProductDefaultsCard: (p: { classifications: unknown[] }) => <div data-testid="product-card" data-options={p.classifications.length} />,
+}));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/components/ui/dropdown-menu', async () => {
   const React = await import('react');
@@ -65,5 +75,25 @@ describe('GstManagementPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /New classification/ }));
     expect(screen.getByTestId('class-form')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Manage rates' }).length).toBe(2);
+  });
+
+  it('is the single GST administration area: registration, readiness, policy, classifications, mappings and product defaults', () => {
+    renderWith(['settings.view', 'settings.manage']);
+    for (const id of ['registration-card', 'readiness-card', 'policy-card', 'mapping-card', 'product-card']) expect(screen.getByTestId(id)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Tax classifications' })).toBeInTheDocument();
+    // Editing rights are passed down from settings.manage; the active classifications feed the selectors.
+    expect(screen.getByTestId('registration-card')).toHaveAttribute('data-can-manage', 'true');
+    expect(screen.getByTestId('mapping-card')).toHaveAttribute('data-options', '2');
+    expect(screen.getByTestId('product-card')).toHaveAttribute('data-options', '2');
+  });
+
+  it('a settings.view-only user gets every section read-only', () => {
+    renderWith(['settings.view']);
+    for (const id of ['registration-card', 'policy-card', 'mapping-card']) expect(screen.getByTestId(id)).toHaveAttribute('data-can-manage', 'false');
+  });
+
+  it('renders none of the configuration for a user without settings.view', () => {
+    renderWith([]);
+    for (const id of ['registration-card', 'readiness-card', 'policy-card', 'mapping-card', 'product-card']) expect(screen.queryByTestId(id)).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { GST_STATE_CODE_PATTERN } from './tax';
 import {
   CustomerEventType,
   FollowUpPriority,
@@ -49,6 +50,12 @@ export const createCustomerSchema = z.object({
     .optional()
     .or(z.literal(''))
     .transform((v) => (v ? v : undefined)),
+  // GST state code (place of supply). Optional; two digits; '' clears it. Never derived from `state`.
+  gstStateCode: z
+    .union([z.literal(''), z.string().trim().regex(GST_STATE_CODE_PATTERN, 'GST state code must be two digits')])
+    .nullable()
+    .optional()
+    .transform((v) => (v === '' ? null : v)),
   village: optionalText(80),
   occupation: optionalText(80),
   dateOfBirth: z.coerce.date().optional(),
@@ -132,6 +139,7 @@ export interface CustomerDto {
   city: string | null;
   state: string | null;
   pin: string | null;
+  gstStateCode: string | null;
   village: string | null;
   occupation: string | null;
   dateOfBirth: string | null;

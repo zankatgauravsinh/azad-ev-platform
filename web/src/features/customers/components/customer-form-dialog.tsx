@@ -30,6 +30,7 @@ const schema = z.object({
   city: z.string().optional(),
   state: z.string().optional(),
   pin: z.string().trim().regex(/^\d{6}$/, 'PIN must be 6 digits').or(z.literal('')).optional(),
+  gstStateCode: z.string().trim().regex(/^\d{2}$/, 'GST state code must be two digits').or(z.literal('')).optional(),
   occupation: z.string().optional(),
   dateOfBirth: z.string().optional(),
   gender: z.enum(GENDERS as [Gender, ...Gender[]]).or(z.literal('')).optional(),
@@ -42,7 +43,7 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 const empty: FormValues = {
-  name: '', phone: '', altPhone: '', email: '', address: '', city: '', state: 'Gujarat', pin: '',
+  name: '', phone: '', altPhone: '', email: '', address: '', city: '', state: 'Gujarat', pin: '', gstStateCode: '',
   occupation: '', dateOfBirth: '', gender: '', leadStatus: LeadStatus.NEW, source: '',
   preferredModelId: '', preferredColour: '', preferredFinanceOption: '',
 };
@@ -81,6 +82,7 @@ export function CustomerFormDialog({
             city: customer.city ?? '',
             state: customer.state ?? '',
             pin: customer.pin ?? '',
+            gstStateCode: customer.gstStateCode ?? '',
             occupation: customer.occupation ?? '',
             dateOfBirth: customer.dateOfBirth ? customer.dateOfBirth.slice(0, 10) : '',
             gender: customer.gender ?? '',
@@ -104,6 +106,8 @@ export function CustomerFormDialog({
       city: v.city || undefined,
       state: v.state || undefined,
       pin: v.pin || undefined,
+      // Sent even when empty so an existing code can be cleared; never derived from the state above.
+      gstStateCode: v.gstStateCode ?? '',
       occupation: v.occupation || undefined,
       dateOfBirth: v.dateOfBirth ? new Date(v.dateOfBirth) : undefined,
       gender: v.gender || undefined,
@@ -142,6 +146,7 @@ export function CustomerFormDialog({
           <Field label="City"><Input {...register('city')} /></Field>
           <Field label="State"><Input {...register('state')} /></Field>
           <Field label="PIN" error={errors.pin?.message}><Input inputMode="numeric" {...register('pin')} /></Field>
+          <Field label="GST state code (optional)" error={errors.gstStateCode?.message}><Input inputMode="numeric" maxLength={2} placeholder="Two digits" {...register('gstStateCode')} /></Field>
           <Field label="Occupation"><Input {...register('occupation')} /></Field>
           <Field label="Date of birth"><Input type="date" {...register('dateOfBirth')} /></Field>
           <Field label="Gender">

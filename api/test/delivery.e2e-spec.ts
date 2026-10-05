@@ -77,7 +77,9 @@ describe('Delivery (e2e)', () => {
   });
 
   it('shows the booking in the pipeline as READY once invoiced + paid', async () => {
-    const list = await http().get('/api/v1/deliveries?pageSize=100').set('Authorization', auth(ownerToken)).expect(200);
+    // Locate this suite's own booking with the list's search (its unique VIN) rather than assuming it is
+    // within the first page — the pipeline grows with every run on a shared development database.
+    const list = await http().get(`/api/v1/deliveries?pageSize=100&q=DLVVIN${stamp}`).set('Authorization', auth(ownerToken)).expect(200);
     const row = list.body.data.find((r: { bookingId: string }) => r.bookingId === bookingId);
     expect(row).toBeTruthy();
     expect(row.status).toBe('READY');
@@ -186,7 +188,8 @@ describe('Delivery (e2e)', () => {
     });
 
     it('shows the invoiced-but-unpaid booking as AWAITING_PAYMENT with the balance', async () => {
-      const list = await http().get('/api/v1/deliveries?pageSize=100').set('Authorization', auth(ownerToken)).expect(200);
+      // Found by its unique VIN via the list's search, not by its position in the first page.
+      const list = await http().get(`/api/v1/deliveries?pageSize=100&q=DLVVINP${stamp}`).set('Authorization', auth(ownerToken)).expect(200);
       const row = list.body.data.find((r: { bookingId: string }) => r.bookingId === pBookingId);
       expect(row.status).toBe('AWAITING_PAYMENT');
       expect(row.balance).toBe(String(outstanding));

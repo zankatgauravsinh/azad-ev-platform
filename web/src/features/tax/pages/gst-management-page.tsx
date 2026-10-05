@@ -16,6 +16,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { useTaxClassifications, useTaxMutations } from '../hooks';
 import { ClassificationFormDialog } from '../components/classification-form-dialog';
 import { RatesDialog } from '../components/rates-dialog';
+import { GstReadinessCard, GstRegistrationCard } from '../components/gst-registration-card';
+import { ComponentMappingCard, GstPolicyCard, ProductDefaultsCard } from '../components/gst-config-cards';
 
 /** Current (open-ended or latest active) rate for display only. */
 const currentRate = (c: TaxClassificationDto): string | null => {
@@ -84,18 +86,38 @@ export function GstManagementPage(): JSX.Element {
       <button type="button" onClick={() => navigate('/settings')} className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /> Back to settings</button>
       <PageHeader
         title="GST Management"
-        description="Tax classifications (HSN/SAC) and effective-dated rates. Configuration only — this does not calculate GST on sales yet."
-        actions={canManage ? <Button onClick={() => setFormFor({})}><Plus className="h-4 w-4" /> New classification</Button> : undefined}
+        description="GST registration, tax classifications and the mappings that new invoices use. Changes never alter an invoice that has already been generated."
       />
 
-      <DataTable
-        columns={columns}
-        rows={data ?? []}
-        getRowId={(c) => c.id}
-        loading={isLoading || isFetching}
-        onRowClick={canManage ? (c) => setRatesForId(c.id) : undefined}
-        emptyState={<EmptyState icon={Receipt} title="No tax classifications" description={canManage ? 'Create a classification (e.g. Electric two-wheeler) to get started.' : 'None configured yet.'} />}
-      />
+      <div className="space-y-6">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <GstRegistrationCard canManage={canManage} />
+          <GstReadinessCard />
+        </div>
+
+        <GstPolicyCard canManage={canManage} />
+
+        <section aria-label="Tax classifications" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold">Tax classifications</h2>
+              <p className="text-xs text-muted-foreground">HSN/SAC, treatment and effective-dated rates.</p>
+            </div>
+            {canManage && <Button onClick={() => setFormFor({})}><Plus className="h-4 w-4" /> New classification</Button>}
+          </div>
+          <DataTable
+            columns={columns}
+            rows={data ?? []}
+            getRowId={(c) => c.id}
+            loading={isLoading || isFetching}
+            onRowClick={canManage ? (c) => setRatesForId(c.id) : undefined}
+            emptyState={<EmptyState icon={Receipt} title="No tax classifications" description={canManage ? 'Create a classification to get started.' : 'None configured yet.'} />}
+          />
+        </section>
+
+        <ComponentMappingCard canManage={canManage} classifications={data ?? []} />
+        <ProductDefaultsCard classifications={data ?? []} />
+      </div>
 
       <ClassificationFormDialog open={formFor !== null} onOpenChange={(o) => { if (!o) setFormFor(null); }} classification={formFor?.classification} />
       <RatesDialog open={ratesForId !== null} onOpenChange={(o) => { if (!o) setRatesForId(null); }} classification={ratesFor} />

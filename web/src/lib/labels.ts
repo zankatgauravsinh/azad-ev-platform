@@ -153,3 +153,18 @@ const PERMISSION_MODULE_LABELS: Record<string, string> = {
 export function permissionModuleLabel(moduleKey: string): string {
   return PERMISSION_MODULE_LABELS[moduleKey] ?? titleCase(moduleKey);
 }
+
+// ── GST configuration ──
+const GST_ADJUSTMENT_LABEL: Record<string, string> = {
+  REDUCES_VEHICLE_TAXABLE_VALUE: 'Reduces vehicle taxable value',
+  AFTER_TAX_ADJUSTMENT: 'After-tax adjustment',
+};
+export const gstAdjustmentTreatmentLabel = (v: string): string => GST_ADJUSTMENT_LABEL[v] ?? titleCase(v);
+
+const TAX_COMPONENT_LABEL: Record<string, string> = {
+  EXTENDED_WARRANTY: 'Extended Warranty',
+  RTO: 'RTO',
+  INSURANCE: 'Insurance',
+  REGISTRATION: 'Registration',
+};
+export const taxComponentLabel = (v: string): string => TAX_COMPONENT_LABEL[v] ?? titleCase(v);

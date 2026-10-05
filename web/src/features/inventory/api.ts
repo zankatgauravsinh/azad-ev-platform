@@ -17,6 +17,8 @@ export interface ModelRef {
   id: string;
   name: string;
   brand: string;
+  /** GST classification assigned to the model (null / absent = not classified). */
+  taxClassificationId?: string | null;
 }
 export interface VariantOption {
   id: string;

@@ -53,7 +53,7 @@ export function SettingsPage(): JSX.Element {
         website: settings.website ?? '', tagline: settings.tagline ?? '',
         currency: settings.currency as never, timezone: settings.timezone, language: settings.language as never,
         dateFormat: settings.dateFormat as never, timeFormat: settings.timeFormat as never,
-        gstEnabled: settings.gstEnabled, gstNumber: settings.gstNumber ?? '', taxPercentage: Number(settings.taxPercentage),
+        taxPercentage: Number(settings.taxPercentage),
         invoicePrefix: settings.invoicePrefix, bookingPrefix: settings.bookingPrefix, quotationPrefix: settings.quotationPrefix,
         receiptPrefix: settings.receiptPrefix, jobCardPrefix: settings.jobCardPrefix,
         defaultWarrantyMonths: settings.defaultWarrantyMonths, serviceReminderDays: settings.serviceReminderDays,
@@ -129,7 +129,7 @@ export function SettingsPage(): JSX.Element {
               <span className="rounded-lg bg-primary/10 p-2 text-primary"><Receipt className="h-5 w-5" /></span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">GST Management</p>
-                <p className="text-xs text-muted-foreground">Tax classifications (HSN/SAC) and effective-dated rates. Configuration only.</p>
+                <p className="text-xs text-muted-foreground">GST registration, tax classifications, component mappings and product defaults.</p>
               </div>
               <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
             </CardContent>
@@ -208,8 +208,10 @@ export function SettingsPage(): JSX.Element {
               <Panel>
                 <Grid>
                   <Field label="Invoice prefix" error={errors.invoicePrefix?.message}><Input {...register('invoicePrefix')} /></Field>
-                  <SwitchField control={control} name="gstEnabled" label="GST enabled" />
-                  <Field label="GST number" error={errors.gstNumber?.message}><Input {...register('gstNumber')} disabled={!canManageSettings || !values.gstEnabled} /></Field>
+                  <p className="text-sm text-muted-foreground sm:col-span-2">
+                    GST registration ({settings.gstEnabled ? 'enabled' : 'disabled'}) is managed in{' '}
+                    <Link to="/settings/gst" className="font-medium text-accent underline-offset-4 hover:underline">GST Management</Link>.
+                  </p>
                   <Field label="Tax percentage (%)" error={errors.taxPercentage?.message}><Input type="number" min={0} max={100} step={0.1} {...register('taxPercentage', { valueAsNumber: true })} /></Field>
                   <Field label="Terms & conditions" className="sm:col-span-2">
                     <div>
@@ -362,14 +364,6 @@ function ColorField({ label, name, register, value, error }: { label: string; na
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function SwitchField({ control, name, label }: { control: any; name: string; label: string }): JSX.Element {
-  return (
-    <Field label={label}>
-      <Controller control={control} name={name} render={({ field }) => <Switch checked={Boolean(field.value)} onCheckedChange={field.onChange} />} />
-    </Field>
-  );
-}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function SwitchRow({ control, name, label, hint }: { control: any; name: string; label: string; hint?: string }): JSX.Element {
   return (
