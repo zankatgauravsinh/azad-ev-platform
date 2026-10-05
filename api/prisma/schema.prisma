@@ -318,15 +318,15 @@ model User {
 /// NOTE: named `AppRole` (not `Role`) because the legacy `enum Role` still occupies that name
 /// during the migration; may be renamed to `Role` once the enum is dropped (final phase).
 model AppRole {
-  id          String   @id @default(uuid())
+  id          String  @id @default(uuid())
   companyId   String
-  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   /// Stable identifier for seeded system roles (e.g. "OWNER"); null for custom roles.
   key         String?
   name        String
   description String?
-  isSystem    Boolean  @default(false)
-  isProtected Boolean  @default(false)
+  isSystem    Boolean @default(false)
+  isProtected Boolean @default(false)
 
   createdById String?
   updatedById String?
@@ -381,6 +381,8 @@ model Customer {
   city                   String?
   state                  String?
   pin                    String?
+  /// GST state code for place of supply. Never derived from the free-text `state`; null until captured.
+  gstStateCode           String?
   village                String?
   occupation             String?
   dateOfBirth            DateTime?
@@ -530,12 +532,15 @@ model CustomerNoteRevision {
 // ─────────────────────────── Inventory ───────────────────────────
 
 model ScooterModel {
-  id          String  @id @default(uuid())
-  companyId   String  @default("")
-  name        String
-  brand       String
-  description String?
-  isActive    Boolean @default(true)
+  id                  String             @id @default(uuid())
+  companyId           String             @default("")
+  name                String
+  brand               String
+  description         String?
+  isActive            Boolean            @default(true)
+  /// GST classification of this vehicle model (config; null until assigned — no default, no backfill).
+  taxClassificationId String?
+  taxClassification   TaxClassification? @relation(fields: [taxClassificationId], references: [id], onDelete: Restrict)
 
   createdById String?
   updatedById String?
@@ -697,6 +702,10 @@ model Accessory {
   updatedById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  /// GST classification of this accessory (config; null until assigned — no default, no backfill).
+  taxClassificationId String?
+  taxClassification   TaxClassification? @relation(fields: [taxClassificationId], references: [id], onDelete: Restrict)
 
   bookingAccessories   BookingAccessory[]
   quotationAccessories QuotationAccessory[]
@@ -954,6 +963,8 @@ model Sale {
   returns     VehicleReturn[]
   creditNotes CreditNote[]
   refunds     Refund[]
+  /// Immutable GST snapshot — present only for sales invoiced while GST was enabled.
+  taxSnapshot TaxSnapshot?
 
   @@index([customerId])
   @@index([status])
@@ -1475,11 +1486,15 @@ model CompanySetting {
   timeFormat String @default("12h")
 
   // GST / tax
-  gstEnabled    Boolean @default(false)
-  gstNumber     String?
-  taxPercentage Decimal @default(0) @db.Decimal(5, 2)
+  gstEnabled           Boolean                 @default(false)
+  gstNumber            String?
+  taxPercentage        Decimal                 @default(0) @db.Decimal(5, 2)
   // GST registration state code (place-of-supply basis for a future tax engine; config only).
-  gstStateCode  String?
+  gstStateCode         String?
+  // How a booking's discount / exchange value relate to the vehicle's taxable value. CA decisions:
+  // null = not decided, and a GST invoice that carries the corresponding amount is refused.
+  gstDiscountTreatment GstAdjustmentTreatment?
+  gstExchangeTreatment GstAdjustmentTreatment?
 
   // Document prefixes
   invoicePrefix   String @default("INV")
@@ -2205,7 +2220,10 @@ model TaxClassification {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  rates TaxRate[]
+  rates             TaxRate[]
+  scooterModels     ScooterModel[]
+  accessories       Accessory[]
+  componentMappings TaxComponentMapping[]
 
   @@unique([companyId, name])
   @@index([companyId])
@@ -2230,4 +2248,144 @@ model TaxRate {
 
   @@index([companyId])
   @@index([classificationId, effectiveFrom])
+}
+
+// ─────────────────────────── GST on sales (Stage C: immutable tax snapshots) ───────────────────────────
+
+/// How a commercial adjustment (discount / exchange value) relates to the vehicle's taxable value.
+/// Which one applies is a CA decision recorded in CompanySetting — never defaulted.
+enum GstAdjustmentTreatment {
+  /// Deducted from the vehicle line before GST is extracted.
+  REDUCES_VEHICLE_TAXABLE_VALUE
+  /// Leaves every taxable value untouched; only reduces the amount payable.
+  AFTER_TAX_ADJUSTMENT
+}
+
+enum TaxSupplyType {
+  INTRA
+  INTER
+}
+
+enum TaxPricingMode {
+  INCLUSIVE
+  EXCLUSIVE
+}
+
+/// What a snapshot line represents.
+enum TaxLineComponent {
+  VEHICLE
+  ACCESSORY
+  EXTENDED_WARRANTY
+  RTO
+  INSURANCE
+  REGISTRATION
+}
+
+/// Booking components that have no product/service master of their own and are classified by mapping.
+enum TaxMappedComponent {
+  EXTENDED_WARRANTY
+  RTO
+  INSURANCE
+  REGISTRATION
+}
+
+/// Per-company GST classification for a scalar booking component. Config — no row is ever created
+/// automatically; a missing mapping makes a GST invoice carrying that component fail closed.
+model TaxComponentMapping {
+  id               String             @id @default(uuid())
+  companyId        String             @default("")
+  componentType    TaxMappedComponent
+  classificationId String
+  classification   TaxClassification  @relation(fields: [classificationId], references: [id], onDelete: Restrict)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, componentType])
+  @@index([companyId])
+}
+
+/// The GST calculated for one sale, frozen at invoice time. IMMUTABLE: never updated, never
+/// soft-deleted, and never recalculated — later changes to classifications, rates, products,
+/// customers or company settings must not alter it. Present only for sales invoiced with GST enabled.
+model TaxSnapshot {
+  id        String @id @default(uuid())
+  companyId String @default("")
+  saleId    String @unique
+  sale      Sale   @relation(fields: [saleId], references: [id], onDelete: Restrict)
+
+  engineVersion          String
+  /// The tax-point calendar date the rates were resolved for.
+  asOf                   DateTime      @db.Date
+  supplyType             TaxSupplyType
+  supplierGstin          String
+  supplierStateCode      String
+  placeOfSupplyStateCode String
+
+  /// The policy actually applied (null when the booking carried no such amount).
+  discountTreatment GstAdjustmentTreatment?
+  exchangeTreatment GstAdjustmentTreatment?
+  discountAmount    BigInt                  @default(0)
+  exchangeAmount    BigInt                  @default(0)
+
+  // Sums of the line results (never recomputed from the document total).
+  totalGross    BigInt
+  totalTaxable  BigInt
+  totalCGST     BigInt
+  totalSGST     BigInt
+  totalIGST     BigInt
+  totalTax      BigInt
+  totalRoundOff BigInt
+  /// The customer-facing total this snapshot reconciles to — always equal to Sale.total.
+  documentTotal BigInt
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  lines TaxSnapshotLine[]
+
+  @@index([companyId])
+  @@index([companyId, asOf])
+}
+
+/// One calculated line of a TaxSnapshot. IMMUTABLE. The classification fields are COPIED values and
+/// are the historical truth; classificationId is reference metadata only (deliberately not a relation).
+model TaxSnapshotLine {
+  id         String      @id @default(uuid())
+  companyId  String      @default("")
+  snapshotId String
+  snapshot   TaxSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  lineKey       String
+  position      Int
+  componentType TaxLineComponent
+  description   String
+  /// Identifier of the originating record, when there is one (e.g. the accessory id). Not a relation.
+  sourceId      String?
+  quantity      Int              @default(1)
+  unitAmount    BigInt
+
+  classificationId   String
+  classificationName String
+  codeType           TaxCodeType
+  code               String?
+  treatment          TaxTreatment
+  ratePercent        Decimal?       @db.Decimal(5, 2)
+  pricingMode        TaxPricingMode
+
+  grossAmount   BigInt
+  taxableAmount BigInt
+  cgst          BigInt
+  sgst          BigInt
+  igst          BigInt
+  taxTotal      BigInt
+  roundOff      BigInt
+
+  createdAt DateTime @default(now())
+
+  @@unique([snapshotId, lineKey])
+  @@unique([snapshotId, position])
+  @@index([companyId])
 }

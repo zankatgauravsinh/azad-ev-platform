@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CustomersModule } from '../customers/customers.module';
 import { MonthlyClosingModule } from '../finance/monthly-closing.module';
+import { TaxModule } from '../tax/tax.module';
 import { QuotationsController } from './quotations.controller';
 import { QuotationsService } from './quotations.service';
 import { BookingsController } from './bookings.controller';
@@ -10,7 +11,7 @@ import { SequenceService } from './sequence.service';
 import { SalesPdfService } from './sales-pdf.service';
 
 @Module({
-  imports: [CustomersModule, MonthlyClosingModule], // CustomerTimelineService; month-lock guard on back-dated payments
+  imports: [CustomersModule, MonthlyClosingModule, TaxModule], // CustomerTimelineService; month-lock guard on back-dated payments; GST snapshot on invoice
   controllers: [QuotationsController, BookingsController, AccessoriesController],
   providers: [QuotationsService, BookingsService, SequenceService, SalesPdfService],
   exports: [BookingsService, QuotationsService, SequenceService],

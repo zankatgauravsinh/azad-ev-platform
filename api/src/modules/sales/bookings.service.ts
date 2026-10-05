@@ -30,6 +30,7 @@ import { SequenceService } from './sequence.service';
 import { SalesPdfService } from './sales-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { MonthlyClosingService } from '../finance/monthly-closing.service';
+import { SaleTaxService } from '../tax/sale-tax.service';
 import { computeTotal, sumAccessories } from './pricing';
 
 type Tx = Prisma.TransactionClient;
@@ -59,6 +60,7 @@ export class BookingsService {
     private readonly pdf: SalesPdfService,
     private readonly pdfBrand: PdfBrandService,
     private readonly closing: MonthlyClosingService,
+    private readonly saleTax: SaleTaxService,
   ) {}
 
   // ── Reads ──────────────────────────────────────────────
@@ -277,6 +279,11 @@ export class BookingsService {
     const booking = await this.getById(id);
     if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot invoice a cancelled booking');
     if (booking.sale) throw new ConflictException('An invoice already exists for this booking');
+    const invoicedAt = new Date();
+    // GST (only when the company has it enabled; otherwise null and everything below is unchanged).
+    // Calculated BEFORE the transaction: if it fails nothing is written and no invoice number is used.
+    // It never alters the commercial figures — the Sale still copies the booking's amounts as-is.
+    const saleTax = await this.saleTax.prepare(booking, { invoicedAt });
     const sale = await this.prisma.$transaction(async (tx) => {
       const invoiceNumber = await this.sequence.next('invoice', tx);
       const created = await tx.sale.create({
@@ -297,11 +304,13 @@ export class BookingsService {
           taxAmount: booking.taxAmount,
           total: booking.total,
           status: SaleStatus.INVOICED,
-          invoicedAt: new Date(),
+          invoicedAt,
           createdById: userId,
           updatedById: userId,
         },
       });
+      // Same transaction as the Sale: the invoice and its immutable GST snapshot commit together or not at all.
+      if (saleTax) await this.saleTax.persist(tx, created.id, saleTax, userId);
       await tx.booking.update({ where: { id }, data: { status: BookingStatus.CONVERTED, updatedById: userId } });
       await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.INVOICE_GENERATED, title: `Invoice ${invoiceNumber} generated`, entityType: 'Sale', entityId: created.id, actorId: userId }, tx);
       return created;

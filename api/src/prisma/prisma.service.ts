@@ -47,7 +47,16 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   'AppRole',
   // GST / tax config (Stage A). TaxRate is reached per-company too; both carry companyId.
   'TaxClassification', 'TaxRate',
+  // GST on sales (Stage C): component mapping + immutable snapshots, all carrying companyId.
+  'TaxComponentMapping', 'TaxSnapshot', 'TaxSnapshotLine',
 ]);
+
+/**
+ * Write-once models: a GST snapshot is the historical record of an issued invoice. It may be created,
+ * never changed or removed through the application.
+ */
+const IMMUTABLE_MODELS = new Set<Prisma.ModelName>(['TaxSnapshot', 'TaxSnapshotLine']);
+const MUTATING_ACTIONS = new Set<string>(['update', 'updateMany', 'upsert', 'delete', 'deleteMany']);
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -55,9 +64,18 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   constructor(private readonly tenant: TenantContext) {
     super({ log: ['warn', 'error'] });
+    this.$use(this.immutableMiddleware);
     this.$use(this.tenantMiddleware);
     this.$use(this.softDeleteMiddleware);
   }
+
+  /** Refuses any update / delete of a write-once model (see IMMUTABLE_MODELS). */
+  private immutableMiddleware: Prisma.Middleware = async (params, next) => {
+    if (params.model && IMMUTABLE_MODELS.has(params.model) && MUTATING_ACTIONS.has(params.action)) {
+      throw new Error(`${params.model} is immutable — "${params.action}" is not permitted`);
+    }
+    return next(params);
+  };
 
   /**
    * Injects the active company into every tenant-model query. Single `update`/
