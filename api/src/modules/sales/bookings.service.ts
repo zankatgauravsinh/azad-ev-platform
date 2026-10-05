@@ -31,6 +31,8 @@ import { SalesPdfService } from './sales-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { MonthlyClosingService } from '../finance/monthly-closing.service';
 import { SaleTaxService } from '../tax/sale-tax.service';
+import { resolveTimeZone } from '../../common/utils/business-date';
+import { FutureDeliveryDateError, resolveDeliveryDate, type ResolvedDeliveryDate } from './delivery-date';
 import { computeTotal, sumAccessories } from './pricing';
 
 type Tx = Prisma.TransactionClient;
@@ -262,7 +264,7 @@ export class BookingsService {
     // A partial (or nil) payment does NOT block delivery — the unpaid balance
     // stays tracked as outstanding via the booking's payments, and no automatic
     // adjustment is made to clear it. Only the invoice-exists guard remains.
-    const deliveredAt = dto.actualDelivery ?? new Date();
+    const { deliveredAt, businessDate } = await this.resolveDelivery(dto.actualDelivery);
     await this.prisma.$transaction(async (tx) => {
       await this.transitionUnit(tx, booking.unitId, UnitStatus.DELIVERED, userId, `Delivered on booking ${booking.code}`);
       await tx.booking.update({ where: { id }, data: { actualDelivery: deliveredAt, updatedById: userId } });
@@ -270,8 +272,24 @@ export class BookingsService {
       await tx.delivery.create({ data: { saleId: booking.sale!.id, deliveredAt, deliveredById: userId, checklist: { create: {} }, createdById: userId, updatedById: userId } });
       await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.DELIVERY, title: `Vehicle delivered (${booking.unit.vin})`, entityType: 'Booking', entityId: id, actorId: userId }, tx);
     });
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'Booking', entityId: id, summary: `Delivered ${booking.unit.vin}` });
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'Booking', entityId: id, summary: `Delivered ${booking.unit.vin} (delivery date ${businessDate})` });
     return this.getById(id);
+  }
+
+  /** The time zone the company's business dates are read in (see common/utils/business-date). */
+  async businessTimeZone(): Promise<string> {
+    const setting = await this.prisma.companySetting.findFirst({ select: { timezone: true } });
+    return resolveTimeZone(setting?.timezone);
+  }
+
+  /** Applies the delivery-date rules (see delivery-date.ts): today or a past date; never the future. */
+  private async resolveDelivery(actualDelivery: MarkDeliveredInput['actualDelivery']): Promise<ResolvedDeliveryDate> {
+    try {
+      return resolveDeliveryDate(actualDelivery, new Date(), await this.businessTimeZone());
+    } catch (e) {
+      if (e instanceof FutureDeliveryDateError) throw new BadRequestException(e.message);
+      throw e;
+    }
   }
 
   // ── Invoice ────────────────────────────────────────────

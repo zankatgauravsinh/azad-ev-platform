@@ -17,6 +17,7 @@ import { salesApi } from '../api';
 import { BookingStatusBadge, DeliveryStatusBadge, FinanceStatusBadge, InsuranceStatusBadge, PaymentStatusBadge } from '../components/status-badges';
 import { CancelBookingDialog, FinanceDialog, InsuranceDialog, PaymentDialog, ScheduleDeliveryDialog } from '../components/booking-dialogs';
 import { BookingFormDialog } from '../components/booking-form-dialog';
+import { DeliverDialog } from '../components/deliver-dialog';
 import { VehicleDetailsDialog } from '../components/vehicle-details-dialog';
 import { CustomerDetailDialog } from '@/features/customers/components/customer-detail-dialog';
 import { CreateReturnDialog } from '@/features/returns/components/create-return-dialog';
@@ -35,6 +36,7 @@ export function BookingDetailPage(): JSX.Element {
   const { data: b, isLoading } = useBooking(id);
   const [dialog, setDialog] = useState<'payment' | 'finance' | 'insurance' | 'schedule' | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [deliverOpen, setDeliverOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [vehicleOpen, setVehicleOpen] = useState(false);
   const [viewCustomer, setViewCustomer] = useState(false);
@@ -111,7 +113,7 @@ export function BookingDetailPage(): JSX.Element {
                 <Button variant="outline" onClick={printInvoice}><Printer className="h-4 w-4" /> Print</Button>
               </>
             )}
-            {canUpdate && b.sale && !b.actualDelivery && <Button variant="accent" onClick={() => run(() => salesApi.deliver(b.id), 'Delivered')} disabled={busy}><Truck className="h-4 w-4" /> Deliver</Button>}
+            {canUpdate && b.sale && !b.actualDelivery && <Button variant="accent" onClick={() => setDeliverOpen(true)}><Truck className="h-4 w-4" /> Deliver</Button>}
             {canRequestReturn && b.sale && b.actualDelivery && <Button variant="outline" onClick={() => setReturnOpen(true)}><Undo2 className="h-4 w-4" /> Request return</Button>}
             {canCancel && b.status !== BookingStatus.CONVERTED && <Button variant="outline" className="text-destructive" onClick={() => setCancelOpen(true)}><Ban className="h-4 w-4" /> Cancel</Button>}
           </div>
@@ -221,6 +223,7 @@ export function BookingDetailPage(): JSX.Element {
       {dialog === 'finance' && <FinanceDialog open onOpenChange={() => setDialog(null)} booking={b} />}
       {dialog === 'insurance' && <InsuranceDialog open onOpenChange={() => setDialog(null)} booking={b} />}
       {dialog === 'schedule' && <ScheduleDeliveryDialog open onOpenChange={() => setDialog(null)} booking={b} />}
+      <DeliverDialog open={deliverOpen} onOpenChange={setDeliverOpen} booking={b} />
       <CustomerDetailDialog id={viewCustomer ? b.customer.id : null} onOpenChange={setViewCustomer} />
       {b.sale && (
         <CreateReturnDialog

@@ -13,6 +13,7 @@ import {
   QUOTATION_STATUSES,
 } from './enums';
 import { paginationQuerySchema } from './pagination';
+import { deliveryDateInputSchema } from './delivery';
 
 const paise = z.coerce.number().int().min(0);
 const money = paise.default(0);
@@ -150,7 +151,7 @@ export const scheduleDeliverySchema = z.object({
 });
 export type ScheduleDeliveryInput = z.infer<typeof scheduleDeliverySchema>;
 
-export const markDeliveredSchema = z.object({ actualDelivery: z.coerce.date().optional() });
+export const markDeliveredSchema = z.object({ actualDelivery: deliveryDateInputSchema.nullish() });
 export type MarkDeliveredInput = z.infer<typeof markDeliveredSchema>;
 
 // ── Accessories catalogue ─────────────────────────────────

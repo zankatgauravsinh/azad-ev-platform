@@ -62,8 +62,8 @@ export class DeliveryController {
   @ApiParam({ name: 'bookingId', format: 'uuid' })
   @ApiOperation({ summary: 'Download the branded delivery note' })
   async note(@Param('bookingId') bookingId: string, @Res() res: Response): Promise<void> {
-    const [{ detail, code }, brand] = await Promise.all([this.delivery.notePdfData(bookingId), this.brand.resolve()]);
-    const buffer = await this.pdf.deliveryNote(brand, detail);
+    const [{ detail, code, timeZone }, brand] = await Promise.all([this.delivery.notePdfData(bookingId), this.brand.resolve()]);
+    const buffer = await this.pdf.deliveryNote(brand, detail, timeZone);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="delivery-${code}.pdf"`);
     res.send(buffer);
@@ -80,7 +80,7 @@ export class DeliveryController {
   @Post(':bookingId/complete')
   @Permissions('delivery.manage')
   @ApiParam({ name: 'bookingId', format: 'uuid' })
-  @ApiOperation({ summary: 'Complete the delivery (requires an invoice; a partial/outstanding balance is allowed); captures the handover checklist' })
+  @ApiOperation({ summary: 'Complete the delivery (requires an invoice; a partial/outstanding balance is allowed); captures the delivery date (today or past) and the handover checklist' })
   complete(@Param('bookingId') bookingId: string, @Body(new ZodValidationPipe(completeDeliverySchema)) dto: CompleteDeliveryInput, @CurrentUser('id') userId: string) {
     return this.delivery.complete(bookingId, dto, userId);
   }

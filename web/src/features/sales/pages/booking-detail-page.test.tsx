@@ -1,10 +1,10 @@
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { BookingDetailPage } from './booking-detail-page';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const h = vi.hoisted(() => ({ perms: { current: new Set<string>() }, booking: { current: null as any } }));
+const h = vi.hoisted(() => ({ perms: { current: new Set<string>() }, booking: { current: null as any }, deliver: vi.fn() }));
 vi.mock('@/features/auth/auth-context', () => ({ useCan: (p: string) => h.perms.current.has(p), useAuth: () => ({ can: (p: string) => h.perms.current.has(p) }) }));
 
 const fullUnit = {
@@ -25,6 +25,8 @@ const makeBooking = (over: Record<string, any> = {}): any => ({
 vi.mock('../hooks', () => ({ useBooking: () => ({ data: h.booking.current, isLoading: false }), useSalesInvalidate: () => () => {} }));
 vi.mock('../components/booking-dialogs', () => ({ PaymentDialog: () => null, FinanceDialog: () => null, InsuranceDialog: () => null, ScheduleDeliveryDialog: () => null, CancelBookingDialog: () => null }));
 vi.mock('../components/booking-form-dialog', () => ({ BookingFormDialog: () => null }));
+vi.mock('../components/deliver-dialog', () => ({ DeliverDialog: (p: { open: boolean; booking: { id: string } }) => (p.open ? <div data-testid="deliver-dialog" data-booking={p.booking.id} /> : null) }));
+vi.mock('../api', () => ({ salesApi: { deliver: h.deliver, generateInvoice: vi.fn(), invoicePdf: vi.fn() } }));
 vi.mock('../components/vehicle-details-dialog', () => ({ VehicleDetailsDialog: () => null }));
 vi.mock('@/features/customers/components/customer-detail-dialog', () => ({ CustomerDetailDialog: () => null }));
 vi.mock('@/features/returns/components/create-return-dialog', () => ({ CreateReturnDialog: () => null }));
@@ -116,5 +118,35 @@ describe('BookingDetailPage lifecycle (converted immutable / cancelled)', () => 
     // Amount received is labelled "Received"; the retained advance is called out.
     expect(screen.getByText('Received')).toBeInTheDocument();
     expect(screen.getAllByText(/retained \(not refunded\)/i).length).toBeGreaterThan(0);
+  });
+});
+
+describe('BookingDetailPage — Deliver asks for the delivery date', () => {
+  const invoiced = { status: 'CONVERTED', sale: { id: 's1', invoiceNumber: 'INV-1', status: 'INVOICED', invoicedAt: null } };
+  const deliverBtn = () => screen.queryByRole('button', { name: 'Deliver' });
+
+  it('Deliver opens the delivery-date dialog instead of delivering straight away', () => {
+    h.deliver.mockReset();
+    renderWith(['bookings.view', 'bookings.update'], invoiced);
+    expect(screen.queryByTestId('deliver-dialog')).toBeNull();
+    fireEvent.click(deliverBtn()!);
+    expect(screen.getByTestId('deliver-dialog')).toHaveAttribute('data-booking', 'b1');
+    expect(h.deliver).not.toHaveBeenCalled();
+  });
+
+  it('Deliver still needs bookings.update, an invoice, and an undelivered vehicle', () => {
+    renderWith(['bookings.view'], invoiced);
+    expect(deliverBtn()).toBeNull();
+    renderWith(['bookings.view', 'bookings.update']);
+    expect(deliverBtn()).toBeNull(); // no invoice yet
+    renderWith(['bookings.view', 'bookings.update'], { ...invoiced, actualDelivery: '2026-10-04T06:30:00.000Z' });
+    expect(deliverBtn()).toBeNull();
+  });
+
+  it('shows the recorded delivery date once delivered', () => {
+    renderWith(['bookings.view'], { ...invoiced, sale: { ...invoiced.sale, status: 'DELIVERED' }, actualDelivery: '2026-10-04T06:30:00.000Z' });
+    const shown = new Date('2026-10-04T06:30:00.000Z').toLocaleDateString('en-IN');
+    expect(screen.getByText(`Actual: ${shown}`)).toBeInTheDocument();
+    expect(screen.getByText(`Delivered ${shown}`)).toBeInTheDocument();
   });
 });

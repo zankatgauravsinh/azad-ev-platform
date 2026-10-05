@@ -8,6 +8,7 @@ import type {
   InsuranceDto,
   ListBookingsQuery,
   ListQuotationsQuery,
+  MarkDeliveredInput,
   Paginated,
   PaymentDto,
   PaymentStatus,
@@ -164,7 +165,7 @@ export const salesApi = {
   upsertFinance: async (id: string, input: UpsertFinanceInput): Promise<FinanceDto> => (await apiClient.post(`/bookings/${id}/finance`, input)).data,
   upsertInsurance: async (id: string, input: UpsertInsuranceInput): Promise<InsuranceDto> => (await apiClient.post(`/bookings/${id}/insurance`, input)).data,
   scheduleDelivery: async (id: string, input: ScheduleDeliveryInput): Promise<BookingDto> => (await apiClient.post(`/bookings/${id}/schedule-delivery`, input)).data,
-  deliver: async (id: string): Promise<BookingDto> => (await apiClient.post(`/bookings/${id}/deliver`, {})).data,
+  deliver: async (id: string, input: MarkDeliveredInput = {}): Promise<BookingDto> => (await apiClient.post(`/bookings/${id}/deliver`, input)).data,
   generateInvoice: async (id: string): Promise<BookingDto> => (await apiClient.post(`/bookings/${id}/invoice`, {})).data,
   invoicePdf: async (id: string): Promise<Blob> => (await apiClient.get(`/bookings/${id}/invoice/pdf`, { responseType: 'blob' })).data,
 };

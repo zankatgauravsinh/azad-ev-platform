@@ -176,10 +176,11 @@ export class DeliveryService {
     return this.detail(bookingId);
   }
 
-  async notePdfData(bookingId: string): Promise<{ detail: DeliveryDetailDto; code: string }> {
+  async notePdfData(bookingId: string): Promise<{ detail: DeliveryDetailDto; code: string; timeZone: string }> {
     const detail = await this.detail(bookingId);
     if (!detail.delivery) throw new BadRequestException('Vehicle has not been delivered yet');
-    return { detail, code: detail.booking.code };
+    // The note prints the delivery date as the company's business date, not the server's.
+    return { detail, code: detail.booking.code, timeZone: await this.bookings.businessTimeZone() };
   }
 
   // ── internals ──

@@ -8,11 +8,12 @@ const LABELS: Record<string, string> = {
   keys: 'Keys', charged: 'Vehicle charged', charger: 'Charger', helmet: 'Helmet', accessoriesFitted: 'Accessories fitted',
   documents: 'KYC documents', invoice: 'Tax invoice', insurance: 'Insurance policy', rcBook: 'RC / registration', warrantyCard: 'Warranty card',
 };
-const d = (iso: string): string => new Date(iso).toLocaleDateString('en-IN');
+/** A date as the company reads it: formatted in the company's time zone, never the server's. */
+export const deliveryNoteDate = (iso: string, timeZone: string): string => new Date(iso).toLocaleDateString('en-IN', { timeZone });
 
 @Injectable()
 export class DeliveryPdfService {
-  deliveryNote(brand: PdfBrand, detail: DeliveryDetailDto): Promise<Buffer> {
+  deliveryNote(brand: PdfBrand, detail: DeliveryDetailDto, timeZone: string): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ size: 'A4', margin: 48 });
       const chunks: Buffer[] = [];
@@ -26,7 +27,7 @@ export class DeliveryPdfService {
 
       drawBrandHeader(doc, brand, {
         docType: 'DELIVERY NOTE',
-        infoLines: [`Booking: ${b.code}`, ...(b.invoiceNumber ? [`Invoice: ${b.invoiceNumber}`] : []), `Date: ${detail.delivery ? d(detail.delivery.deliveredAt) : d(new Date().toISOString())}`],
+        infoLines: [`Booking: ${b.code}`, ...(b.invoiceNumber ? [`Invoice: ${b.invoiceNumber}`] : []), `Date: ${deliveryNoteDate(detail.delivery?.deliveredAt ?? new Date().toISOString(), timeZone)}`],
         badge: 'DELIVERED',
       });
 

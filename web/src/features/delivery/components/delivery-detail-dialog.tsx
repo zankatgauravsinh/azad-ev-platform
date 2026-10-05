@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CalendarClock, CheckCircle2, FileDown, ImagePlus, PenLine, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DELIVERY_CHECKLIST_ITEMS, type DeliveryChecklistDto } from '@azad/shared';
@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { deliveryApi } from '../api';
 import { useDelivery, useDeliveryMutations } from '../hooks';
 import { checklistLabel, deliveryStatusLabel, deliveryStatusTone } from '../meta';
+import { DeliveryDateField, deliveryDateError, todayDateInput } from './delivery-date-field';
 
 const fmt = (iso: string | null): string => (iso ? new Date(iso).toLocaleDateString('en-IN') : '—');
 
@@ -29,6 +30,9 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
   const [pendingDocs, setPendingDocs] = useState('');
   const [notes, setNotes] = useState('');
   const [override, setOverride] = useState('');
+  const [deliveryDate, setDeliveryDate] = useState(todayDateInput);
+  // Opening a booking starts from today again — never a date left over from an earlier one.
+  useEffect(() => { if (id) setDeliveryDate(todayDateInput()); }, [id]);
   const [draft, setDraft] = useState<Partial<DeliveryChecklistDto>>({});
   const photoRef = useRef<HTMLInputElement>(null);
   const signRef = useRef<HTMLInputElement>(null);
@@ -46,7 +50,7 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
 
   const doComplete = async (): Promise<void> => {
     try {
-      await complete.mutateAsync({ id: bookingId, body: { notes: notes || undefined, overrideReason: override || undefined, checklist: draft } });
+      await complete.mutateAsync({ id: bookingId, body: { actualDelivery: deliveryDate, notes: notes || undefined, overrideReason: override || undefined, checklist: draft } });
       toast.success('Vehicle delivered');
     } catch (e) { toast.error(apiErrorMessage(e)); }
   };
@@ -115,8 +119,9 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
                 </Section>
                 <div className="space-y-1"><Label>Notes</Label><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional handover notes" /></div>
                 <div className="space-y-1"><Label>Override reason (delivering with pending docs)</Label><Input value={override} onChange={(e) => setOverride(e.target.value)} placeholder="Optional" /></div>
+                <DeliveryDateField value={deliveryDate} onChange={setDeliveryDate} disabled={!canManage} />
                 {canManage && (
-                  <Button onClick={doComplete} disabled={complete.isPending}>
+                  <Button onClick={doComplete} disabled={complete.isPending || deliveryDateError(deliveryDate) !== null}>
                     <CheckCircle2 className="h-4 w-4" /> Complete delivery
                   </Button>
                 )}

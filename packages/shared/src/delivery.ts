@@ -88,6 +88,42 @@ export interface DeliveryDashboardDto {
   pendingDocuments: number;
 }
 
+/* ── Delivery date ── */
+
+/** A business calendar date in 'YYYY-MM-DD' form. */
+const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** True only for a real calendar day in 'YYYY-MM-DD' form (rejects 2026-02-30, timestamps, …). */
+export function isCalendarDateString(value: unknown): value is string {
+  if (typeof value !== 'string' || !CALENDAR_DATE.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * The delivery date sent when a vehicle is handed over.
+ *
+ *  - 'YYYY-MM-DD' — the business CALENDAR DATE of the handover, in the company's time zone. This is
+ *    what the application sends. It is kept as a string: it is a date, not an instant.
+ *  - anything else the API accepted before (an ISO timestamp) — an instant, kept for older clients.
+ *  - omitted / null — "now".
+ *
+ * The server decides what counts as "today" (company time zone) and rejects a future date.
+ */
+export const deliveryDateInputSchema = z.unknown().transform((value, ctx): string | Date => {
+  if (typeof value === 'string' && CALENDAR_DATE.test(value.trim())) {
+    const day = value.trim();
+    if (isCalendarDateString(day)) return day;
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Delivery date is not a valid date' });
+    return z.NEVER;
+  }
+  const instant = typeof value === 'boolean' ? null : z.coerce.date().safeParse(value);
+  if (instant?.success) return instant.data;
+  ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Delivery date is not a valid date' });
+  return z.NEVER;
+});
+export type DeliveryDateInput = z.infer<typeof deliveryDateInputSchema>;
+
 /* ── Input schemas ── */
 
 const checklistShape = Object.fromEntries(DELIVERY_CHECKLIST_ITEMS.map((k) => [k, z.boolean().optional()])) as Record<
@@ -114,7 +150,7 @@ export const updateChecklistSchema = z.object(checklistShape);
 export type UpdateChecklistInput = z.infer<typeof updateChecklistSchema>;
 
 export const completeDeliverySchema = z.object({
-  actualDelivery: z.coerce.date().optional(),
+  actualDelivery: deliveryDateInputSchema.nullish(),
   notes: z.string().trim().max(500).optional(),
   overrideReason: z.string().trim().max(300).optional(),
   checklist: z.object(checklistShape).optional(),

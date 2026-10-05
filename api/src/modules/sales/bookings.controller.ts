@@ -126,8 +126,8 @@ export class BookingsController {
   @Post(':id/deliver')
   @Permissions('bookings.update')
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOperation({ summary: 'Mark delivered (requires invoice + zero balance; sets unit Delivered)' })
-  @ApiResponse({ status: 400, description: 'No invoice, or balance pending' })
+  @ApiOperation({ summary: 'Mark delivered (requires an invoice; an outstanding balance is allowed). Optional delivery date: today or a past date' })
+  @ApiResponse({ status: 400, description: 'No invoice, or a delivery date in the future' })
   deliver(@Param('id') id: string, @Body(new ZodValidationPipe(markDeliveredSchema)) dto: MarkDeliveredInput, @CurrentUser('id') userId: string) {
     return this.bookings.markDelivered(id, dto, userId);
   }
