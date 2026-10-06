@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { CalendarClock, CheckCircle2, FileDown, ImagePlus, PenLine, Trash2 } from 'lucide-react';
+import { CalendarClock, CheckCircle2, ImagePlus, PenLine, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DELIVERY_CHECKLIST_ITEMS, type DeliveryChecklistDto } from '@azad/shared';
 import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaise } from '@/lib/money';
-import { saveBlob } from '@/lib/download';
 import { useAuth } from '@/features/auth/auth-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,10 +12,10 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { deliveryApi } from '../api';
 import { useDelivery, useDeliveryMutations } from '../hooks';
 import { checklistLabel, deliveryStatusLabel, deliveryStatusTone } from '../meta';
 import { DeliveryDateField, deliveryDateError, todayDateInput } from './delivery-date-field';
+import { DocumentActions } from './document-actions';
 
 const fmt = (iso: string | null): string => (iso ? new Date(iso).toLocaleDateString('en-IN') : '—');
 
@@ -68,9 +67,6 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
     try { await setSignature.mutateAsync({ id: bookingId, file }); toast.success('Signature captured'); } catch (e) { toast.error(apiErrorMessage(e)); }
     if (signRef.current) signRef.current.value = '';
   };
-  const downloadNote = async (): Promise<void> => {
-    try { saveBlob(await deliveryApi.note(bookingId), `delivery-${b?.code}.pdf`); } catch (e) { toast.error(apiErrorMessage(e)); }
-  };
 
   return (
     <Dialog open={Boolean(id)} onOpenChange={onOpenChange}>
@@ -83,7 +79,6 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
               <DialogTitle className="flex flex-wrap items-center gap-2">
                 <span className="font-mono">{b.code}</span>
                 <Badge variant={deliveryStatusTone[b.status]}>{deliveryStatusLabel[b.status]}</Badge>
-                {d && <Button size="sm" variant="outline" className="ml-auto" onClick={downloadNote}><FileDown className="h-4 w-4" /> Delivery note</Button>}
               </DialogTitle>
             </DialogHeader>
 
@@ -98,6 +93,11 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
               <Field label="Delivered by" value={d?.deliveredBy ?? '—'} />
               <Field label="Delivered on" value={fmt(b.actualDelivery)} />
             </dl>
+
+            {/* Documents — the server decides which invoice a sale gets; this only offers the downloads the user may make. */}
+            <Section title="Documents">
+              <DocumentActions bookingId={bookingId} invoiceNumber={b.invoiceNumber} bookingCode={b.code} delivered={Boolean(d)} size="sm" emptyText={b.invoiceNumber ? 'No documents available to you yet.' : 'The invoice has not been generated yet.'} />
+            </Section>
 
             {b.status === 'AWAITING_PAYMENT' && (
               <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">Outstanding balance of {formatPaise(b.balance)}. Delivery can still proceed — this amount stays tracked as due.</p>

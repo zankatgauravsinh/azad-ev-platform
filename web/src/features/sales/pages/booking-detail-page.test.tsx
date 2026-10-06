@@ -1,10 +1,10 @@
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { BookingDetailPage } from './booking-detail-page';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const h = vi.hoisted(() => ({ perms: { current: new Set<string>() }, booking: { current: null as any }, deliver: vi.fn() }));
+const h = vi.hoisted(() => ({ perms: { current: new Set<string>() }, booking: { current: null as any }, deliver: vi.fn(), invoicePdf: vi.fn(), note: vi.fn(), openBlob: vi.fn(), saveBlob: vi.fn(), printBlob: vi.fn() }));
 vi.mock('@/features/auth/auth-context', () => ({ useCan: (p: string) => h.perms.current.has(p), useAuth: () => ({ can: (p: string) => h.perms.current.has(p) }) }));
 
 const fullUnit = {
@@ -26,7 +26,9 @@ vi.mock('../hooks', () => ({ useBooking: () => ({ data: h.booking.current, isLoa
 vi.mock('../components/booking-dialogs', () => ({ PaymentDialog: () => null, FinanceDialog: () => null, InsuranceDialog: () => null, ScheduleDeliveryDialog: () => null, CancelBookingDialog: () => null }));
 vi.mock('../components/booking-form-dialog', () => ({ BookingFormDialog: () => null }));
 vi.mock('../components/deliver-dialog', () => ({ DeliverDialog: (p: { open: boolean; booking: { id: string } }) => (p.open ? <div data-testid="deliver-dialog" data-booking={p.booking.id} /> : null) }));
-vi.mock('../api', () => ({ salesApi: { deliver: h.deliver, generateInvoice: vi.fn(), invoicePdf: vi.fn() } }));
+vi.mock('../api', () => ({ salesApi: { deliver: h.deliver, generateInvoice: vi.fn(), invoicePdf: h.invoicePdf } }));
+vi.mock('@/features/delivery/api', () => ({ deliveryApi: { note: h.note } }));
+vi.mock('@/lib/download', () => ({ openBlob: h.openBlob, saveBlob: h.saveBlob, printBlob: h.printBlob }));
 vi.mock('../components/vehicle-details-dialog', () => ({ VehicleDetailsDialog: () => null }));
 vi.mock('@/features/customers/components/customer-detail-dialog', () => ({ CustomerDetailDialog: () => null }));
 vi.mock('@/features/returns/components/create-return-dialog', () => ({ CreateReturnDialog: () => null }));
@@ -148,5 +150,49 @@ describe('BookingDetailPage — Deliver asks for the delivery date', () => {
     const shown = new Date('2026-10-04T06:30:00.000Z').toLocaleDateString('en-IN');
     expect(screen.getByText(`Actual: ${shown}`)).toBeInTheDocument();
     expect(screen.getByText(`Delivered ${shown}`)).toBeInTheDocument();
+  });
+});
+
+describe('BookingDetailPage — documents', () => {
+  const pdf = new Blob(['%PDF-'], { type: 'application/pdf' });
+  const invoiced = { status: 'CONVERTED', sale: { id: 's1', invoiceNumber: 'INV/0007', status: 'INVOICED', invoicedAt: null } };
+  const deliveredBooking = { ...invoiced, sale: { ...invoiced.sale, status: 'DELIVERED' }, actualDelivery: '2026-10-04T06:30:00.000Z' };
+  const buttons = (name: RegExp) => screen.getAllByRole('button', { name });
+
+  it('View / Download / Print still work and use the existing invoice endpoint and filename', async () => {
+    h.invoicePdf.mockReset().mockResolvedValue(pdf);
+    h.openBlob.mockReset(); h.saveBlob.mockReset(); h.printBlob.mockReset();
+    renderWith(['bookings.view'], invoiced);
+    fireEvent.click(buttons(/^View invoice$/)[0]!);
+    await waitFor(() => expect(h.openBlob).toHaveBeenCalledWith(pdf, 'INV-0007.pdf'));
+    fireEvent.click(buttons(/^Download PDF$/)[0]!);
+    await waitFor(() => expect(h.saveBlob).toHaveBeenCalledWith(pdf, 'INV-0007.pdf'));
+    fireEvent.click(buttons(/^Print$/)[0]!);
+    await waitFor(() => expect(h.printBlob).toHaveBeenCalledWith(pdf, 'INV-0007.pdf'));
+    expect(h.invoicePdf).toHaveBeenCalledWith('b1');
+    expect(h.invoicePdf).toHaveBeenCalledTimes(3);
+  });
+
+  it('the invoice is offered in the header and in the invoice card — both through the shared component', () => {
+    renderWith(['bookings.view'], invoiced);
+    expect(buttons(/^View invoice$/)).toHaveLength(2);
+    expect(buttons(/^Download PDF$/)).toHaveLength(2);
+    expect(buttons(/^Print$/)).toHaveLength(2);
+  });
+
+  it('the delivery note appears only after delivery, and only with delivery.view', () => {
+    renderWith(['bookings.view', 'delivery.view'], invoiced);
+    expect(screen.queryByRole('button', { name: /^Delivery note PDF$/ })).toBeNull();
+    renderWith(['bookings.view'], deliveredBooking);
+    expect(screen.queryByRole('button', { name: /^Delivery note PDF$/ })).toBeNull();
+    renderWith(['bookings.view', 'delivery.view'], deliveredBooking);
+    expect(buttons(/^Delivery note PDF$/).length).toBeGreaterThanOrEqual(1);
+    expect(buttons(/^View invoice$/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('no sale → no invoice or delivery note actions', () => {
+    renderWith(['bookings.view', 'delivery.view']);
+    expect(screen.queryByRole('button', { name: /^View invoice$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Delivery note PDF$/ })).toBeNull();
   });
 });

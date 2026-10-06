@@ -67,3 +67,32 @@ export function apiErrorMessage(error: unknown, fallback = 'Something went wrong
   }
   return fallback;
 }
+
+/** Reads a Blob as text (FileReader keeps this working where Blob.text() is unavailable). */
+function blobText(blob: Blob): Promise<string> {
+  if (typeof blob.text === 'function') return blob.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.readAsText(blob);
+  });
+}
+
+/**
+ * Like apiErrorMessage, for requests made with `responseType: 'blob'` (PDF and file downloads): the
+ * server's JSON error body arrives wrapped in a Blob, so it is read and parsed first. A Blob that is
+ * not the API's error shape gives `fallback` — never a raw transport message.
+ */
+export async function apiErrorMessageAsync(error: unknown, fallback = 'Something went wrong'): Promise<string> {
+  if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+    try {
+      const parsed = JSON.parse(await blobText(error.response.data)) as Partial<ApiError> | null;
+      if (parsed && typeof parsed.message === 'string' && parsed.message) return parsed.message;
+    } catch {
+      // not JSON — fall through to the fallback
+    }
+    return fallback;
+  }
+  return apiErrorMessage(error, fallback);
+}

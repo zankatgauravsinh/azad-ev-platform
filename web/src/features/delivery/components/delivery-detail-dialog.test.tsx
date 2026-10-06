@@ -21,6 +21,9 @@ vi.mock('../hooks', () => ({
   useDeliveryMutations: () => ({ schedule: stub, complete: { mutateAsync: h.complete, isPending: false }, checklist: stub, addPhoto: stub, removePhoto: stub, setSignature: stub }),
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// Document endpoints are never reached from these tests; the shared component has its own tests.
+vi.mock('@/features/sales/api', () => ({ salesApi: { invoicePdf: vi.fn() } }));
+vi.mock('../api', () => ({ deliveryApi: { note: vi.fn() } }));
 
 const renderWith = (perms: string[]): void => {
   cleanup();
@@ -28,6 +31,12 @@ const renderWith = (perms: string[]): void => {
   render(<DeliveryDetailDialog id="b1" onOpenChange={() => {}} />);
 };
 const saveBtn = () => screen.queryByRole('button', { name: /^Save$/ });
+const invoiceBtn = () => screen.queryByRole('button', { name: /^View invoice$/ });
+const noteBtn = () => screen.queryByRole('button', { name: /^Delivery note PDF$/ });
+const delivered = () => ({
+  booking: { ...pending().booking, status: 'DELIVERED', actualDelivery: '2026-10-04T06:30:00.000Z' },
+  delivery: { id: 'd1', deliveredAt: '2026-10-04T06:30:00.000Z', deliveredBy: 'Tej', notes: null, overrideReason: null, signatureUrl: null, googleReviewSent: false, checklist: {}, photos: [] },
+});
 const completeBtn = () => screen.queryByRole('button', { name: /Complete delivery/ });
 const dateField = (): HTMLInputElement => screen.getByLabelText('Delivery date') as HTMLInputElement;
 const shift = (days: number): string => todayDateInput(new Date(Date.now() + days * 86_400_000));
@@ -94,5 +103,51 @@ describe('DeliveryDetailDialog delivery date', () => {
     expect(screen.getByText(new Date('2026-10-04T06:30:00.000Z').toLocaleDateString('en-IN'))).toBeInTheDocument();
     expect(screen.queryByLabelText('Delivery date')).toBeNull();
     expect(completeBtn()).toBeNull();
+  });
+});
+
+describe('DeliveryDetailDialog documents section', () => {
+  it('before delivery: the invoice is offered to a user with bookings.view; the delivery note is not', () => {
+    renderWith(['delivery.view', 'bookings.view']);
+    expect(screen.getByText('Documents')).toBeInTheDocument();
+    expect(invoiceBtn()).not.toBeNull();
+    expect(noteBtn()).toBeNull();
+  });
+
+  it('before delivery with no invoice yet: no document actions, an explanation instead', () => {
+    h.data.current = { ...pending(), booking: { ...pending().booking, invoiceNumber: null } };
+    renderWith(['delivery.view', 'bookings.view']);
+    expect(invoiceBtn()).toBeNull();
+    expect(noteBtn()).toBeNull();
+    expect(screen.getByText('The invoice has not been generated yet.')).toBeInTheDocument();
+  });
+
+  it('after delivery: a delivery-only user gets the delivery note and no invoice', () => {
+    h.data.current = delivered();
+    renderWith(['delivery.view']);
+    expect(noteBtn()).not.toBeNull();
+    expect(invoiceBtn()).toBeNull();
+    expect(screen.queryByRole('button', { name: /invoice/i })).toBeNull();
+  });
+
+  it('after delivery: a user with both permissions gets the invoice and the delivery note', () => {
+    h.data.current = delivered();
+    renderWith(['delivery.view', 'bookings.view']);
+    expect(invoiceBtn()).not.toBeNull();
+    expect(screen.getByRole('button', { name: /^Download PDF$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Print$/ })).toBeInTheDocument();
+    expect(noteBtn()).not.toBeNull();
+  });
+
+  it('the old title-bar delivery note button is gone; completion controls are unchanged', () => {
+    h.data.current = delivered();
+    renderWith(['delivery.manage']);
+    expect(screen.queryByRole('button', { name: /^Delivery note$/ })).toBeNull();
+    expect(completeBtn()).toBeNull(); // delivered → no completion controls
+    renderWith(['delivery.manage']);
+    h.data.current = pending();
+    renderWith(['delivery.manage']);
+    expect(completeBtn()).not.toBeNull();
+    expect(dateField()).not.toBeDisabled();
   });
 });

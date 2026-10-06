@@ -1,11 +1,10 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, Banknote, Bike, CalendarClock, CheckCircle2, Download, Eye, FileText, Pencil, Printer, Shield, Truck, Undo2, User } from 'lucide-react';
+import { ArrowLeft, Ban, Banknote, Bike, CalendarClock, CheckCircle2, Eye, FileText, Pencil, Shield, Truck, Undo2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookingStatus, PaymentStatus } from '@azad/shared';
 import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
-import { openBlob, printBlob, saveBlob } from '@/lib/download';
 import { formatPaise } from '@/lib/money';
 import { titleCase } from '@/lib/labels';
 import { Button } from '@/components/ui/button';
@@ -18,6 +17,7 @@ import { BookingStatusBadge, DeliveryStatusBadge, FinanceStatusBadge, InsuranceS
 import { CancelBookingDialog, FinanceDialog, InsuranceDialog, PaymentDialog, ScheduleDeliveryDialog } from '../components/booking-dialogs';
 import { BookingFormDialog } from '../components/booking-form-dialog';
 import { DeliverDialog } from '../components/deliver-dialog';
+import { DocumentActions } from '@/features/delivery/components/document-actions';
 import { VehicleDetailsDialog } from '../components/vehicle-details-dialog';
 import { CustomerDetailDialog } from '@/features/customers/components/customer-detail-dialog';
 import { CreateReturnDialog } from '@/features/returns/components/create-return-dialog';
@@ -59,15 +59,10 @@ export function BookingDetailPage(): JSX.Element {
     finally { setBusy(false); }
   };
 
-  // Invoice actions read the already-generated invoice — repeatable, never regenerates.
-  const invoiceFile = (): string => `${(b.sale?.invoiceNumber ?? 'invoice').replace(/\//g, '-')}.pdf`;
-  const withInvoicePdf = async (consume: (blob: Blob) => void): Promise<void> => {
-    try { consume(await salesApi.invoicePdf(b.id)); }
-    catch (e) { toast.error(apiErrorMessage(e)); }
-  };
-  const viewInvoice = (): Promise<void> => withInvoicePdf((blob) => openBlob(blob, invoiceFile()));
-  const downloadInvoice = (): Promise<void> => withInvoicePdf((blob) => saveBlob(blob, invoiceFile()));
-  const printInvoice = (): Promise<void> => withInvoicePdf((blob) => printBlob(blob, invoiceFile()));
+  // Documents (invoice, delivery note) are offered by the shared DocumentActions; the server chooses the invoice layout.
+  const documents = (size: 'default' | 'sm'): JSX.Element => (
+    <DocumentActions bookingId={b.id} invoiceNumber={b.sale?.invoiceNumber ?? null} bookingCode={b.code} delivered={Boolean(b.actualDelivery)} size={size} />
+  );
 
   const rows: { label: string; value: string; negative?: boolean }[] = [
     { label: 'Ex-showroom', value: formatPaise(b.exShowroom) },
@@ -107,11 +102,7 @@ export function BookingDetailPage(): JSX.Element {
             {!b.sale ? (
               canInvoice && <Button variant="outline" onClick={() => run(() => salesApi.generateInvoice(b.id), 'Invoice generated')} disabled={busy}><FileText className="h-4 w-4" /> Generate invoice</Button>
             ) : (
-              <>
-                <Button variant="outline" onClick={viewInvoice}><Eye className="h-4 w-4" /> View invoice</Button>
-                <Button variant="outline" onClick={downloadInvoice}><Download className="h-4 w-4" /> Download PDF</Button>
-                <Button variant="outline" onClick={printInvoice}><Printer className="h-4 w-4" /> Print</Button>
-              </>
+              documents('default')
             )}
             {canUpdate && b.sale && !b.actualDelivery && <Button variant="accent" onClick={() => setDeliverOpen(true)}><Truck className="h-4 w-4" /> Deliver</Button>}
             {canRequestReturn && b.sale && b.actualDelivery && <Button variant="outline" onClick={() => setReturnOpen(true)}><Undo2 className="h-4 w-4" /> Request return</Button>}
@@ -167,11 +158,7 @@ export function BookingDetailPage(): JSX.Element {
               <div>
                 <p className="mb-1 flex items-center gap-2 text-sm font-semibold"><FileText className="h-4 w-4" /> Invoice</p>
                 <p className="text-sm font-mono">{b.sale.invoiceNumber}</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={viewInvoice}><Eye className="h-4 w-4" /> View</Button>
-                  <Button size="sm" variant="outline" onClick={downloadInvoice}><Download className="h-4 w-4" /> PDF</Button>
-                  <Button size="sm" variant="outline" onClick={printInvoice}><Printer className="h-4 w-4" /> Print</Button>
-                </div>
+                <div className="mt-2">{documents('sm')}</div>
               </div>
             )}
           </CardContent>
