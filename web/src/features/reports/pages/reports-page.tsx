@@ -5,7 +5,7 @@ import type { ExportFormat, ReportKpi, ReportType, ReturnDisposition, ReturnStat
 import { RETURN_DISPOSITIONS, RETURN_STATUSES } from '@azad/shared';
 import { apiErrorMessage } from '@/lib/api-client';
 import { saveBlob } from '@/lib/download';
-import { formatPaise } from '@/lib/money';
+import { formatPaise, formatPaiseExact } from '@/lib/money';
 import { titleCase } from '@/lib/labels';
 import { PageHeader } from '@/components/common/page-header';
 import { StatCard } from '@/components/common/stat-card';
@@ -230,9 +230,9 @@ export function ReportsPage(): JSX.Element {
           <Panel title="Returns">
             {returns.data ? (
               <ReportTable
-                headers={['Return', 'Requested', 'Customer', 'Vehicle', 'Status', 'Deduction', 'Refund']}
+                headers={['Return', 'Requested', 'Customer', 'Vehicle', 'Status', 'Deduction', 'Refund', 'CN GST']}
                 empty="No returns in range"
-                rows={returns.data.rows.map((r) => [r.returnNumber, new Date(r.requestedDate).toLocaleDateString('en-IN'), r.customer, r.vin, titleCase(r.status), formatPaise(r.deduction), formatPaise(r.refundAmount)])}
+                rows={returns.data.rows.map((r) => [r.returnNumber, new Date(r.requestedDate).toLocaleDateString('en-IN'), r.customer, r.vin, titleCase(r.status), formatPaise(r.deduction), formatPaise(r.refundAmount), formatPaiseExact(r.creditNoteGst)])}
               />
             ) : <Skeleton className="h-40" />}
           </Panel>

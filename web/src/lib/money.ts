@@ -15,6 +15,18 @@ export function formatPaise(paise: string | number | bigint): string {
   return inr.format(value);
 }
 
+const inrExact = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/** paise → "₹476.19" — exact to the paisa, for tax and other figures where rounding would misstate. */
+export function formatPaiseExact(paise: string | number | bigint): string {
+  return inrExact.format(Number(paise) / 100);
+}
+
 /** rupees (number) → paise (number) for sending to the API */
 export function rupeesToPaise(rupees: number): number {
   return Math.round(rupees * 100);

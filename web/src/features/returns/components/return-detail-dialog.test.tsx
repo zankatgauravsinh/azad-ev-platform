@@ -129,3 +129,48 @@ describe('ReturnDetailDialog per-permission independence (custom roles)', () => 
     expect(has(/reject/i)).toBe(false);
   });
 });
+
+describe('ReturnDetailDialog — financial outcome shows the credit note GST', () => {
+  const completed = (creditNote: { amount: string; gstAmount: string; total: string }): VehicleReturnDto =>
+    ({
+      ...sample('COMPLETED'),
+      disposition: 'AVAILABLE', deductionAmount: '30000', deductionReason: 'Scratched panel', completedAt: new Date().toISOString(),
+      creditNote: { id: 'cn1', creditNoteNumber: 'CN0001', reason: 'Return', issuedAt: new Date().toISOString(), ...creditNote },
+      refunds: [{ id: 'rf1', refundNumber: 'RF0001', amount: '970000', method: 'UPI', reference: null, note: null, refundedAt: new Date().toISOString() }],
+    }) as unknown as VehicleReturnDto;
+  const show = (dto: VehicleReturnDto): void => {
+    cleanup();
+    (useReturn as unknown as Mock).mockReturnValue({ data: dto, isLoading: false, isError: false });
+    (useAuth as unknown as Mock).mockReturnValue({ can: () => true });
+    render(<MemoryRouter><ReturnDetailDialog id="r1" onOpenChange={() => {}} /></MemoryRouter>);
+  };
+  const value = (label: string): string => screen.getByText(label).nextElementSibling?.textContent ?? '';
+
+  it('a GST sale: value before GST, GST to the paisa, and the total', () => {
+    show(completed({ amount: '952381', gstAmount: '47619', total: '1000000' }));
+    expect(screen.getByText('CN0001')).toBeInTheDocument();
+    expect(value('Value before GST')).toBe('₹9,523.81');
+    expect(value('Credit note GST')).toBe('₹476.19'); // exact — not ₹476
+    expect(value('Credit note total')).toBe('₹10,000');
+  });
+
+  it('a legacy credit note shows ₹0.00 GST and the full value before GST', () => {
+    show(completed({ amount: '1000000', gstAmount: '0', total: '1000000' }));
+    expect(value('Credit note GST')).toBe('₹0.00');
+    expect(value('Value before GST')).toBe('₹10,000.00');
+    expect(value('Credit note total')).toBe('₹10,000');
+  });
+
+  it('deduction and refund information is unchanged alongside', () => {
+    show(completed({ amount: '952381', gstAmount: '47619', total: '1000000' }));
+    expect(value('Deduction')).toBe('₹300');
+    expect(value('Deduction reason')).toBe('Scratched panel');
+    expect(value('Refund RF0001')).toBe('₹9,700 · Upi');
+  });
+
+  it('shows no credit-note figures while there is no credit note', () => {
+    show(sample('APPROVED'));
+    expect(screen.queryByText('Credit note GST')).toBeNull();
+    expect(screen.queryByText('Value before GST')).toBeNull();
+  });
+});

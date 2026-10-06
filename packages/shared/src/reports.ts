@@ -146,6 +146,8 @@ export interface ReturnReportRow {
   /** Sum of refunds for this return (0 before completion). */
   refundAmount: string;
   creditNoteNumber: string | null;
+  /** GST recorded on the credit note at completion (paise; '0' when there is no credit note or no GST). */
+  creditNoteGst: string;
   refundNumber: string | null;
 }
 export interface ReturnsReport {

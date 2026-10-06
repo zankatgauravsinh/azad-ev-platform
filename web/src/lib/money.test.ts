@@ -1,11 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { formatPaise, paiseToRupees, rupeesToPaise } from './money';
+import { formatPaise, formatPaiseExact, paiseToRupees, rupeesToPaise } from './money';
 
 describe('money helpers', () => {
   it('formats paise as Indian Rupees', () => {
     expect(formatPaise(12400000)).toBe('₹1,24,000');
     expect(formatPaise('4250000')).toBe('₹42,500');
     expect(formatPaise(0)).toBe('₹0');
+  });
+
+  it('formats paise exactly, to two decimals, with Indian grouping', () => {
+    expect(formatPaiseExact(47619)).toBe('₹476.19');
+    expect(formatPaiseExact('47619')).toBe('₹476.19');
+    expect(formatPaiseExact(47619n)).toBe('₹476.19');
+    expect(formatPaiseExact(0)).toBe('₹0.00');
+    expect(formatPaiseExact(1)).toBe('₹0.01');
+    expect(formatPaiseExact(12400000)).toBe('₹1,24,000.00');
+    expect(formatPaiseExact('148600000')).toBe('₹14,86,000.00');
+    expect(formatPaiseExact(-1)).toBe('-₹0.01');
+  });
+
+  it('keeps the whole-rupee formatter unchanged', () => {
+    expect(formatPaise(47619)).toBe('₹476');
   });
 
   it('converts rupees to paise (rounding safely)', () => {

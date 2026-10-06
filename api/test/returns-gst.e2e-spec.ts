@@ -42,7 +42,10 @@ describe('Vehicle return GST reversal (e2e)', () => {
     for (const who of ['owner', 'approver'] as const) {
       const email = `retgst.${who}.${label}.${stamp}@e2e.test`;
       await prisma.user.create({ data: { companyId: co.id, name: `${who} ${label}`, email, role: 'OWNER', passwordHash: hash } });
-      co[who] = (await http().post('/api/v1/auth/login').send({ email, password: 'Test@12345' }).expect(200)).body.accessToken;
+      const login = await http().post('/api/v1/auth/login').send({ email, password: 'Test@12345' });
+      // A failed setup login is otherwise opaque (every test then fails): keep the response visible.
+      if (login.status !== 200) throw new Error(`login for ${email} failed: ${login.status} ${JSON.stringify(login.body)}`);
+      co[who] = login.body.accessToken;
     }
     // Booking codes and invoice numbers are unique across ALL companies, so each company gets its own prefixes.
     await prisma.companySetting.create({
@@ -226,6 +229,38 @@ describe('Vehicle return GST reversal (e2e)', () => {
       await complete(G, returnId).expect(201);
       await complete(G, returnId).expect(400);
       expect(await state(returnId, sold)).toMatchObject({ status: 'COMPLETED', creditNotes: 1, refunds: 1 });
+    });
+  });
+
+  // ───────────────────────── Report visibility (E.3) ─────────────────────────
+  describe('returns report', () => {
+    it('shows the stored credit-note GST per row and sums it in the "GST reversed" KPI; exports carry the column', async () => {
+      const intra = await deliveredSale(G, { exShowroom: 1_000_000 });
+      const mixed = await deliveredSale(G, { exShowroom: 1_000_000, extendedWarranty: 118_000, rto: 85_000 });
+      for (const sold of [intra, mixed]) await complete(G, await approvedReturn(G, sold.saleId)).expect(201);
+      const snapIntra = await snapshotOf(intra.saleId);
+      const snapMixed = await snapshotOf(mixed.saleId);
+
+      const one = (await http().get(`/api/v1/reports/returns?saleId=${intra.saleId}`).set('Authorization', auth(G.owner)).expect(200)).body;
+      expect(one.rows).toHaveLength(1);
+      expect(one.rows[0].creditNoteGst).toBe(snapIntra.totalTax.toString());
+      expect(one.rows[0].creditNoteGst).toBe('47619');
+      expect(one.kpis.find((k: { label: string }) => k.label === 'GST reversed')?.value).toBe('₹476.19');
+
+      // Both of this company's completed GST returns: the KPI is the plain sum of the two stored amounts.
+      const all = (await http().get('/api/v1/reports/returns?status=COMPLETED&pageSize=100').set('Authorization', auth(G.owner)).expect(200)).body;
+      const rows = all.rows.filter((r: { creditNoteGst: string }) => r.creditNoteGst !== '0');
+      const expected = rows.reduce((t: bigint, r: { creditNoteGst: string }) => t + BigInt(r.creditNoteGst), 0n);
+      expect(rows.map((r: { creditNoteGst: string }) => r.creditNoteGst)).toEqual(expect.arrayContaining([snapIntra.totalTax.toString(), snapMixed.totalTax.toString()]));
+      expect(all.kpis.find((k: { label: string }) => k.label === 'GST reversed')?.value).toBe(`₹${(Number(expected) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+
+      const csv = (await http().get(`/api/v1/reports/returns/export?format=csv&saleId=${intra.saleId}`).set('Authorization', auth(G.owner)).buffer().parse((res, cb) => { const c: Buffer[] = []; (res as unknown as NodeJS.ReadableStream).on('data', (x: Buffer) => c.push(Buffer.from(x))); (res as unknown as NodeJS.ReadableStream).on('end', () => cb(null, Buffer.concat(c))); }).expect(200)).body.toString();
+      expect(csv).toContain('Credit note GST');
+      expect(csv).toContain('476.19');
+
+      // Another tenant's report never carries these rows.
+      const other = (await http().get('/api/v1/reports/returns?status=COMPLETED').set('Authorization', auth(T.owner)).expect(200)).body;
+      expect(other.rows.map((r: { creditNoteGst: string }) => r.creditNoteGst)).not.toContain('47619');
     });
   });
 

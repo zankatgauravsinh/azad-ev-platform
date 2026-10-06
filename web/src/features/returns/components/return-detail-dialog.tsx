@@ -4,7 +4,7 @@ import { Ban, CheckCircle2, ClipboardCheck, ExternalLink, ThumbsUp, XCircle } fr
 import { toast } from 'sonner';
 import { titleCase } from '@/lib/labels';
 import { apiErrorMessage } from '@/lib/api-client';
-import { formatPaise } from '@/lib/money';
+import { formatPaise, formatPaiseExact } from '@/lib/money';
 import { useAuth } from '@/features/auth/auth-context';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -114,7 +114,14 @@ export function ReturnDetailDialog({ id, onOpenChange }: { id: string | null; on
                   <Field label="Deduction" value={Number(w.deductionAmount) > 0 ? formatPaise(w.deductionAmount) : '—'} />
                   <Field label="Deduction reason" value={w.deductionReason ?? '—'} />
                   <Field label="Credit note" value={w.creditNote?.creditNoteNumber ?? '—'} mono />
-                  {w.creditNote && <Field label="Credit note total" value={formatPaise(w.creditNote.total)} />}
+                  {w.creditNote && (
+                    <>
+                      {/* Stored on the credit note at completion (from the sale's tax snapshot when there was one) — shown to the paisa, never recomputed. */}
+                      <Field label="Value before GST" value={formatPaiseExact(w.creditNote.amount)} />
+                      <Field label="Credit note GST" value={formatPaiseExact(w.creditNote.gstAmount)} />
+                      <Field label="Credit note total" value={formatPaise(w.creditNote.total)} />
+                    </>
+                  )}
                   {w.refunds.map((r) => (
                     <Field key={r.id} label={`Refund ${r.refundNumber}`} value={`${formatPaise(r.amount)} · ${titleCase(r.method)}`} />
                   ))}

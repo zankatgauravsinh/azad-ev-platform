@@ -358,6 +358,7 @@ export class ReportsService {
     const byDisposition = RETURN_DISPOSITIONS.map((disposition) => ({ disposition, count: completed.filter((r) => r.disposition === disposition).length }));
     const totalRefund = rows.reduce((a, r) => a + BigInt(r.refundAmount), 0n);
     const totalDeduction = rows.reduce((a, r) => a + BigInt(r.deduction), 0n);
+    const totalGstReversed = rows.reduce((a, r) => a + BigInt(r.creditNoteGst), 0n); // sum of stored credit-note GST
     const disp = (d: ReturnDisposition): number => byDisposition.find((x) => x.disposition === d)?.count ?? 0;
 
     const monthly = new Map<string, number>();
@@ -372,6 +373,7 @@ export class ReportsService {
       { label: 'Completed', value: String(completed.length) },
       { label: 'Total refunds', value: inr(String(totalRefund)) },
       { label: 'Total deductions', value: inr(String(totalDeduction)) },
+      { label: 'GST reversed', value: inr(String(totalGstReversed)) },
       { label: 'Returned → Available', value: String(disp('AVAILABLE')), tone: 'positive' },
       { label: 'Returned → In service', value: String(disp('IN_SERVICE')) },
       { label: 'Scrapped', value: String(disp('SCRAP')), tone: disp('SCRAP') > 0 ? 'warning' : 'default' },
@@ -397,7 +399,7 @@ export class ReportsService {
         booking: { select: { code: true } },
         unit: { select: { vin: true } },
         customer: { select: { name: true } },
-        creditNote: { select: { creditNoteNumber: true } },
+        creditNote: { select: { creditNoteNumber: true, gstAmount: true } },
         refunds: { select: { refundNumber: true, amount: true } },
       },
       orderBy: { requestedAt: 'desc' },
@@ -439,6 +441,7 @@ export class ReportsService {
       deduction: r.deductionAmount.toString(),
       refundAmount: r.refunds.reduce((a, f) => a + f.amount, 0n).toString(),
       creditNoteNumber: r.creditNote?.creditNoteNumber ?? null,
+      creditNoteGst: (r.creditNote?.gstAmount ?? 0n).toString(), // stored at completion — never recomputed here
       refundNumber: r.refunds[0]?.refundNumber ?? null,
     }));
   }
@@ -460,13 +463,13 @@ export class ReportsService {
         { header: 'Status', width: 2 }, { header: 'Inspection', width: 1 }, { header: 'Approved by', width: 2 },
         { header: 'Completed', width: 2 }, { header: 'Disposition', width: 2 }, { header: 'Sale total', width: 2 },
         { header: 'Paid', width: 2 }, { header: 'Deduction', width: 2 }, { header: 'Refund', width: 2 },
-        { header: 'Credit note', width: 2 }, { header: 'Refund no.', width: 2 }, { header: 'Reason', width: 3 },
+        { header: 'Credit note', width: 2 }, { header: 'Credit note GST', width: 2 }, { header: 'Refund no.', width: 2 }, { header: 'Reason', width: 3 },
       ],
       rows: rows.map((r) => [
         r.returnNumber, day(r.requestedDate), r.customer, r.invoiceNumber ?? '—', r.bookingCode, r.vin,
         r.status, r.inspectionOk === null ? '—' : r.inspectionOk ? 'OK' : 'Issues', r.approvedBy ?? '—',
         r.completedDate ? day(r.completedDate) : '—', r.disposition ?? '—', inr(r.saleTotal),
-        inr(r.amountPaid), inr(r.deduction), inr(r.refundAmount), r.creditNoteNumber ?? '—', r.refundNumber ?? '—', r.reason,
+        inr(r.amountPaid), inr(r.deduction), inr(r.refundAmount), r.creditNoteNumber ?? '—', inr(r.creditNoteGst), r.refundNumber ?? '—', r.reason,
       ]),
     };
   }

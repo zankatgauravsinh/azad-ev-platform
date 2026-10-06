@@ -422,7 +422,7 @@ describe('Vehicle Returns (e2e)', () => {
 
   // ─────────────── Group 6 — return reports / dashboard / export ───────────────
   describe('return reports', () => {
-    interface Row { returnNumber: string; status: string; disposition: string | null; saleTotal: string; amountPaid: string; deduction: string; refundAmount: string; creditNoteNumber: string | null; refundNumber: string | null }
+    interface Row { returnNumber: string; status: string; disposition: string | null; saleTotal: string; amountPaid: string; deduction: string; refundAmount: string; creditNoteNumber: string | null; creditNoteGst: string; refundNumber: string | null }
     interface Rep { kpis: { label: string; value: string }[]; byStatus: { status: string; count: number }[]; byDisposition: { disposition: string; count: number }[]; byMonth: unknown[]; rows: Row[] }
     const report = async (token: string, qs = ''): Promise<Rep> =>
       (await http().get(`/api/v1/reports/returns${qs}`).set('Authorization', auth(token)).expect(200)).body;
@@ -469,6 +469,15 @@ describe('Vehicle Returns (e2e)', () => {
       const rf = await prisma.refund.findFirstOrThrow({ where: { saleId: sB.saleId } });
       expect(row.creditNoteNumber).toBe(cn.creditNoteNumber);
       expect(BigInt(row.refundAmount)).toBe(rf.amount);
+      expect(BigInt(row.creditNoteGst)).toBe(cn.gstAmount); // a non-GST sale: 0, straight from the record
+      expect(row.creditNoteGst).toBe('0');
+    });
+
+    it('GST reversed KPI is the sum of the stored credit-note GST of the filtered rows (0 for non-GST sales; 0 before completion)', async () => {
+      const b = await report(ownerToken, `?saleId=${sB.saleId}`);
+      expect(b.kpis.find((k) => k.label === 'GST reversed')?.value).toBe('₹0.00');
+      const pending = await report(ownerToken, `?saleId=${saleC}`); // not completed → no credit note
+      for (const row of pending.rows) expect(row.creditNoteGst).toBe('0');
     });
 
     it('summary counts, disposition counts and refund/deduction totals are correct (per filter)', async () => {
@@ -498,6 +507,7 @@ describe('Vehicle Returns (e2e)', () => {
       const csv = (res.body as Buffer).toString();
       expect(csv).toContain(bDto.returnNumber);
       expect(csv).toContain('SCRAP');
+      expect(csv).toContain('Credit note GST');
       // Filtered to sB only — sA's return must not appear.
       const rowsA = await report(ownerToken, `?saleId=${sA.saleId}`);
       expect(csv).not.toContain(rowsA.rows[0]!.returnNumber);
