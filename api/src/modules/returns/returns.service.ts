@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   ActivityAction,
@@ -23,6 +23,8 @@ import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { SequenceService } from '../sales/sequence.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { MonthlyClosingService } from '../finance/monthly-closing.service';
+import { SaleTaxSnapshotReader } from '../tax/sale-tax-snapshot.reader';
+import { SaleTaxConsistencyError, assertSaleTaxDocumentConsistent } from '../tax/sale-tax-consistency';
 
 const include = {
   sale: { select: { id: true, invoiceNumber: true, total: true, taxAmount: true } },
@@ -70,6 +72,8 @@ export function accessoryRestockContext(
  */
 @Injectable()
 export class ReturnsService {
+  private readonly logger = new Logger(ReturnsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenant: TenantContext,
@@ -77,6 +81,7 @@ export class ReturnsService {
     private readonly activityLog: ActivityLogService,
     private readonly inventory: InventoryService,
     private readonly closing: MonthlyClosingService,
+    private readonly taxSnapshots: SaleTaxSnapshotReader,
   ) {}
 
   async list(query: ListReturnsQuery): Promise<Paginated<VehicleReturnDto>> {
@@ -199,7 +204,8 @@ export class ReturnsService {
    * Everything runs in one transaction and is idempotent — a status-guarded claim means a
    * second attempt (or any mid-way failure) leaves no duplicate CreditNote/Refund and never
    * leaves the vehicle incorrectly returned. Original Sale/Booking/Payment rows are untouched.
-   * Deeper P&L/GST treatment is Group 5; accessory restock is a Group 6 seam (no-op here).
+   * The credit note's GST comes from the sale's immutable TaxSnapshot when there is one (see
+   * creditNoteFigures); P&L/GST-summary treatment is unchanged; accessory restock is a seam (no-op).
    */
   async complete(id: string, dto: CompleteReturnInput, userId: string): Promise<VehicleReturnDto> {
     const row = await this.loadOrThrow(id);
@@ -214,8 +220,8 @@ export class ReturnsService {
     if (deduction > amountPaid) throw new BadRequestException('Deduction cannot exceed the amount the customer paid — that would leave an unexplained balance');
     const refundDue = amountPaid - deduction;
 
-    const saleTotal = row.sale.total;
-    const gst = row.sale.taxAmount ?? 0n; // structural capture for the credit note; P&L/GST integration is Group 5
+    // The credit note's GST split — read (never calculated) before the transaction; refused if unsound.
+    const { saleTotal, gst } = await this.creditNoteFigures(row);
 
     await this.prisma.$transaction(async (tx) => {
       // Idempotency lock: claim the completion. A concurrent/second attempt (status no longer
@@ -294,6 +300,37 @@ export class ReturnsService {
    */
   private async restockReturnedAccessories(_ctx: AccessoryRestockContext, _tx: Prisma.TransactionClient): Promise<void> {
     // No accessory stock is affected by vehicle returns yet.
+  }
+
+  /**
+   * The GST split of the full-sale credit note.
+   *
+   *  - Sale invoiced under GST (an immutable TaxSnapshot exists): the GST reversed is the snapshot's
+   *    stored total tax — the original figures, never today's rates, classifications or settings. The
+   *    record is first checked by the tax module's shared validator, and its document total must equal
+   *    the sale total; otherwise completion is refused before anything is written.
+   *  - No snapshot (GST disabled, pre-GST or legacy sale): exactly as before — the legacy Sale.taxAmount.
+   *
+   * The identity CreditNote.amount = total − gstAmount is kept in both cases; the stored discount /
+   * exchange treatment is not reinterpreted here.
+   */
+  private async creditNoteFigures(row: ReturnRow): Promise<{ saleTotal: bigint; gst: bigint }> {
+    const saleTotal = row.sale.total;
+    const tax = await this.taxSnapshots.forSale(row.saleId); // tenant-scoped; null = no GST snapshot
+    if (!tax) return { saleTotal, gst: row.sale.taxAmount ?? 0n };
+
+    const refuse = (reason: string): never => {
+      this.logger.error(`Return ${row.returnNumber} refused: GST record of sale ${row.saleId} cannot be reversed — ${reason}`);
+      throw new ConflictException('The GST record stored for this sale is not consistent, so the return cannot be completed. Nothing has been changed.');
+    };
+    try {
+      assertSaleTaxDocumentConsistent(tax);
+    } catch (e) {
+      if (e instanceof SaleTaxConsistencyError) return refuse(`${e.code}: ${e.message}${e.lineKey ? ` [line ${e.lineKey}]` : ''}`);
+      throw e;
+    }
+    if (tax.documentTotal !== saleTotal) return refuse(`SALE_TOTAL_MISMATCH: snapshot document total ${tax.documentTotal} ≠ sale total ${saleTotal}`);
+    return { saleTotal, gst: tax.totals.totalTax };
   }
 
   // ── internals ──
