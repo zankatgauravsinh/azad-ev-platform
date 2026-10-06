@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   ActivityAction,
@@ -31,6 +31,10 @@ import { SalesPdfService } from './sales-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { MonthlyClosingService } from '../finance/monthly-closing.service';
 import { SaleTaxService } from '../tax/sale-tax.service';
+import { SaleTaxSnapshotReader } from '../tax/sale-tax-snapshot.reader';
+import type { SaleTaxDocument } from '../tax/sale-tax-document';
+import { GstInvoiceDocumentError, buildGstInvoiceDocument, type GstInvoiceDocument } from './gst-invoice-document';
+import { GstInvoicePdfService } from './gst-invoice-pdf.service';
 import { resolveTimeZone } from '../../common/utils/business-date';
 import { FutureDeliveryDateError, resolveDeliveryDate, type ResolvedDeliveryDate } from './delivery-date';
 import { computeTotal, sumAccessories } from './pricing';
@@ -54,6 +58,8 @@ type BookingWithRelations = Prisma.BookingGetPayload<{ include: typeof include }
 
 @Injectable()
 export class BookingsService {
+  private readonly logger = new Logger(BookingsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly sequence: SequenceService,
@@ -63,6 +69,8 @@ export class BookingsService {
     private readonly pdfBrand: PdfBrandService,
     private readonly closing: MonthlyClosingService,
     private readonly saleTax: SaleTaxService,
+    private readonly taxSnapshots: SaleTaxSnapshotReader,
+    private readonly gstPdf: GstInvoicePdfService,
   ) {}
 
   // ── Reads ──────────────────────────────────────────────
@@ -347,7 +355,16 @@ export class BookingsService {
     const booking = await this.getById(id);
     if (!booking.sale?.invoiceNumber) throw new BadRequestException('No invoice has been generated for this booking');
     const invoiceNumber = booking.sale.invoiceNumber;
+    const filename = `${invoiceNumber.replace(/\//g, '-')}.pdf`;
     const brand = await this.pdfBrand.resolve();
+
+    // A sale invoiced under GST carries an immutable tax snapshot and gets the GST tax invoice. The
+    // choice follows the SALE (does a snapshot exist?), never the company's current GST setting, so
+    // switching GST on or off later cannot change the kind of invoice an existing sale has.
+    const tax = await this.taxSnapshots.forSale(booking.sale.id);
+    if (tax) return { buffer: await this.gstPdf.render(await this.gstInvoiceDocument(booking, tax, brand), brand), filename };
+
+    // No snapshot → the existing invoice, exactly as before.
     const buffer = await this.pdf.render({
       docType: 'INVOICE',
       number: invoiceNumber,
@@ -368,7 +385,33 @@ export class BookingsService {
       total: booking.total,
       finance: booking.finance ? { company: booking.finance.financeCompany, loanAmount: booking.finance.loanAmount, downPayment: booking.finance.downPayment, emi: booking.finance.emiAmount, tenureMonths: booking.finance.tenureMonths } : null,
     });
-    return { buffer, filename: `${invoiceNumber.replace(/\//g, '-')}.pdf` };
+    return { buffer, filename };
+  }
+
+  /**
+   * The GST tax invoice of a sale. Tax and supply data come from the stored snapshot only; the
+   * customer, company and vehicle details are the CURRENT records (identity is live — see
+   * gst-invoice-document.ts). No GST setting, rate, classification or mapping is read here.
+   */
+  private async gstInvoiceDocument(booking: BookingWithRelations, tax: SaleTaxDocument, brand: { name: string; addressLines: string[] }): Promise<GstInvoiceDocument> {
+    const [company, customer] = await Promise.all([
+      this.prisma.companySetting.findFirst({ select: { legalName: true, timezone: true } }),
+      this.prisma.customer.findFirst({ where: { id: booking.customerId }, select: { state: true, pin: true } }),
+    ]);
+    const { unit } = booking;
+    try {
+      return buildGstInvoiceDocument(tax, {
+        supplier: { name: brand.name, legalName: company?.legalName ?? null, addressLines: brand.addressLines },
+        customer: { name: booking.customer.name, phone: booking.customer.phone, address: booking.customer.address, city: booking.customer.city, state: customer?.state ?? null, pin: customer?.pin ?? null },
+        vehicle: { model: unit.variant.model.name, variant: unit.variant.name, colour: unit.variant.colour, vin: unit.vin, motorNumber: unit.motorNumber, batteryNumber: unit.batteryNumber },
+        timeZone: resolveTimeZone(company?.timezone),
+      });
+    } catch (e) {
+      if (!(e instanceof GstInvoiceDocumentError)) throw e;
+      // The stored record does not add up. It is never corrected here — the invoice is refused.
+      this.logger.error(`GST invoice refused for sale ${tax.saleId}: ${e.code} — ${e.message}${e.lineKey ? ` [line ${e.lineKey}]` : ''}`);
+      throw new InternalServerErrorException('The GST record stored for this invoice is not consistent, so the invoice cannot be produced. Nothing has been changed.');
+    }
   }
 
   // ── Helpers ────────────────────────────────────────────
