@@ -33,7 +33,7 @@ const variant = {
   exShowroomPrice: 10000n,
   model,
 };
-const unit = { id: 'unit-1', vin: 'VIN123', status: 'AVAILABLE', variant };
+const unit = { id: 'unit-1', vin: 'VIN123', status: 'AVAILABLE', variantId: 'variant-1', variant };
 
 describe('InventoryService', () => {
   let repo: RepoMock;
@@ -168,6 +168,65 @@ describe('InventoryService', () => {
     it("another company's variant → 404 and the unit is not written", async () => {
       catalog.findActiveVariantForUnit.mockResolvedValueOnce({ error: 'NOT_FOUND' });
       await expect(service.update('unit-1', { variantId: 'other' }, 'user-1')).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.updateUnit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('variant identity guard (M4B)', () => {
+    const other = { ...variant, id: 'variant-2', colour: 'Red' };
+    const at = (status: string) => { repo.findByIdWithVariant.mockResolvedValue({ ...unit, status, variantId: 'variant-1' } as never); };
+
+    it.each(['AVAILABLE', 'RESERVED'])('%s: a curated change and a legacy change are allowed and audited old → new', async (status) => {
+      at(status);
+      catalog.findActiveVariantForUnit.mockResolvedValue({ variant: other });
+      await service.update('unit-1', { variantId: 'variant-2' }, 'user-1');
+      expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', expect.objectContaining({ variant: { connect: { id: 'variant-2' } } }), expect.anything());
+      expect(activityLog.record).toHaveBeenLastCalledWith(expect.objectContaining({
+        summary: 'Updated scooter VIN123: variant Comptech VX1 Standard (Teal) → Comptech VX1 Standard (Red)',
+        metadata: { variantChange: { from: expect.objectContaining({ variantId: 'variant-1', colour: 'Teal' }), to: expect.objectContaining({ variantId: 'variant-2', colour: 'Red' }) } },
+      }));
+      repo.findVariant.mockResolvedValue(other as never);
+      await service.update('unit-1', { colour: 'Red' }, 'user-1');
+      expect(repo.updateUnit).toHaveBeenLastCalledWith('unit-1', expect.objectContaining({ variant: { connect: { id: 'variant-2' } } }), expect.anything());
+    });
+
+    it.each(['BOOKED', 'DELIVERED', 'IN_SERVICE', 'RETURNED'])('%s: a curated change and a legacy change are refused with 409 and nothing is written', async (status) => {
+      at(status);
+      catalog.findActiveVariantForUnit.mockResolvedValue({ variant: other });
+      await expect(service.update('unit-1', { variantId: 'variant-2', vin: 'NEWVIN', notes: 'x', sellingPrice: 5 }, 'user-1')).rejects.toMatchObject({ status: 409, message: 'Vehicle model/variant cannot be changed after booking or delivery.' });
+      repo.findVariant.mockResolvedValue(other as never);
+      await expect(service.update('unit-1', { colour: 'Red', location: 'Yard B' }, 'user-1')).rejects.toBeInstanceOf(ConflictException);
+      repo.findVariant.mockResolvedValue(null); // a brand-new combination would be created by the legacy resolver…
+      repo.createVariant.mockResolvedValue({ ...other, id: 'variant-new', modelId: 'model-2' } as never);
+      await expect(service.update('unit-1', { modelId: 'model-2', variant: 'Standard', colour: 'Teal' }, 'user-1')).rejects.toBeInstanceOf(ConflictException); // …and still refused (rolled back)
+      expect(repo.updateUnit).not.toHaveBeenCalled();
+      expect(activityLog.record).not.toHaveBeenCalled();
+    });
+
+    it.each(['BOOKED', 'DELIVERED'])('%s: naming the CURRENT variant (by id or by the same model / variant / colour) is not a change', async (status) => {
+      at(status);
+      catalog.findActiveVariantForUnit.mockResolvedValue({ variant: variant });
+      await service.update('unit-1', { variantId: 'variant-1', notes: 'serviced' }, 'user-1');
+      repo.findVariant.mockResolvedValue(variant as never);
+      await service.update('unit-1', { modelId: 'model-1', variant: 'Standard', colour: 'Teal', location: 'Bay 2' }, 'user-1');
+      expect(repo.updateUnit).toHaveBeenCalledTimes(2);
+      for (const call of repo.updateUnit.mock.calls) expect(call[1]).not.toHaveProperty('variant');
+      expect(activityLog.record).toHaveBeenCalledTimes(2);
+      for (const call of activityLog.record.mock.calls) expect(call[0]).toMatchObject({ summary: 'Updated scooter VIN123' });
+      for (const call of activityLog.record.mock.calls) expect(call[0]).not.toHaveProperty('metadata');
+    });
+
+    it('non-identity edits on a committed unit keep working', async () => {
+      at('DELIVERED');
+      await service.update('unit-1', { location: 'Customer', notes: 'Delivered', sellingPrice: 1 }, 'user-1');
+      expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', expect.objectContaining({ location: 'Customer', notes: 'Delivered', sellingPrice: 1n }), expect.anything());
+      expect(catalog.findActiveVariantForUnit).not.toHaveBeenCalled();
+    });
+
+    it("a cross-tenant variantId is a 404 before the status rule, even on a committed unit", async () => {
+      at('DELIVERED');
+      catalog.findActiveVariantForUnit.mockResolvedValue({ error: 'NOT_FOUND' });
+      await expect(service.update('unit-1', { variantId: 'theirs' }, 'user-1')).rejects.toBeInstanceOf(NotFoundException);
       expect(repo.updateUnit).not.toHaveBeenCalled();
     });
   });

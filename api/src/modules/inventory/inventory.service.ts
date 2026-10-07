@@ -42,6 +42,21 @@ interface UploadedFile {
   mimetype: string;
 }
 
+/**
+ * A unit's catalogue identity (model / variant / colour) may be corrected only before it is committed to
+ * a customer. From BOOKED on — and in every later state (DELIVERED, IN_SERVICE, RETURNED) — the invoice,
+ * delivery note, service, warranty, AMC and return records all read that identity live, so changing it
+ * would rewrite their history. The status itself is untouched by this rule.
+ */
+const IDENTITY_EDITABLE_STATUSES: ReadonlySet<UnitStatus> = new Set([UnitStatus.AVAILABLE, UnitStatus.RESERVED]);
+
+/** A plain JSON object (type alias, not an interface) so it can ride in the activity-log metadata. */
+type IdentityRef = { variantId: string; modelId: string; brand: string; model: string; variant: string; colour: string; label: string };
+const identityRef = (v: { id: string; name: string; colour: string; model: { id: string; brand: string; name: string } }): IdentityRef => ({
+  variantId: v.id, modelId: v.model.id, brand: v.model.brand, model: v.model.name, variant: v.name, colour: v.colour,
+  label: `${v.model.brand} ${v.model.name} ${v.name} (${v.colour})`,
+});
+
 @Injectable()
 export class InventoryService {
   constructor(
@@ -201,16 +216,19 @@ export class InventoryService {
     if (dto.vin && dto.vin !== existing.vin) {
       await this.assertVinAvailable(dto.vin);
     }
+    // Curated selection is validated against the tenant first (404 / 409), before any status rule.
+    const curated = dto.variantId !== undefined ? await this.curatedVariant(dto.variantId) : null;
 
+    const identity: { change: { from: IdentityRef; to: IdentityRef } | null } = { change: null }; // set inside the transaction
     const unit = await this.repo.transaction(async (tx) => {
       const data: Prisma.InventoryUnitUpdateInput = { updatedById: userId };
 
-      if (dto.variantId !== undefined) {
-        // Curated selection wins over any free-text fields sent alongside it; nothing is created.
-        const variant = await this.curatedVariant(dto.variantId);
-        data.variant = { connect: { id: variant.id } };
-      } else if (dto.modelId !== undefined || dto.variant !== undefined || dto.colour !== undefined) {
-        const variant = await this.resolveVariant(
+      // The catalogue identity the request asks for — curated (wins over any free-text sent alongside)
+      // or legacy text resolved exactly as before (the resolver may create a variant; a refusal below
+      // rolls that back with everything else).
+      let target: { id: string; name: string; colour: string; model: { id: string; brand: string; name: string } } | null = curated;
+      if (!target && (dto.modelId !== undefined || dto.variant !== undefined || dto.colour !== undefined)) {
+        const resolved = await this.resolveVariant(
           tx,
           dto.modelId ?? existing.variant.modelId,
           dto.variant ?? existing.variant.name,
@@ -218,7 +236,16 @@ export class InventoryService {
           dto.hexColour ?? existing.variant.hexColour ?? undefined,
           dto.sellingPrice !== undefined ? BigInt(dto.sellingPrice) : existing.variant.exShowroomPrice,
         );
-        data.variant = { connect: { id: variant.id } };
+        target = { ...resolved, model: existing.variant.modelId === resolved.modelId ? existing.variant.model : await this.modelRef(resolved.modelId) };
+      }
+      // Only an ACTUAL change of variant is a reassignment: naming the current variant (by id or by the
+      // same model / variant / colour) is not, whatever the status.
+      if (target && target.id !== existing.variantId) {
+        if (!IDENTITY_EDITABLE_STATUSES.has(existing.status as UnitStatus)) {
+          throw new ConflictException('Vehicle model/variant cannot be changed after booking or delivery.');
+        }
+        data.variant = { connect: { id: target.id } };
+        identity.change = { from: identityRef(existing.variant), to: identityRef(target) };
       }
       if (dto.vin !== undefined) data.vin = dto.vin;
       if (dto.motorNumber !== undefined) data.motorNumber = dto.motorNumber;
@@ -238,9 +265,18 @@ export class InventoryService {
       action: ActivityAction.UPDATE,
       entityType: 'InventoryUnit',
       entityId: id,
-      summary: `Updated scooter ${unit.vin}`,
+      summary: identity.change
+        ? `Updated scooter ${unit.vin}: variant ${identity.change.from.label} → ${identity.change.to.label}`
+        : `Updated scooter ${unit.vin}`,
+      ...(identity.change ? { metadata: { variantChange: identity.change } } : {}),
     });
     return unit;
+  }
+
+  private async modelRef(modelId: string): Promise<{ id: string; brand: string; name: string }> {
+    const model = await this.repo.findModelById(modelId);
+    if (!model) throw new NotFoundException('Selected model does not exist');
+    return { id: model.id, brand: model.brand, name: model.name };
   }
 
   async remove(id: string, userId: string): Promise<void> {
