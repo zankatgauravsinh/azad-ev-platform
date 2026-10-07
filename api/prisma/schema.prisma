@@ -550,7 +550,8 @@ model ScooterModel {
   variants             ScooterVariant[]
   preferredByCustomers Customer[]       @relation("CustomerPreferredModel")
 
-  @@unique([brand, name])
+  /// Tenant-scoped: two companies may each have a "Comptech VX1".
+  @@unique([companyId, brand, name])
   @@index([companyId])
 }
 

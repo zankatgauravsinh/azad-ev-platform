@@ -20,3 +20,4 @@ export * from './warranty';
 export * from './finance';
 export * from './delivery';
 export * from './tax';
+export * from './catalog';

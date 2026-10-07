@@ -74,7 +74,7 @@ async function main(): Promise<void> {
   ];
   for (const model of models) {
     await prisma.scooterModel.upsert({
-      where: { brand_name: { brand: model.brand, name: model.name } },
+      where: { companyId_brand_name: { companyId, brand: model.brand, name: model.name } },
       update: { companyId },
       create: { ...model, companyId },
     });
