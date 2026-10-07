@@ -1,19 +1,26 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { CatalogModelDto, CatalogVariantDto, CreateCatalogModelInput, CreateCatalogVariantInput, UpdateCatalogModelInput, UpdateCatalogVariantInput } from '@azad/shared';
+import type { CatalogModelDto, CatalogStatusFilter, CatalogVariantDto, CreateCatalogModelInput, CreateCatalogVariantInput, UpdateCatalogModelInput, UpdateCatalogVariantInput } from '@azad/shared';
 import { ActivityLogService } from '../../../activity-log/activity-log.service';
 import { TenantContext } from '../../../tenant/tenant-context.service';
 import { catalogActivation, catalogCreated, catalogUpdated, diffFields, type CatalogAuditEvent } from './catalog-audit';
-import { CatalogRepository, type ModelRow, type VariantRow } from './catalog.repository';
+import { CatalogRepository, type ListOptions, type ModelRow, type VariantRow } from './catalog.repository';
 
 /**
- * Catalog service (M1 foundation): tenant-safe model / variant lookups, the validation future CRUD
- * needs, create / update / activate with an audit entry for each. No HTTP surface yet — the public
- * endpoints and the Model Management screens come in M2 / M3 and will call these methods.
+ * Catalog service: tenant-safe model / variant lookups, uniqueness checks, create / update / activate
+ * with an audit entry for each. CatalogController (M2) exposes it under /inventory.
  *
  * The company is always the authenticated actor's (TenantContext); it is never taken from a payload.
- * Pricing, GST classification (PUT /tax/scooter-models/:id/classification) and the existing unit
- * flows are untouched.
+ * Lifecycle is isActive only: an inactive model or variant leaves the default lookups but stays
+ * resolvable by id, so every unit, booking, sale and document that points at it keeps working.
+ * Deactivation never cascades (an inactive model's variants keep their own state).
+ *
+ * LIVE IDENTITY (intentional for now): bookings, sales, service, warranty and documents read model and
+ * variant names through the unit at render time, so editing a name here changes how old records
+ * display. The GST snapshot is the one frozen copy. A catalogue history/snapshot strategy is a later,
+ * separate decision. Pricing: exShowroomPrice is the maintained variant list price only — units,
+ * bookings, quotations and sales are never updated from it. GST classification stays with
+ * PUT /tax/scooter-models/:id/classification.
  */
 const MODEL_FIELDS = ['brand', 'name', 'description', 'isActive'] as const;
 const VARIANT_FIELDS = ['name', 'colour', 'hexColour', 'exShowroomPrice', 'batteryType', 'batteryCapacity', 'rangeKm', 'topSpeedKmph', 'chargingTimeHrs', 'motorPowerW', 'warrantyMonths', 'isActive'] as const;
@@ -27,12 +34,26 @@ export class CatalogService {
   ) {}
 
   // ── Lookups ────────────────────────────────────────────
-  listModels(opts: { includeInactive?: boolean } = {}): Promise<ModelRow[]> {
+  listModels(opts: ListOptions = {}): Promise<ModelRow[]> {
     return this.repo.listModels(this.tenant.requireCompanyId(), opts);
   }
 
-  listVariants(opts: { modelId?: string; includeInactive?: boolean } = {}): Promise<VariantRow[]> {
+  listVariants(opts: ListOptions & { modelId?: string } = {}): Promise<VariantRow[]> {
     return this.repo.listVariants(this.tenant.requireCompanyId(), opts);
+  }
+
+  /** The list the API serves: filtered rows with their tenant-scoped counts. */
+  async listModelDtos(query: { q?: string; status: CatalogStatusFilter }): Promise<CatalogModelDto[]> {
+    const companyId = this.tenant.requireCompanyId();
+    const [rows, counts] = await Promise.all([this.repo.listModels(companyId, { q: query.q, status: query.status }), this.repo.countsByModel(companyId)]);
+    return rows.map((m) => CatalogService.toModelDto(m, counts.get(m.id) ?? { variantCount: 0, unitCount: 0 }));
+  }
+
+  async listVariantDtos(query: { modelId?: string; status: CatalogStatusFilter }): Promise<CatalogVariantDto[]> {
+    const companyId = this.tenant.requireCompanyId();
+    const rows = await this.repo.listVariants(companyId, { modelId: query.modelId, status: query.status });
+    const counts = await this.repo.unitCountsByVariant(companyId, rows.map((v) => v.id));
+    return rows.map((v) => CatalogService.toVariantDto(v, { unitCount: counts.get(v.id) ?? 0 }));
   }
 
   /** The company's model, active or inactive. Another company's model is not found. */
@@ -77,7 +98,7 @@ export class CatalogService {
     const companyId = this.tenant.requireCompanyId();
     await this.assertModelNameAvailable(input.name);
     const created = await this.repo
-      .createModel(companyId, { brand: input.brand, name: input.name, description: input.description ?? null, isActive: input.isActive ?? true, createdById: userId, updatedById: userId })
+      .createModel(companyId, { brand: input.brand, name: input.name, description: input.description || null, isActive: true, createdById: userId, updatedById: userId })
       .catch(CatalogService.uniqueRace(`Model "${input.name}" already exists`));
     await this.audit(userId, catalogCreated('ScooterModel', created.id, `${created.brand} ${created.name}`, { brand: created.brand, name: created.name, description: created.description, isActive: created.isActive }));
     return created;
@@ -91,7 +112,6 @@ export class CatalogService {
     if (input.brand !== undefined) data.brand = input.brand;
     if (input.name !== undefined) data.name = input.name;
     if (input.description !== undefined) data.description = input.description || null;
-    if (input.isActive !== undefined) data.isActive = input.isActive;
     const count = await this.repo.updateModel(companyId, id, data).catch(CatalogService.uniqueRace(`Model "${input.name ?? before.name}" already exists`));
     if (count !== 1) throw new NotFoundException('Model not found');
     const after = await this.getModel(id);
@@ -111,9 +131,11 @@ export class CatalogService {
   }
 
   // ── Variants ───────────────────────────────────────────
-  async createVariant(input: CreateCatalogVariantInput, userId: string): Promise<VariantRow> {
+  /** The model comes from the route and must be this company's and active; the body never names a model. */
+  async createVariant(modelId: string, input: CreateCatalogVariantInput, userId: string): Promise<VariantRow> {
     const companyId = this.tenant.requireCompanyId();
-    const model = await this.getModel(input.modelId); // the model must be this company's
+    const model = await this.getModel(modelId);
+    if (!model.isActive) throw new ConflictException(`Model ${model.brand} ${model.name} is inactive — activate it before adding variants`);
     await this.assertVariantKeyAvailable({ modelId: model.id, name: input.name, colour: input.colour });
     const created = await this.repo
       .createVariant(companyId, {
@@ -129,7 +151,7 @@ export class CatalogService {
         chargingTimeHrs: input.chargingTimeHrs === undefined ? null : new Prisma.Decimal(input.chargingTimeHrs),
         motorPowerW: input.motorPowerW ?? null,
         warrantyMonths: input.warrantyMonths ?? null,
-        isActive: input.isActive ?? true,
+        isActive: true,
         createdById: userId,
         updatedById: userId,
       })
@@ -155,7 +177,6 @@ export class CatalogService {
     if (input.chargingTimeHrs !== undefined) data.chargingTimeHrs = new Prisma.Decimal(input.chargingTimeHrs);
     if (input.motorPowerW !== undefined) data.motorPowerW = input.motorPowerW;
     if (input.warrantyMonths !== undefined) data.warrantyMonths = input.warrantyMonths;
-    if (input.isActive !== undefined) data.isActive = input.isActive;
     const count = await this.repo.updateVariant(companyId, id, data).catch(CatalogService.uniqueRace(`Variant "${key.name}" in "${key.colour}" already exists for this model`));
     if (count !== 1) throw new NotFoundException('Variant not found');
     const after = await this.getVariant(id);

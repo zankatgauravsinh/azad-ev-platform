@@ -1,7 +1,6 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import type { InventoryRepository } from './inventory.repository';
-import type { CatalogService } from './catalog/catalog.service';
 import type { ActivityLogService } from '../../activity-log/activity-log.service';
 import type { ExportService } from '../../export/export.service';
 import type { StorageService } from '../../storage/storage.service';
@@ -60,7 +59,6 @@ describe('InventoryService', () => {
       activityLog as unknown as ActivityLogService,
       {} as ExportService,
       {} as StorageService,
-      {} as CatalogService,
     );
   });
 

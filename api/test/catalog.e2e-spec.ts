@@ -83,7 +83,7 @@ describe('Catalog foundation (integration)', () => {
     let aVariant = '';
     beforeAll(async () => {
       aModel = (await inA(() => service.createModel({ brand: 'TESTBRAND', name: `Iso ${stamp}` }, USER))).id;
-      aVariant = (await inA(() => service.createVariant({ modelId: aModel, name: 'Pro', colour: 'Red', exShowroomPrice: 12_000_000 }, USER))).id;
+      aVariant = (await inA(() => service.createVariant(aModel, { name: 'Pro', colour: 'Red', exShowroomPrice: 12_000_000 }, USER))).id;
     });
 
     it("company B cannot read, update or deactivate company A's model", async () => {
@@ -100,7 +100,7 @@ describe('Catalog foundation (integration)', () => {
       await expect(inB(() => service.getVariant(aVariant))).rejects.toBeInstanceOf(NotFoundException);
       await expect(inB(() => service.updateVariant(aVariant, { colour: 'Blue' }, USER))).rejects.toBeInstanceOf(NotFoundException);
       await expect(inB(() => service.setVariantActive(aVariant, false, USER))).rejects.toBeInstanceOf(NotFoundException);
-      await expect(inB(() => service.createVariant({ modelId: aModel, name: 'Pro', colour: 'Blue', exShowroomPrice: 1 }, USER))).rejects.toBeInstanceOf(NotFoundException);
+      await expect(inB(() => service.createVariant(aModel, { name: 'Pro', colour: 'Blue', exShowroomPrice: 1 }, USER))).rejects.toBeInstanceOf(NotFoundException);
       expect(await inB(() => repo.updateVariant(coB, aVariant, { colour: 'Blue' }))).toBe(0);
       expect(await prisma.scooterVariant.count({ where: { modelId: aModel } })).toBe(1);
       expect((await prisma.scooterVariant.findUniqueOrThrow({ where: { id: aVariant } })).colour).toBe('Red');
@@ -121,11 +121,11 @@ describe('Catalog foundation (integration)', () => {
     });
 
     it('the variant key is exact: a different case or a different colour is another variant; the same key is refused', async () => {
-      const red = await inA(() => service.createVariant({ modelId, name: 'Pro', colour: 'Red', exShowroomPrice: 10_000_000 }, USER));
-      const lower = await inA(() => service.createVariant({ modelId, name: 'Pro', colour: 'red', exShowroomPrice: 10_000_000 }, USER)); // documented: no case folding
-      const blue = await inA(() => service.createVariant({ modelId, name: 'Pro', colour: 'Blue', exShowroomPrice: 10_000_000 }, USER));
+      const red = await inA(() => service.createVariant(modelId, { name: 'Pro', colour: 'Red', exShowroomPrice: 10_000_000 }, USER));
+      const lower = await inA(() => service.createVariant(modelId, { name: 'Pro', colour: 'red', exShowroomPrice: 10_000_000 }, USER)); // documented: no case folding
+      const blue = await inA(() => service.createVariant(modelId, { name: 'Pro', colour: 'Blue', exShowroomPrice: 10_000_000 }, USER));
       expect(new Set([red.id, lower.id, blue.id]).size).toBe(3);
-      await expect(inA(() => service.createVariant({ modelId, name: 'Pro', colour: 'Red', exShowroomPrice: 1 }, USER))).rejects.toBeInstanceOf(ConflictException);
+      await expect(inA(() => service.createVariant(modelId, { name: 'Pro', colour: 'Red', exShowroomPrice: 1 }, USER))).rejects.toBeInstanceOf(ConflictException);
       await expect(inA(() => service.updateVariant(blue.id, { colour: 'Red' }, USER))).rejects.toBeInstanceOf(ConflictException);
       expect(await inA(() => service.listVariants({ modelId }))).toHaveLength(3);
     });

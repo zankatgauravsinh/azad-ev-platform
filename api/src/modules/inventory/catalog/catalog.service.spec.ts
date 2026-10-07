@@ -60,7 +60,13 @@ describe('CatalogService', () => {
 
     it('8. a variant cannot be created under a model the company does not own', async () => {
       repo.findModelById.mockResolvedValue(null);
-      await expect(service.createVariant({ modelId: 'other-co-model', name: 'Pro', colour: 'Red', exShowroomPrice: 1 }, 'u1')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.createVariant('other-co-model', { name: 'Pro', colour: 'Red', exShowroomPrice: 1 }, 'u1')).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.createVariant).not.toHaveBeenCalled();
+    });
+
+    it('22. an inactive model does not accept new variants', async () => {
+      repo.findModelById.mockResolvedValue(model({ isActive: false }));
+      await expect(service.createVariant('m1', { name: 'Pro', colour: 'Red', exShowroomPrice: 1 }, 'u1')).rejects.toBeInstanceOf(ConflictException);
       expect(repo.createVariant).not.toHaveBeenCalled();
     });
 
@@ -88,7 +94,7 @@ describe('CatalogService', () => {
 
     it('10. a variant key (model, name, colour) already used is refused; the same variant may keep its key', async () => {
       repo.findVariantByKey.mockResolvedValue(variant({ id: 'v9' }));
-      await expect(service.createVariant({ modelId: 'm1', name: 'Pro', colour: 'Red', exShowroomPrice: 1 }, 'u1')).rejects.toBeInstanceOf(ConflictException);
+      await expect(service.createVariant('m1', { name: 'Pro', colour: 'Red', exShowroomPrice: 1 }, 'u1')).rejects.toBeInstanceOf(ConflictException);
       await expect(service.updateVariant('v1', { colour: 'Red' }, 'u1')).rejects.toBeInstanceOf(ConflictException);
       repo.findVariantByKey.mockResolvedValue(variant({ id: 'v1' }));
       await expect(service.updateVariant('v1', { colour: 'Red' }, 'u1')).resolves.toBeDefined();
@@ -152,7 +158,7 @@ describe('CatalogService', () => {
 
     it('16. variant create records a CREATE event and converts money / decimals for storage', async () => {
       repo.createVariant.mockResolvedValue(variant({ chargingTimeHrs: new Prisma.Decimal('4.5') }));
-      await service.createVariant({ modelId: 'm1', name: 'Pro', colour: 'Red', exShowroomPrice: 12_000_000, chargingTimeHrs: 4.5, rangeKm: 100 }, 'u1');
+      await service.createVariant('m1', { name: 'Pro', colour: 'Red', exShowroomPrice: 12_000_000, chargingTimeHrs: 4.5, rangeKm: 100 }, 'u1');
       expect(repo.createVariant).toHaveBeenCalledWith(CO, expect.objectContaining({ modelId: 'm1', name: 'Pro', colour: 'Red', exShowroomPrice: 12_000_000n, rangeKm: 100, chargingTimeHrs: new Prisma.Decimal(4.5), isActive: true, createdById: 'u1' }));
       expect(log.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'CREATE', entityType: 'ScooterVariant', entityId: 'v1', summary: 'Created variant TESTBRAND VX Pro (Red)', metadata: expect.objectContaining({ exShowroomPrice: '12000000', colour: 'Red' }) }));
     });

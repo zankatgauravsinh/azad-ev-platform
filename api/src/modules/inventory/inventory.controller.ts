@@ -94,35 +94,7 @@ export class InventoryController {
   }
 
   // ── Models ─────────────────────────────────────────────
-  @Get('models')
-  @Permissions('inventory.view')
-  @ApiOperation({ summary: 'List scooter models' })
-  models() {
-    return this.inventory.listModels();
-  }
-
-  @Get('variants')
-  @Permissions('inventory.view')
-  @ApiOperation({ summary: 'List scooter variants (for quotations/bookings)' })
-  @ApiQuery({ name: 'modelId', required: false, format: 'uuid' })
-  variants(@Query('modelId') modelId?: string) {
-    return this.inventory.listVariants(modelId);
-  }
-
-  @Post('models')
-  @Permissions('inventory.create')
-  @ApiOperation({ summary: 'Create a scooter model' })
-  @ApiBody({ schema: { example: { name: 'VX1', brand: 'Comptech' } } })
-  @ApiResponse({ status: 201, description: 'The created model' })
-  @ApiResponse({ status: 409, description: 'Model already exists' })
-  createModel(
-    @Body('name') name: string,
-    @Body('brand') brand: string,
-    @CurrentUser('id') userId: string,
-  ) {
-    if (!name?.trim()) throw new BadRequestException('Model name is required');
-    return this.inventory.createModel(name.trim(), (brand ?? 'Comptech').trim(), userId);
-  }
+  // Models and variants: see CatalogController (same /inventory prefix).
 
   // ── Units: collection ──────────────────────────────────
   @Get('units')

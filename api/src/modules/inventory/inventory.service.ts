@@ -28,7 +28,6 @@ import { ExportService, type ExportData } from '../../export/export.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.service';
 import { rupeesToPaise, formatInr } from '../../common/utils/money';
 import { InventoryRepository } from './inventory.repository';
-import { CatalogService } from './catalog/catalog.service';
 
 const LOW_STOCK_THRESHOLD = 2;
 // High enough to export a whole dealership's stock in one file; a single
@@ -48,7 +47,6 @@ export class InventoryService {
     private readonly activityLog: ActivityLogService,
     private readonly exporter: ExportService,
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
-    private readonly catalog: CatalogService,
   ) {}
 
   // ── Reads ──────────────────────────────────────────────
@@ -552,21 +550,9 @@ export class InventoryService {
   }
 
   // ── Models (for the add form) ──────────────────────────
-  // ── Catalog lookups (GET /inventory/models, /variants, POST /inventory/models) ──
-  // Served by the tenant-safe CatalogService (M1); the response shapes are unchanged. The implicit
-  // model / variant creation inside unit create, update and CSV import still uses the repository
-  // helpers below and moves to the catalog in M2 / M4.
-  listModels() {
-    return this.catalog.listModels();
-  }
-
-  listVariants(modelId?: string) {
-    return this.catalog.listVariants({ modelId });
-  }
-
-  createModel(name: string, brand: string, userId: string) {
-    return this.catalog.createModel({ brand, name }, userId);
-  }
+  // Models and variants are managed by the CatalogService / CatalogController. The IMPLICIT creation
+  // below (resolveVariant on unit create / update, resolveModelByName on CSV import — brand defaults
+  // to 'Comptech' there) is unchanged in M2 and is replaced by curated selection in M4.
 
   // ── Helpers ────────────────────────────────────────────
   private async getUnitOrThrow(id: string) {

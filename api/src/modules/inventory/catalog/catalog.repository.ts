@@ -23,14 +23,30 @@ export type VariantRow = Prisma.ScooterVariantGetPayload<{ include: typeof varia
 /** The variant key is exact: "Red", "red" and "Red " would be three variants (inputs are trimmed by the schemas, case is kept). */
 export type VariantKey = { modelId: string; name: string; colour: string };
 
+/** Which records a list returns. Default: active only (what the lookups always showed). */
+export interface ListOptions {
+  status?: 'active' | 'inactive' | 'all';
+  /** Shorthand for status 'all' (M1 callers). */
+  includeInactive?: boolean;
+  q?: string;
+}
+const statusWhere = (opts: ListOptions): { isActive?: boolean } => {
+  const status = opts.status ?? (opts.includeInactive ? 'all' : 'active');
+  return status === 'all' ? {} : { isActive: status === 'active' };
+};
+
 @Injectable()
 export class CatalogRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   // ── Models ─────────────────────────────────────────────
-  listModels(companyId: string, opts: { includeInactive?: boolean } = {}, db: Db = this.prisma): Promise<ModelRow[]> {
+  listModels(companyId: string, opts: ListOptions = {}, db: Db = this.prisma): Promise<ModelRow[]> {
     return db.scooterModel.findMany({
-      where: { companyId, ...(opts.includeInactive ? {} : { isActive: true }) },
+      where: {
+        companyId,
+        ...statusWhere(opts),
+        ...(opts.q ? { OR: [{ name: { contains: opts.q, mode: 'insensitive' } }, { brand: { contains: opts.q, mode: 'insensitive' } }] } : {}),
+      },
       select: modelSelect,
       orderBy: [{ brand: 'asc' }, { name: 'asc' }],
     });
@@ -52,6 +68,28 @@ export class CatalogRepository {
       where: { companyId, brand: { equals: brand, mode: 'insensitive' }, name: { equals: name, mode: 'insensitive' } },
       select: modelSelect,
     });
+  }
+
+  /** variantId → modelId and the two per-model counts, for a list in two queries instead of 2N. */
+  async countsByModel(companyId: string, db: Db = this.prisma): Promise<Map<string, { variantCount: number; unitCount: number }>> {
+    const variants = await db.scooterVariant.findMany({ where: { companyId }, select: { id: true, modelId: true } });
+    const units = await db.inventoryUnit.groupBy({ by: ['variantId'], where: { companyId, deletedAt: null }, _count: { _all: true } });
+    const unitsByVariant = new Map(units.map((u) => [u.variantId, u._count._all]));
+    const out = new Map<string, { variantCount: number; unitCount: number }>();
+    for (const v of variants) {
+      const row = out.get(v.modelId) ?? { variantCount: 0, unitCount: 0 };
+      row.variantCount += 1;
+      row.unitCount += unitsByVariant.get(v.id) ?? 0;
+      out.set(v.modelId, row);
+    }
+    return out;
+  }
+
+  /** variantId → units on the books. */
+  async unitCountsByVariant(companyId: string, variantIds: string[], db: Db = this.prisma): Promise<Map<string, number>> {
+    if (variantIds.length === 0) return new Map();
+    const units = await db.inventoryUnit.groupBy({ by: ['variantId'], where: { companyId, deletedAt: null, variantId: { in: variantIds } }, _count: { _all: true } });
+    return new Map(units.map((u) => [u.variantId, u._count._all]));
   }
 
   countVariants(companyId: string, modelId: string, db: Db = this.prisma): Promise<number> {
@@ -78,9 +116,9 @@ export class CatalogRepository {
   }
 
   // ── Variants ───────────────────────────────────────────
-  listVariants(companyId: string, opts: { modelId?: string; includeInactive?: boolean } = {}, db: Db = this.prisma): Promise<VariantRow[]> {
+  listVariants(companyId: string, opts: ListOptions & { modelId?: string } = {}, db: Db = this.prisma): Promise<VariantRow[]> {
     return db.scooterVariant.findMany({
-      where: { companyId, ...(opts.modelId ? { modelId: opts.modelId } : {}), ...(opts.includeInactive ? {} : { isActive: true }) },
+      where: { companyId, ...(opts.modelId ? { modelId: opts.modelId } : {}), ...statusWhere(opts) },
       include: variantInclude,
       orderBy: [{ name: 'asc' }, { colour: 'asc' }],
     });

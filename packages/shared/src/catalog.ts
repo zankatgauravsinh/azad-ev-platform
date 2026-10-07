@@ -18,11 +18,31 @@ const optionalCount = z.coerce.number().int().min(0).optional();
 export const HEX_COLOUR_PATTERN = /^#([0-9a-fA-F]{6})$/;
 
 /* ── Model ── */
+/** Which records a catalogue list returns. Lookups default to active ones; history can ask for all. */
+export const catalogStatusFilterSchema = z.enum(['active', 'inactive', 'all']).default('active');
+export type CatalogStatusFilter = z.infer<typeof catalogStatusFilterSchema>;
+
+export const listCatalogModelsQuerySchema = z.object({
+  q: z.string().trim().max(120).optional(),
+  status: catalogStatusFilterSchema,
+});
+export type ListCatalogModelsQuery = z.infer<typeof listCatalogModelsQuerySchema>;
+
+export const listCatalogVariantsQuerySchema = z.object({
+  modelId: z.string().uuid().optional(),
+  status: catalogStatusFilterSchema,
+});
+export type ListCatalogVariantsQuery = z.infer<typeof listCatalogVariantsQuerySchema>;
+
+/** Activation is its own endpoint; it is never part of a create/update payload. */
+export const setCatalogActiveSchema = z.object({ isActive: z.boolean() });
+export type SetCatalogActiveInput = z.infer<typeof setCatalogActiveSchema>;
+
+/** Brand is required: nothing defaults it. */
 export const createCatalogModelSchema = z.object({
   brand: text(80),
   name: text(80),
   description: optionalText(500),
-  isActive: z.boolean().optional(),
 });
 export type CreateCatalogModelInput = z.infer<typeof createCatalogModelSchema>;
 
@@ -60,10 +80,10 @@ const variantFields = {
   chargingTimeHrs: z.coerce.number().min(0).max(999.99).optional(),
   motorPowerW: optionalCount,
   warrantyMonths: optionalCount,
-  isActive: z.boolean().optional(),
 };
 
-export const createCatalogVariantSchema = z.object({ modelId: z.string().uuid(), ...variantFields });
+/** The model comes from the route (POST /inventory/models/:modelId/variants), never from the body. */
+export const createCatalogVariantSchema = z.object(variantFields);
 export type CreateCatalogVariantInput = z.infer<typeof createCatalogVariantSchema>;
 
 /** The model a variant belongs to is fixed: a variant moves to another model only by re-creation. */
