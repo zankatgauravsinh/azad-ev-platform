@@ -20,6 +20,7 @@ import { ServiceReportsPage } from '@/features/service/pages/service-reports-pag
 import { SettingsPage } from '@/features/settings/pages/settings-page';
 import { RolesPage } from '@/features/roles/pages/roles-page';
 import { GstManagementPage } from '@/features/tax/pages/gst-management-page';
+import { ModelsPage } from '@/features/catalog/pages/models-page';
 import { ReportsPage } from '@/features/reports/pages/reports-page';
 import { WarrantyPage } from '@/features/warranty/pages/warranty-page';
 import { FinancePage } from '@/features/finance/pages/finance-page';
@@ -41,6 +42,7 @@ export const router = createBrowserRouter([
           { path: '/', element: <AccountPage /> },
           { path: '/dashboard', element: <DashboardPage /> },
           { path: '/inventory', element: <InventoryListPage /> },
+          { path: '/inventory/models', element: <ModelsPage /> },
           { path: '/inventory/:id', element: <InventoryDetailPage /> },
           { path: '/customers', element: <CustomersListPage /> },
           { path: '/customers/:id', element: <CustomerDetailPage /> },

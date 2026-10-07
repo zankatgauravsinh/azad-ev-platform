@@ -15,6 +15,7 @@ import {
   Home,
   Undo2,
   UserCog,
+  Layers,
   type LucideIcon,
 } from 'lucide-react';
 import type { Role } from '@azad/shared';
@@ -52,6 +53,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard, enabled: true, permission: 'dashboard.view' },
   { label: 'Customers', to: '/customers', icon: Users, enabled: true, permission: 'customers.view' },
   { label: 'Inventory', to: '/inventory', icon: PackageOpen, enabled: true, permission: 'inventory.view' },
+  { label: 'Models', to: '/inventory/models', icon: Layers, enabled: true, permission: 'inventory.view' },
   { label: 'Test Rides', to: '/test-rides', icon: Zap, enabled: false, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
   { label: 'Quotations', to: '/quotations', icon: IndianRupee, enabled: true, permission: 'quotations.view' },
   { label: 'Bookings', to: '/bookings', icon: ClipboardList, enabled: true, permission: 'bookings.view' },
