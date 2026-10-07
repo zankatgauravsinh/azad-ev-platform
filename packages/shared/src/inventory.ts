@@ -20,10 +20,19 @@ const vinField = z
 
 const identifierField = z.string().trim().min(1).max(64).transform((v) => v.toUpperCase());
 
-export const createUnitSchema = z.object({
-  modelId: z.string().uuid('Select a model'),
-  variant: z.string().trim().min(1, 'Variant is required').max(80),
-  colour: z.string().trim().min(1, 'Colour is required').max(60),
+/**
+ * A unit names its catalogue entry in one of two ways:
+ *  - CURATED (preferred): `variantId` — an existing, active variant of an active model in the company.
+ *    Nothing is created. When both are sent, variantId is authoritative and the free-text fields are ignored.
+ *  - LEGACY (temporary, retired in M4E): `modelId` + `variant` + `colour` (+ `hexColour`), which still
+ *    creates the variant on the fly when the combination does not exist.
+ * `sellingPrice` omitted → the variant's list price for a curated unit, 0 for a legacy one.
+ */
+const unitFields = {
+  variantId: z.string().uuid('Select a variant').optional(),
+  modelId: z.string().uuid('Select a model').optional(),
+  variant: z.string().trim().min(1, 'Variant is required').max(80).optional(),
+  colour: z.string().trim().min(1, 'Colour is required').max(60).optional(),
   hexColour: z
     .string()
     .regex(/^#([0-9a-fA-F]{6})$/, 'Use a #RRGGBB hex colour')
@@ -33,17 +42,24 @@ export const createUnitSchema = z.object({
   batteryNumber: identifierField,
   purchaseDate: z.coerce.date().optional(),
   purchaseCost: paise.default(0),
-  sellingPrice: paise.default(0),
+  sellingPrice: paise.optional(),
   supplier: optionalTrimmed,
   location: optionalTrimmed,
   notes: z.string().trim().max(1000).optional(),
   status: z.enum(UNIT_STATUSES as [UnitStatus, ...UnitStatus[]]).default(UnitStatus.AVAILABLE),
+};
+const unitObject = z.object(unitFields);
+
+/** Either shape; a create must identify its variant one way or the other. */
+export const createUnitSchema = unitObject.superRefine((v, ctx) => {
+  if (v.variantId) return;
+  if (!v.modelId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['modelId'], message: 'Select a model' });
+  if (!v.variant) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['variant'], message: 'Variant is required' });
+  if (!v.colour) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['colour'], message: 'Colour is required' });
 });
 export type CreateUnitInput = z.infer<typeof createUnitSchema>;
 
-export const updateUnitSchema = createUnitSchema
-  .omit({ status: true })
-  .partial();
+export const updateUnitSchema = unitObject.omit({ status: true }).partial();
 export type UpdateUnitInput = z.infer<typeof updateUnitSchema>;
 
 export const changeUnitStatusSchema = z.object({

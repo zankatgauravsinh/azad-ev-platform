@@ -133,6 +133,23 @@ export class CatalogRepository {
     return db.scooterVariant.findFirst({ where: { companyId, modelId: key.modelId, name: key.name, colour: key.colour }, include: variantInclude });
   }
 
+  /**
+   * The variant an inventory unit may be attached to. Verifies all four conditions explicitly — the
+   * variant belongs to the company, its model belongs to the company, and both are active — and says
+   * which one failed so the caller can answer 404 (not this company's) or 409 (inactive).
+   */
+  async findActiveVariantForUnit(companyId: string, variantId: string, db: Db = this.prisma): Promise<{ variant: VariantRow } | { error: 'NOT_FOUND' | 'MODEL_INACTIVE' | 'VARIANT_INACTIVE' }> {
+    const row = await db.scooterVariant.findFirst({
+      where: { id: variantId, companyId, model: { companyId } },
+      include: { model: { select: { id: true, brand: true, name: true, isActive: true } } },
+    });
+    if (!row) return { error: 'NOT_FOUND' };
+    if (!row.model.isActive) return { error: 'MODEL_INACTIVE' };
+    if (!row.isActive) return { error: 'VARIANT_INACTIVE' };
+    const { model, ...rest } = row;
+    return { variant: { ...rest, model: { id: model.id, brand: model.brand, name: model.name } } };
+  }
+
   countVariantUnits(companyId: string, variantId: string, db: Db = this.prisma): Promise<number> {
     return db.inventoryUnit.count({ where: { companyId, variantId, deletedAt: null } });
   }

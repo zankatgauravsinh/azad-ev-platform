@@ -28,6 +28,8 @@ import { ExportService, type ExportData } from '../../export/export.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.service';
 import { rupeesToPaise, formatInr } from '../../common/utils/money';
 import { InventoryRepository } from './inventory.repository';
+import { CatalogRepository, type VariantRow } from './catalog/catalog.repository';
+import { TenantContext } from '../../tenant/tenant-context.service';
 
 const LOW_STOCK_THRESHOLD = 2;
 // High enough to export a whole dealership's stock in one file; a single
@@ -47,6 +49,8 @@ export class InventoryService {
     private readonly activityLog: ActivityLogService,
     private readonly exporter: ExportService,
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
+    private readonly catalog: CatalogRepository,
+    private readonly tenant: TenantContext,
   ) {}
 
   // ── Reads ──────────────────────────────────────────────
@@ -145,15 +149,13 @@ export class InventoryService {
   // ── Writes ─────────────────────────────────────────────
   async create(dto: CreateUnitInput, userId: string) {
     await this.assertVinAvailable(dto.vin);
+    // Curated: an existing active variant, checked against the tenant before anything is written.
+    const curated = dto.variantId ? await this.curatedVariant(dto.variantId) : null;
     const unit = await this.repo.transaction(async (tx) => {
-      const variant = await this.resolveVariant(
-        tx,
-        dto.modelId,
-        dto.variant,
-        dto.colour,
-        dto.hexColour,
-        BigInt(dto.sellingPrice),
-      );
+      const variant = curated ?? (await this.legacyVariant(tx, dto));
+      // The list price is only the INITIAL value of a curated unit's selling price; the unit's own
+      // price is independent from here on (a later list-price change never touches it).
+      const sellingPrice = dto.sellingPrice !== undefined ? BigInt(dto.sellingPrice) : curated ? curated.exShowroomPrice : 0n;
       const created = await this.repo.createUnit(
         {
           variant: { connect: { id: variant.id } },
@@ -163,7 +165,7 @@ export class InventoryService {
           status: dto.status,
           purchaseDate: dto.purchaseDate ?? null,
           purchaseCost: BigInt(dto.purchaseCost),
-          sellingPrice: BigInt(dto.sellingPrice),
+          sellingPrice,
           supplier: dto.supplier ?? null,
           location: dto.location ?? null,
           notes: dto.notes ?? null,
@@ -203,7 +205,11 @@ export class InventoryService {
     const unit = await this.repo.transaction(async (tx) => {
       const data: Prisma.InventoryUnitUpdateInput = { updatedById: userId };
 
-      if (dto.modelId !== undefined || dto.variant !== undefined || dto.colour !== undefined) {
+      if (dto.variantId !== undefined) {
+        // Curated selection wins over any free-text fields sent alongside it; nothing is created.
+        const variant = await this.curatedVariant(dto.variantId);
+        data.variant = { connect: { id: variant.id } };
+      } else if (dto.modelId !== undefined || dto.variant !== undefined || dto.colour !== undefined) {
         const variant = await this.resolveVariant(
           tx,
           dto.modelId ?? existing.variant.modelId,
@@ -559,6 +565,23 @@ export class InventoryService {
     const unit = await this.repo.findByIdWithVariant(id);
     if (!unit) throw new NotFoundException('Scooter not found');
     return unit;
+  }
+
+  /**
+   * The curated variant a unit is being attached to: this company's, with this company's model, both
+   * active. Another company's id is simply not found (404); an inactive model or variant is a 409.
+   */
+  private async curatedVariant(variantId: string): Promise<VariantRow> {
+    const found = await this.catalog.findActiveVariantForUnit(this.tenant.requireCompanyId(), variantId);
+    if ('variant' in found) return found.variant;
+    if (found.error === 'NOT_FOUND') throw new NotFoundException('Variant not found');
+    throw new ConflictException(found.error === 'MODEL_INACTIVE' ? 'The model of this variant is inactive — activate it before adding stock' : 'This variant is inactive — activate it before adding stock');
+  }
+
+  /** LEGACY (until M4E): free-text model + variant + colour, creating the variant when new. */
+  private legacyVariant(tx: Prisma.TransactionClient, dto: CreateUnitInput) {
+    if (!dto.modelId || !dto.variant || !dto.colour) throw new BadRequestException('Select a variant, or give model, variant and colour');
+    return this.resolveVariant(tx, dto.modelId, dto.variant, dto.colour, dto.hexColour, BigInt(dto.sellingPrice ?? 0));
   }
 
   private async assertVinAvailable(vin: string): Promise<void> {
