@@ -146,7 +146,8 @@ describe('Inventory identity guard (e2e)', () => {
 
     it('curated change → 409 and NOTHING is written (atomic)', async () => {
       const before = await row(unitId);
-      const res = await patch(A, unitId, { variantId: A.red, vin: `CHG${stamp}${serial++}`, motorNumber: 'CHGM', batteryNumber: 'CHGB', sellingPrice: 1, notes: 'tampered', location: 'nowhere' }).expect(409);
+      // Only the catalogue identity changes here (the identification numbers have their own rule, tested below).
+      const res = await patch(A, unitId, { variantId: A.red, sellingPrice: 1, notes: 'tampered', location: 'nowhere', supplier: 'x' }).expect(409);
       expect(res.body.message).toBe(BLOCKED);
       expect(await row(unitId)).toEqual(before);
     });
@@ -174,6 +175,128 @@ describe('Inventory identity guard (e2e)', () => {
       await patch(A, unitId, { variantId: B.red }).expect(404);
       await patch(B, unitId, { variantId: B.red }).expect(404);
     });
+  });
+
+  // ───────────────────────── Vehicle identification (VIN / motor / battery) — M4B.2 ─────────────────────────
+  const LOCKED = 'Vehicle identification cannot be changed after delivery.';
+  const fresh = () => { const n = serial++; return { vin: `NEWV${stamp}${n}`, motorNumber: `NEWM${stamp}${n}`, batteryNumber: `NEWB${stamp}${n}` }; };
+  const logs = (unitId: string) => prisma.activityLog.findMany({ where: { companyId: A.id, entityType: 'InventoryUnit', entityId: unitId, action: 'UPDATE' }, orderBy: { createdAt: 'asc' } });
+
+  describe.each([
+    ['AVAILABLE', async (co: Co) => (await newUnit(co)).id],
+    ['RESERVED', async (co: Co) => { const u = await newUnit(co); await setStatus(co, u.id, 'RESERVED'); return u.id; }],
+    ['BOOKED', async (co: Co) => { const u = await newUnit(co); await book(co, u.id, false); return u.id; }],
+  ])('identification while %s', (status, prepare) => {
+    it('1–5. VIN, motor and battery change one at a time and together; each change is audited with field / from / to; 23–24', async () => {
+      const id = await prepare(A);
+      const before = await row(id);
+      const one = fresh();
+      const r1 = await patch(A, id, { vin: one.vin }).expect(200);
+      expect(r1.body.vin).toBe(one.vin);
+      const r2 = await patch(A, id, { motorNumber: one.motorNumber }).expect(200);
+      expect(r2.body.motorNumber).toBe(one.motorNumber);
+      const r3 = await patch(A, id, { batteryNumber: one.batteryNumber }).expect(200);
+      expect(r3.body.batteryNumber).toBe(one.batteryNumber);
+      const all = fresh();
+      const r4 = await patch(A, id, { ...all, notes: 'rechecked' }).expect(200);
+      expect(r4.body).toMatchObject({ ...all, notes: 'rechecked' });
+      expect((await row(id)).status).toBe(status);
+      const entries = await logs(id);
+      expect(entries.map((e) => e.metadata)).toEqual([
+        { identificationChanges: [{ field: 'vin', from: before.vin, to: one.vin }] },
+        { identificationChanges: [{ field: 'motorNumber', from: before.motorNumber, to: one.motorNumber }] },
+        { identificationChanges: [{ field: 'batteryNumber', from: before.batteryNumber, to: one.batteryNumber }] },
+        { identificationChanges: [{ field: 'vin', from: one.vin, to: all.vin }, { field: 'motorNumber', from: one.motorNumber, to: all.motorNumber }, { field: 'batteryNumber', from: one.batteryNumber, to: all.batteryNumber }] },
+      ]);
+      expect(entries[0]!.summary).toBe(`Updated scooter ${before.vin}: vin ${before.vin} → ${one.vin}`);
+    });
+
+    it('a VIN already in use is still refused (pre-check), lower-case input is normalised, and the same value is not a change', async () => {
+      const id = await prepare(A);
+      const other = await newUnit(A);
+      await patch(A, id, { vin: other.vin }).expect(409);
+      const current = await row(id);
+      await patch(A, id, { vin: current.vin.toLowerCase(), motorNumber: current.motorNumber.toLowerCase(), batteryNumber: current.batteryNumber.toLowerCase() }).expect(200);
+      expect(await row(id)).toMatchObject({ vin: current.vin, motorNumber: current.motorNumber, batteryNumber: current.batteryNumber });
+      const last = (await logs(id)).at(-1);
+      expect(last?.summary).toBe(`Updated scooter ${current.vin}`);
+      expect(last?.metadata).toBeNull();
+    });
+  });
+
+  describe.each([
+    ['DELIVERED', async (co: Co) => { const u = await newUnit(co); await book(co, u.id, true); return u.id; }],
+    ['IN_SERVICE', async (co: Co) => { const u = await newUnit(co); await setStatus(co, u.id, 'IN_SERVICE'); return u.id; }],
+    ['RETURNED', async (co: Co) => { const u = await newUnit(co); const b = await book(co, u.id, true); await returnUnit(co, b); return u.id; }],
+  ])('identification while %s', (status, prepare) => {
+    let id = '';
+    beforeAll(async () => { id = await prepare(A); expect((await row(id)).status).toBe(status); });
+
+    it('6–14. VIN, motor and battery are each locked → 409, nothing written, no audit', async () => {
+      const before = await row(id);
+      const n = await logs(id);
+      const f = fresh();
+      for (const change of [{ vin: f.vin }, { motorNumber: f.motorNumber }, { batteryNumber: f.batteryNumber }]) {
+        expect((await patch(A, id, change).expect(409)).body.message).toBe(LOCKED);
+      }
+      expect(await row(id)).toEqual(before);
+      expect((await logs(id)).length).toBe(n.length);
+    });
+
+    it('15–17 + 28. every combination, with ordinary fields alongside, is refused atomically', async () => {
+      const before = await row(id);
+      const f = fresh();
+      const combos = [
+        { vin: f.vin, motorNumber: f.motorNumber }, { vin: f.vin, batteryNumber: f.batteryNumber }, { motorNumber: f.motorNumber, batteryNumber: f.batteryNumber },
+        { vin: f.vin, motorNumber: f.motorNumber, batteryNumber: f.batteryNumber },
+      ];
+      for (const change of combos) {
+        expect((await patch(A, id, { ...change, sellingPrice: 1, notes: 'tampered', location: 'nowhere', supplier: 'x' }).expect(409)).body.message).toBe(LOCKED);
+      }
+      expect(await row(id)).toEqual(before); // sellingPrice / notes / location / supplier untouched too
+    });
+
+    it('18–22. the same identifiers (any case) are not a change; ordinary fields still update; no identificationChanges', async () => {
+      const current = await row(id);
+      const res = await patch(A, id, { vin: current.vin.toLowerCase(), motorNumber: current.motorNumber, batteryNumber: current.batteryNumber.toLowerCase(), location: 'Customer' }).expect(200);
+      expect(res.body).toMatchObject({ vin: current.vin, motorNumber: current.motorNumber, batteryNumber: current.batteryNumber, location: 'Customer' });
+      const last = (await logs(id)).at(-1);
+      expect(last?.summary).toBe(`Updated scooter ${current.vin}`);
+      expect(last?.metadata).toBeNull();
+    });
+
+    it('an ordinary edit still works and the catalogue identity rule still applies alongside', async () => {
+      await patch(A, id, { notes: 'inspected' }).expect(200);
+      expect((await patch(A, id, { variantId: A.red }).expect(409)).body.message).toBe(BLOCKED);
+    });
+  });
+
+  it('25. an allowed request changing variant AND VIN produces one UPDATE entry carrying both metadata sections', async () => {
+    const u = await newUnit(A);
+    const f = fresh();
+    await patch(A, u.id, { variantId: A.red, vin: f.vin }).expect(200);
+    const last = (await logs(u.id)).at(-1)!;
+    expect(last.metadata).toEqual({
+      variantChange: { from: expect.objectContaining({ variantId: A.teal }), to: expect.objectContaining({ variantId: A.red }) },
+      identificationChanges: [{ field: 'vin', from: u.vin, to: f.vin }],
+    });
+    expect(last.summary).toContain('variant');
+    expect(last.summary).toContain(`vin ${u.vin} → ${f.vin}`);
+    expect(await logs(u.id)).toHaveLength(1);
+  });
+
+  it("a DELIVERED unit's warranty certificate and delivery note keep their numbers after a refused change", async () => {
+    const u = await newUnit(A);
+    const bookingId = await book(A, u.id, true);
+    const warranty = (await http().post('/api/v1/warranties').set('Authorization', auth(A.owner)).send({ unitId: u.id, customerId: A.customerId, periodMonths: 12 }).expect(201)).body.warranty;
+    const pdf = async (url: string) => readPdfText((await http().get(url).set('Authorization', auth(A.owner)).buffer().parse(binaryParser).expect(200)).body as Buffer);
+    const certBefore = (await pdf(`/api/v1/warranties/${warranty.id}/certificate.pdf`)).strings;
+    const noteBefore = (await pdf(`/api/v1/deliveries/${bookingId}/note.pdf`)).strings;
+    const f = fresh();
+    expect((await patch(A, u.id, { vin: f.vin, motorNumber: f.motorNumber, batteryNumber: f.batteryNumber }).expect(409)).body.message).toBe(LOCKED);
+    expect((await pdf(`/api/v1/warranties/${warranty.id}/certificate.pdf`)).strings).toEqual(certBefore);
+    expect((await pdf(`/api/v1/deliveries/${bookingId}/note.pdf`)).strings).toEqual(noteBefore);
+    expect(certBefore).toEqual(expect.arrayContaining([u.vin]));
   });
 
   // ───────────────────────── Downstream records keep the original identity ─────────────────────────

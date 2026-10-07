@@ -50,6 +50,17 @@ interface UploadedFile {
  */
 const IDENTITY_EDITABLE_STATUSES: ReadonlySet<UnitStatus> = new Set([UnitStatus.AVAILABLE, UnitStatus.RESERVED]);
 
+/**
+ * The vehicle's identification numbers (VIN, motor, battery) are locked from DELIVERY on — the invoice,
+ * delivery note, warranty and service records are then in the customer's hands. A typo may still be
+ * fixed while AVAILABLE, RESERVED or BOOKED (the pre-handover check). An authorised correction after
+ * delivery is a separate, future workflow (M4B.3).
+ */
+const IDENTIFICATION_EDITABLE_STATUSES: ReadonlySet<UnitStatus> = new Set([UnitStatus.AVAILABLE, UnitStatus.RESERVED, UnitStatus.BOOKED]);
+const IDENTIFICATION_FIELDS = ['vin', 'motorNumber', 'batteryNumber'] as const;
+type IdentificationField = (typeof IDENTIFICATION_FIELDS)[number];
+type IdentificationChange = { field: IdentificationField; from: string; to: string };
+
 /** A plain JSON object (type alias, not an interface) so it can ride in the activity-log metadata. */
 type IdentityRef = { variantId: string; modelId: string; brand: string; model: string; variant: string; colour: string; label: string };
 const identityRef = (v: { id: string; name: string; colour: string; model: { id: string; brand: string; name: string } }): IdentityRef => ({
@@ -213,6 +224,16 @@ export class InventoryService {
 
   async update(id: string, dto: UpdateUnitInput, userId: string) {
     const existing = await this.getUnitOrThrow(id);
+    // Identification: only an ACTUAL change counts (inputs are already normalised upper-case by the
+    // schema, like the stored values). Refused as a whole after delivery — before anything is checked
+    // or written, so the request leaves no trace.
+    const identificationChanges: IdentificationChange[] = IDENTIFICATION_FIELDS.flatMap((field) => {
+      const to = dto[field];
+      return to !== undefined && to !== existing[field] ? [{ field, from: existing[field], to }] : [];
+    });
+    if (identificationChanges.length > 0 && !IDENTIFICATION_EDITABLE_STATUSES.has(existing.status as UnitStatus)) {
+      throw new ConflictException('Vehicle identification cannot be changed after delivery.');
+    }
     if (dto.vin && dto.vin !== existing.vin) {
       await this.assertVinAvailable(dto.vin);
     }
@@ -260,15 +281,22 @@ export class InventoryService {
       return this.repo.updateUnit(id, data, tx);
     });
 
+    // One UPDATE entry per request; what changed about the vehicle's identity rides in the metadata.
+    const parts = [
+      ...(identity.change ? [`variant ${identity.change.from.label} → ${identity.change.to.label}`] : []),
+      ...identificationChanges.map((c) => `${c.field} ${c.from} → ${c.to}`),
+    ];
+    const metadata = {
+      ...(identity.change ? { variantChange: identity.change } : {}),
+      ...(identificationChanges.length > 0 ? { identificationChanges } : {}),
+    };
     await this.activityLog.record({
       actorId: userId,
       action: ActivityAction.UPDATE,
       entityType: 'InventoryUnit',
       entityId: id,
-      summary: identity.change
-        ? `Updated scooter ${unit.vin}: variant ${identity.change.from.label} → ${identity.change.to.label}`
-        : `Updated scooter ${unit.vin}`,
-      ...(identity.change ? { metadata: { variantChange: identity.change } } : {}),
+      summary: parts.length > 0 ? `Updated scooter ${existing.vin}: ${parts.join('; ')}` : `Updated scooter ${unit.vin}`,
+      ...(parts.length > 0 ? { metadata } : {}),
     });
     return unit;
   }

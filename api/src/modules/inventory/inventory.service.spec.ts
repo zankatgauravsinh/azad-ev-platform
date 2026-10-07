@@ -193,7 +193,7 @@ describe('InventoryService', () => {
     it.each(['BOOKED', 'DELIVERED', 'IN_SERVICE', 'RETURNED'])('%s: a curated change and a legacy change are refused with 409 and nothing is written', async (status) => {
       at(status);
       catalog.findActiveVariantForUnit.mockResolvedValue({ variant: other });
-      await expect(service.update('unit-1', { variantId: 'variant-2', vin: 'NEWVIN', notes: 'x', sellingPrice: 5 }, 'user-1')).rejects.toMatchObject({ status: 409, message: 'Vehicle model/variant cannot be changed after booking or delivery.' });
+      await expect(service.update('unit-1', { variantId: 'variant-2', notes: 'x', sellingPrice: 5, location: 'Yard' }, 'user-1')).rejects.toMatchObject({ status: 409, message: 'Vehicle model/variant cannot be changed after booking or delivery.' });
       repo.findVariant.mockResolvedValue(other as never);
       await expect(service.update('unit-1', { colour: 'Red', location: 'Yard B' }, 'user-1')).rejects.toBeInstanceOf(ConflictException);
       repo.findVariant.mockResolvedValue(null); // a brand-new combination would be created by the legacy resolver…
@@ -227,6 +227,59 @@ describe('InventoryService', () => {
       at('DELIVERED');
       catalog.findActiveVariantForUnit.mockResolvedValue({ error: 'NOT_FOUND' });
       await expect(service.update('unit-1', { variantId: 'theirs' }, 'user-1')).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.updateUnit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('identification guard (M4B.2)', () => {
+    const at = (status: string) => { repo.findByIdWithVariant.mockResolvedValue({ ...unit, status, variantId: 'variant-1', motorNumber: 'M1', batteryNumber: 'B1' } as never); };
+    beforeEach(() => { repo.findByVin.mockResolvedValue(null); });
+
+    it.each(['AVAILABLE', 'RESERVED', 'BOOKED'])('%s: VIN, motor and battery may change and each change is audited with from/to', async (status) => {
+      at(status);
+      await service.update('unit-1', { vin: 'NEWVIN', motorNumber: 'M2', batteryNumber: 'B2', notes: 'n' }, 'user-1');
+      expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', expect.objectContaining({ vin: 'NEWVIN', motorNumber: 'M2', batteryNumber: 'B2' }), expect.anything());
+      expect(activityLog.record).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'UPDATE',
+        summary: 'Updated scooter VIN123: vin VIN123 → NEWVIN; motorNumber M1 → M2; batteryNumber B1 → B2',
+        metadata: { identificationChanges: [{ field: 'vin', from: 'VIN123', to: 'NEWVIN' }, { field: 'motorNumber', from: 'M1', to: 'M2' }, { field: 'batteryNumber', from: 'B1', to: 'B2' }] },
+      }));
+    });
+
+    it.each([
+      ['DELIVERED', { vin: 'NEWVIN' }], ['DELIVERED', { motorNumber: 'M2' }], ['DELIVERED', { batteryNumber: 'B2' }],
+      ['IN_SERVICE', { vin: 'NEWVIN', motorNumber: 'M2' }], ['RETURNED', { motorNumber: 'M2', batteryNumber: 'B2' }], ['DELIVERED', { vin: 'NEWVIN', motorNumber: 'M2', batteryNumber: 'B2' }],
+    ])('%s: %o is refused with 409, nothing written, no audit, no VIN pre-check', async (status, change) => {
+      at(status);
+      await expect(service.update('unit-1', { ...change, sellingPrice: 5, notes: 'tampered' }, 'user-1')).rejects.toMatchObject({ status: 409, message: 'Vehicle identification cannot be changed after delivery.' });
+      expect(repo.updateUnit).not.toHaveBeenCalled();
+      expect(repo.findByVin).not.toHaveBeenCalled();
+      expect(activityLog.record).not.toHaveBeenCalled();
+    });
+
+    it.each(['DELIVERED', 'IN_SERVICE', 'RETURNED'])('%s: the same values (already upper-cased by the schema) are not a change; other fields still update; no identificationChanges', async (status) => {
+      at(status);
+      await service.update('unit-1', { vin: 'VIN123', motorNumber: 'M1', batteryNumber: 'B1', location: 'Bay 3' }, 'user-1');
+      expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', expect.objectContaining({ location: 'Bay 3' }), expect.anything());
+      expect(activityLog.record).toHaveBeenCalledWith(expect.objectContaining({ summary: 'Updated scooter VIN123' }));
+      expect(activityLog.record.mock.calls[0]![0]).not.toHaveProperty('metadata');
+    });
+
+    it('one changed field → one entry; a variant change in the same allowed request shares the entry', async () => {
+      at('AVAILABLE');
+      catalog.findActiveVariantForUnit.mockResolvedValue({ variant: { ...variant, id: 'variant-2', colour: 'Red' } });
+      await service.update('unit-1', { motorNumber: 'M2', variantId: 'variant-2' }, 'user-1');
+      expect(activityLog.record).toHaveBeenCalledTimes(1);
+      const entry = activityLog.record.mock.calls[0]![0] as unknown as { metadata: { variantChange: unknown; identificationChanges: unknown[] }; summary: string };
+      expect(entry.metadata.identificationChanges).toEqual([{ field: 'motorNumber', from: 'M1', to: 'M2' }]);
+      expect(entry.metadata.variantChange).toMatchObject({ to: { variantId: 'variant-2' } });
+      expect(entry.summary).toBe('Updated scooter VIN123: variant Comptech VX1 Standard (Teal) → Comptech VX1 Standard (Red); motorNumber M1 → M2');
+    });
+
+    it('VIN uniqueness pre-check still runs for an allowed VIN change', async () => {
+      at('BOOKED');
+      repo.findByVin.mockResolvedValue({ id: 'other' } as never);
+      await expect(service.update('unit-1', { vin: 'TAKEN' }, 'user-1')).rejects.toBeInstanceOf(ConflictException);
       expect(repo.updateUnit).not.toHaveBeenCalled();
     });
   });
