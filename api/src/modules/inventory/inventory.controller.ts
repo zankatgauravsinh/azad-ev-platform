@@ -29,15 +29,20 @@ import {
   changeUnitStatusSchema,
   createUnitSchema,
   DOCUMENT_TYPES,
+  identificationCorrectionSchema,
   listUnitsQuerySchema,
+  Role,
   updateUnitSchema,
+  type AuthUser,
   type ChangeUnitStatusInput,
   type CreateUnitInput,
+  type IdentificationCorrectionInput,
   type ListUnitsQuery,
   type UpdateUnitInput,
 } from '@azad/shared';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { InventoryService } from './inventory.service';
 
@@ -196,6 +201,25 @@ export class InventoryController {
     @CurrentUser('id') userId: string,
   ) {
     return this.inventory.update(id, dto, userId);
+  }
+
+  @Patch('units/:id/identification-correction')
+  @Permissions('inventory.update')
+  @Roles(Role.OWNER) // both guards apply: the permission AND the owner role
+  @ApiOperation({ summary: 'Correct the VIN / motor / battery number of a delivered, in-service or returned vehicle (owner only, reason required)' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiBody({ schema: { example: { vin: 'MD9AZ1234567890AB', reason: 'VIN mistyped at stock entry' } } })
+  @ApiResponse({ status: 200, description: 'The corrected scooter' })
+  @ApiResponse({ status: 400, description: 'Missing or short reason, or nothing actually changes' })
+  @ApiResponse({ status: 403, description: 'Not the owner' })
+  @ApiResponse({ status: 404, description: 'Scooter not found' })
+  @ApiResponse({ status: 409, description: 'Not delivered / in service / returned, or an identifier already exists' })
+  correctIdentification(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(identificationCorrectionSchema)) dto: IdentificationCorrectionInput,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.inventory.correctIdentification(id, dto, { id: user.id, role: user.role });
   }
 
   @Delete('units/:id')

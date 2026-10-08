@@ -62,6 +62,32 @@ export type CreateUnitInput = z.infer<typeof createUnitSchema>;
 export const updateUnitSchema = unitObject.omit({ status: true }).partial();
 export type UpdateUnitInput = z.infer<typeof updateUnitSchema>;
 
+/** Shortest acceptable reason for an identification correction, counted after trimming. */
+export const IDENTIFICATION_CORRECTION_REASON_MIN = 5;
+
+/**
+ * Owner-only correction of a delivered, in-service or returned vehicle's identification numbers.
+ * The identifiers are normalised exactly like an ordinary edit (trimmed, upper-cased); a reason is
+ * always required. Unknown keys (e.g. companyId, userId) are stripped — the tenant and the actor come
+ * from the session, never from the request.
+ */
+export const identificationCorrectionSchema = z
+  .object({
+    vin: vinField.optional(),
+    motorNumber: identifierField.optional(),
+    batteryNumber: identifierField.optional(),
+    reason: z
+      .string({ required_error: 'A reason is required' })
+      .trim()
+      .min(IDENTIFICATION_CORRECTION_REASON_MIN, `Give a reason of at least ${IDENTIFICATION_CORRECTION_REASON_MIN} characters`)
+      .max(500),
+  })
+  .refine((v) => v.vin !== undefined || v.motorNumber !== undefined || v.batteryNumber !== undefined, {
+    message: 'Give the VIN, motor number or battery number to correct',
+    path: ['vin'],
+  });
+export type IdentificationCorrectionInput = z.infer<typeof identificationCorrectionSchema>;
+
 export const changeUnitStatusSchema = z.object({
   toStatus: z.enum(UNIT_STATUSES as [UnitStatus, ...UnitStatus[]]),
   note: z.string().trim().max(500).optional(),

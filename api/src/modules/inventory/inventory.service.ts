@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -10,6 +11,7 @@ import { parse } from 'csv-parse/sync';
 import { ZodError } from 'zod';
 import {
   ActivityAction,
+  Role,
   UnitStatus,
   UNIT_STATUSES,
   buildPageMeta,
@@ -18,6 +20,7 @@ import {
   type CreateUnitInput,
   type CsvImportResult,
   type ChangeUnitStatusInput,
+  type IdentificationCorrectionInput,
   type ListUnitsQuery,
   type Paginated,
   type ReturnDisposition,
@@ -53,13 +56,34 @@ const IDENTITY_EDITABLE_STATUSES: ReadonlySet<UnitStatus> = new Set([UnitStatus.
 /**
  * The vehicle's identification numbers (VIN, motor, battery) are locked from DELIVERY on — the invoice,
  * delivery note, warranty and service records are then in the customer's hands. A typo may still be
- * fixed while AVAILABLE, RESERVED or BOOKED (the pre-handover check). An authorised correction after
- * delivery is a separate, future workflow (M4B.3).
+ * fixed while AVAILABLE, RESERVED or BOOKED (the pre-handover check) through the ordinary edit.
  */
 const IDENTIFICATION_EDITABLE_STATUSES: ReadonlySet<UnitStatus> = new Set([UnitStatus.AVAILABLE, UnitStatus.RESERVED, UnitStatus.BOOKED]);
+
+/**
+ * After handover the numbers can only be CORRECTED (M4B.3): owner-only, with a reason, through
+ * `correctIdentification`. It changes the unit alone — bookings, sales, deliveries, warranties, service
+ * jobs, AMC plans, returns and GST snapshots keep what they recorded — and the audit entry explains it.
+ */
+const IDENTIFICATION_CORRECTION_STATUSES: ReadonlySet<UnitStatus> = new Set([UnitStatus.DELIVERED, UnitStatus.IN_SERVICE, UnitStatus.RETURNED]);
+
 const IDENTIFICATION_FIELDS = ['vin', 'motorNumber', 'batteryNumber'] as const;
 type IdentificationField = (typeof IDENTIFICATION_FIELDS)[number];
 type IdentificationChange = { field: IdentificationField; from: string; to: string };
+
+/**
+ * Only an ACTUAL change counts: a field that is sent and differs from the stored value. Inputs are
+ * already normalised by the shared schema (trimmed, upper-cased), like the stored values, so a
+ * case-only or whitespace-only difference is not a change. Fields are reported in a fixed order.
+ */
+const identificationChangesOf = (
+  existing: Record<IdentificationField, string>,
+  requested: Partial<Record<IdentificationField, string>>,
+): IdentificationChange[] =>
+  IDENTIFICATION_FIELDS.flatMap((field) => {
+    const to = requested[field];
+    return to !== undefined && to !== existing[field] ? [{ field, from: existing[field], to }] : [];
+  });
 
 /** A plain JSON object (type alias, not an interface) so it can ride in the activity-log metadata. */
 type IdentityRef = { variantId: string; modelId: string; brand: string; model: string; variant: string; colour: string; label: string };
@@ -227,10 +251,7 @@ export class InventoryService {
     // Identification: only an ACTUAL change counts (inputs are already normalised upper-case by the
     // schema, like the stored values). Refused as a whole after delivery — before anything is checked
     // or written, so the request leaves no trace.
-    const identificationChanges: IdentificationChange[] = IDENTIFICATION_FIELDS.flatMap((field) => {
-      const to = dto[field];
-      return to !== undefined && to !== existing[field] ? [{ field, from: existing[field], to }] : [];
-    });
+    const identificationChanges = identificationChangesOf(existing, dto);
     if (identificationChanges.length > 0 && !IDENTIFICATION_EDITABLE_STATUSES.has(existing.status as UnitStatus)) {
       throw new ConflictException('Vehicle identification cannot be changed after delivery.');
     }
@@ -299,6 +320,46 @@ export class InventoryService {
       ...(parts.length > 0 ? { metadata } : {}),
     });
     return unit;
+  }
+
+  /**
+   * M4B.3 — corrects the VIN / motor / battery number of a DELIVERED, IN_SERVICE or RETURNED vehicle.
+   * Owner-only, reason required, at least one actual change. Everything is validated before anything
+   * is written; the unit update and its single audit entry then commit (or roll back) together, and a
+   * uniqueness clash leaves no trace. Only the unit changes: historical records are not rewritten.
+   */
+  async correctIdentification(id: string, dto: IdentificationCorrectionInput, actor: { id: string; role: Role }) {
+    // The route is already owner-only; this keeps the rule true for any other caller of the service.
+    if (actor.role !== Role.OWNER) throw new ForbiddenException('Only the owner can correct vehicle identification after delivery.');
+    const existing = await this.getUnitOrThrow(id);
+    if (!IDENTIFICATION_CORRECTION_STATUSES.has(existing.status as UnitStatus)) {
+      throw new ConflictException('Identification correction applies only to delivered, in-service or returned vehicles — edit this vehicle instead.');
+    }
+    const changes = identificationChangesOf(existing, dto);
+    if (changes.length === 0) {
+      throw new BadRequestException('Nothing to correct: the identification given matches the vehicle.');
+    }
+    // Uniqueness exactly as an ordinary edit: the VIN pre-check here, the database constraints for all
+    // three at write time (a clash there rolls the whole transaction back).
+    const vinChange = changes.find((c) => c.field === 'vin');
+    if (vinChange) await this.assertVinAvailable(vinChange.to);
+
+    const data: Prisma.InventoryUnitUpdateInput = { updatedById: actor.id };
+    for (const change of changes) data[change.field] = change.to;
+    const identificationCorrection = { reason: dto.reason, changes };
+
+    return this.repo.transaction(async (tx) => {
+      const unit = await this.repo.updateUnit(id, data, tx);
+      await this.activityLog.recordInTransaction({
+        actorId: actor.id,
+        action: ActivityAction.UPDATE,
+        entityType: 'InventoryUnit',
+        entityId: id,
+        summary: `Updated scooter ${existing.vin}: ${changes.map((c) => `${c.field} ${c.from} → ${c.to}`).join('; ')} (identification correction)`,
+        metadata: { identificationCorrection },
+      }, tx);
+      return unit;
+    });
   }
 
   private async modelRef(modelId: string): Promise<{ id: string; brand: string; name: string }> {

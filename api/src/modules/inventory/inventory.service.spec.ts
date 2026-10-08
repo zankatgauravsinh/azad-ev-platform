@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { identificationCorrectionSchema } from '@azad/shared';
 import { InventoryService } from './inventory.service';
 import type { InventoryRepository } from './inventory.repository';
 import type { ActivityLogService } from '../../activity-log/activity-log.service';
@@ -37,7 +38,7 @@ const unit = { id: 'unit-1', vin: 'VIN123', status: 'AVAILABLE', variantId: 'var
 
 describe('InventoryService', () => {
   let repo: RepoMock;
-  let activityLog: jest.Mocked<Pick<ActivityLogService, 'record'>>;
+  let activityLog: jest.Mocked<Pick<ActivityLogService, 'record' | 'recordInTransaction'>>;
   let catalog: { findActiveVariantForUnit: jest.Mock };
   let service: InventoryService;
   const curated = { ...variant, id: 'variant-curated', colour: 'Red', exShowroomPrice: 12_500_000n, isActive: true };
@@ -56,7 +57,7 @@ describe('InventoryService', () => {
       // run the callback immediately with a dummy tx client
       transaction: jest.fn((fn: (tx: unknown) => unknown) => fn({})),
     } as never;
-    activityLog = { record: jest.fn().mockResolvedValue(undefined) } as never;
+    activityLog = { record: jest.fn().mockResolvedValue(undefined), recordInTransaction: jest.fn().mockResolvedValue(undefined) } as never;
     catalog = { findActiveVariantForUnit: jest.fn().mockResolvedValue({ variant: curated }) };
 
     service = new InventoryService(
@@ -281,6 +282,148 @@ describe('InventoryService', () => {
       repo.findByVin.mockResolvedValue({ id: 'other' } as never);
       await expect(service.update('unit-1', { vin: 'TAKEN' }, 'user-1')).rejects.toBeInstanceOf(ConflictException);
       expect(repo.updateUnit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('identification correction (M4B.3)', () => {
+    const OWNER = { id: 'owner-1', role: 'OWNER' as const };
+    const TX = { tx: true };
+    const at = (status: string) => {
+      repo.findByIdWithVariant.mockResolvedValue({ ...unit, status, motorNumber: 'M1', batteryNumber: 'B1' } as never);
+    };
+    const correction = (over: Record<string, unknown>) => ({ reason: 'Typo at stock entry', ...over }) as never;
+    const nothingWritten = () => {
+      expect(repo.updateUnit).not.toHaveBeenCalled();
+      expect(activityLog.recordInTransaction).not.toHaveBeenCalled();
+      expect(activityLog.record).not.toHaveBeenCalled();
+    };
+    beforeEach(() => {
+      repo.findByVin.mockResolvedValue(null);
+      repo.transaction.mockImplementation(((fn: (tx: unknown) => unknown) => fn(TX)) as never);
+      repo.updateUnit.mockImplementation(((_id: string, data: object) => Promise.resolve({ ...unit, ...data })) as never);
+    });
+
+    it.each([
+      ['DELIVERED', { vin: 'NEWVIN' }, [{ field: 'vin', from: 'VIN123', to: 'NEWVIN' }]],
+      ['IN_SERVICE', { motorNumber: 'M2' }, [{ field: 'motorNumber', from: 'M1', to: 'M2' }]],
+      ['RETURNED', { batteryNumber: 'B2' }, [{ field: 'batteryNumber', from: 'B1', to: 'B2' }]],
+      ['DELIVERED', { vin: 'NEWVIN', motorNumber: 'M2', batteryNumber: 'B2' }, [
+        { field: 'vin', from: 'VIN123', to: 'NEWVIN' }, { field: 'motorNumber', from: 'M1', to: 'M2' }, { field: 'batteryNumber', from: 'B1', to: 'B2' },
+      ]],
+    ])('%s: owner corrects %o — only those fields are written, with one audit entry in the same transaction', async (status, change, changes) => {
+      at(status);
+      const result = await service.correctIdentification('unit-1', correction(change), OWNER);
+      expect(repo.updateUnit).toHaveBeenCalledTimes(1);
+      expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', { updatedById: 'owner-1', ...change }, TX);
+      expect(result).toMatchObject(change);
+      expect(activityLog.recordInTransaction).toHaveBeenCalledTimes(1);
+      expect(activityLog.recordInTransaction).toHaveBeenCalledWith({
+        actorId: 'owner-1',
+        action: 'UPDATE',
+        entityType: 'InventoryUnit',
+        entityId: 'unit-1',
+        summary: `Updated scooter VIN123: ${changes.map((c) => `${c.field} ${c.from} → ${c.to}`).join('; ')} (identification correction)`,
+        metadata: { identificationCorrection: { reason: 'Typo at stock entry', changes } },
+      }, TX);
+      expect(activityLog.record).not.toHaveBeenCalled();
+    });
+
+    it.each(['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT'])('%s is refused (403) before the unit is even read', async (role) => {
+      at('DELIVERED');
+      await expect(service.correctIdentification('unit-1', correction({ vin: 'NEWVIN' }), { id: 'u', role: role as never })).rejects.toBeInstanceOf(ForbiddenException);
+      expect(repo.findByIdWithVariant).not.toHaveBeenCalled();
+      nothingWritten();
+    });
+
+    it.each(['AVAILABLE', 'RESERVED', 'BOOKED'])('%s is refused (409): the ordinary edit is the path before delivery', async (status) => {
+      at(status);
+      await expect(service.correctIdentification('unit-1', correction({ vin: 'NEWVIN' }), OWNER)).rejects.toMatchObject({
+        status: 409, message: 'Identification correction applies only to delivered, in-service or returned vehicles — edit this vehicle instead.',
+      });
+      nothingWritten();
+    });
+
+    it('an unknown unit is a 404', async () => {
+      repo.findByIdWithVariant.mockResolvedValue(null);
+      await expect(service.correctIdentification('nope', correction({ vin: 'NEWVIN' }), OWNER)).rejects.toBeInstanceOf(NotFoundException);
+      nothingWritten();
+    });
+
+    it('same values only (the schema has already upper-cased them) → 400, nothing written, no VIN check', async () => {
+      at('DELIVERED');
+      await expect(service.correctIdentification('unit-1', correction({ vin: 'VIN123', motorNumber: 'M1', batteryNumber: 'B1' }), OWNER)).rejects.toMatchObject({
+        status: 400, message: 'Nothing to correct: the identification given matches the vehicle.',
+      });
+      expect(repo.findByVin).not.toHaveBeenCalled();
+      nothingWritten();
+    });
+
+    it('a same value sent alongside a real change is not part of the correction', async () => {
+      at('IN_SERVICE');
+      await service.correctIdentification('unit-1', correction({ vin: 'VIN123', batteryNumber: 'B9' }), OWNER);
+      expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', { updatedById: 'owner-1', batteryNumber: 'B9' }, TX);
+      expect(repo.findByVin).not.toHaveBeenCalled();
+      const entry = activityLog.recordInTransaction.mock.calls[0]![0] as unknown as { metadata: { identificationCorrection: { changes: unknown[] } } };
+      expect(entry.metadata.identificationCorrection.changes).toEqual([{ field: 'batteryNumber', from: 'B1', to: 'B9' }]);
+    });
+
+    it('VIN already used → 409 from the existing pre-check; nothing written, even with a motor change alongside', async () => {
+      at('DELIVERED');
+      repo.findByVin.mockResolvedValue({ id: 'other' } as never);
+      await expect(service.correctIdentification('unit-1', correction({ vin: 'TAKEN', motorNumber: 'M2' }), OWNER)).rejects.toBeInstanceOf(ConflictException);
+      expect(repo.findByVin).toHaveBeenCalledWith('TAKEN');
+      nothingWritten();
+    });
+
+    it('a database uniqueness failure (motor / battery) aborts the transaction before any audit entry', async () => {
+      at('RETURNED');
+      const clash = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      repo.updateUnit.mockRejectedValue(clash);
+      await expect(service.correctIdentification('unit-1', correction({ motorNumber: 'TAKEN' }), OWNER)).rejects.toBe(clash);
+      expect(activityLog.recordInTransaction).not.toHaveBeenCalled();
+      expect(activityLog.record).not.toHaveBeenCalled();
+    });
+
+    it('if the audit entry cannot be written the correction fails with it (same transaction)', async () => {
+      at('DELIVERED');
+      activityLog.recordInTransaction.mockRejectedValue(new Error('audit down'));
+      await expect(service.correctIdentification('unit-1', correction({ vin: 'NEWVIN' }), OWNER)).rejects.toThrow('audit down');
+    });
+
+    it('the ordinary edit keeps refusing identification changes after delivery (M4B.2 unchanged)', async () => {
+      at('DELIVERED');
+      await expect(service.update('unit-1', { vin: 'NEWVIN' }, 'owner-1')).rejects.toMatchObject({ status: 409, message: 'Vehicle identification cannot be changed after delivery.' });
+      nothingWritten();
+    });
+  });
+
+  describe('identificationCorrectionSchema', () => {
+    const parse = (body: unknown) => identificationCorrectionSchema.safeParse(body);
+    const messages = (body: unknown): string[] => {
+      const r = parse(body);
+      return r.success ? [] : r.error.issues.map((i) => i.message);
+    };
+
+    it('normalises identifiers exactly like the ordinary edit (trim + upper-case) and trims the reason', () => {
+      expect(parse({ vin: '  md9abc123  ', motorNumber: ' m-1 ', batteryNumber: 'b1', reason: '  Typo at entry  ' })).toEqual({
+        success: true, data: { vin: 'MD9ABC123', motorNumber: 'M-1', batteryNumber: 'B1', reason: 'Typo at entry' },
+      });
+    });
+
+    it('requires a reason of at least 5 characters after trimming', () => {
+      expect(messages({ vin: 'MD9ABC123' })).toEqual(['A reason is required']);
+      expect(messages({ vin: 'MD9ABC123', reason: '' })).toEqual(['Give a reason of at least 5 characters']);
+      expect(messages({ vin: 'MD9ABC123', reason: '   abcd   ' })).toEqual(['Give a reason of at least 5 characters']);
+      expect(parse({ vin: 'MD9ABC123', reason: 'abcde' }).success).toBe(true);
+    });
+
+    it('requires at least one identifier', () => {
+      expect(messages({ reason: 'Typo at entry' })).toEqual(['Give the VIN, motor number or battery number to correct']);
+    });
+
+    it('strips anything else — the tenant and the actor never come from the request', () => {
+      const r = parse({ vin: 'MD9ABC123', reason: 'Typo at entry', companyId: 'c', userId: 'u', status: 'AVAILABLE', notes: 'x' });
+      expect(r.success && r.data).toEqual({ vin: 'MD9ABC123', reason: 'Typo at entry' });
     });
   });
 
