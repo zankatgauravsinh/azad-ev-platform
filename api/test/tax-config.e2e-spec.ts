@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 /**
@@ -71,10 +70,7 @@ describe('GST configuration (e2e)', () => {
   let bClassId = '';
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     await seedRbac(prisma); // the permission catalogue the custom roles below link to
     passwordHash = await bcrypt.hash('Test@12345', 10);
@@ -126,7 +122,7 @@ describe('GST configuration (e2e)', () => {
       }
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   // ───────────────────────── Company GST settings + activation gate ─────────────────────────
   describe('company GST registration', () => {
@@ -285,7 +281,7 @@ describe('GST configuration (e2e)', () => {
     beforeAll(async () => {
       accessoryId = (await http().post('/api/v1/accessories').set('Authorization', bearer(A.owner)).send({ name: `Cfg Acc ${stamp}`, sellPrice: 59000 }).expect(201)).body.id;
       bAccessoryId = (await http().post('/api/v1/accessories').set('Authorization', bearer(B.owner)).send({ name: `Cfg Acc B ${stamp}`, sellPrice: 59000 }).expect(201)).body.id;
-    });
+    }, E2E_HOOK_TIMEOUT);
 
     it('models and accessories start unclassified — nothing is assigned automatically', async () => {
       const models = await http().get('/api/v1/inventory/models').set('Authorization', bearer(A.owner)).expect(200);

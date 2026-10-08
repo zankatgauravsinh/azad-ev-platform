@@ -1,11 +1,10 @@
 import { INestApplication, NotFoundException } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { TenantContext } from '../src/tenant/tenant-context.service';
 import type { SaleTaxDocument } from '../src/modules/tax/sale-tax-document';
 import { SaleTaxSnapshotReader } from '../src/modules/tax/sale-tax-snapshot.reader';
@@ -96,10 +95,7 @@ describe('Sale GST snapshot reader (e2e)', () => {
   let tSaleId = '';
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     tenant = app.get(TenantContext);
     reader = app.get(SaleTaxSnapshotReader);
@@ -168,7 +164,7 @@ describe('Sale GST snapshot reader (e2e)', () => {
       }
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   // ───────────────────────── A sale with a snapshot ─────────────────────────
   describe('GST sale', () => {

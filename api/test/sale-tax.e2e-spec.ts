@@ -1,10 +1,9 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { SaleTaxService } from '../src/modules/tax/sale-tax.service';
 import { TaxEngineService } from '../src/modules/tax/tax-engine.service';
 import { calendarDateInTimeZone } from '../src/modules/tax/tax-point';
@@ -95,10 +94,7 @@ describe('Sale GST snapshots (e2e)', () => {
   const setting = (co: Co, data: Prisma.CompanySettingUncheckedUpdateInput) => prisma.companySetting.update({ where: { companyId: co.id }, data });
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     calculateSpy = jest.spyOn(app.get(TaxEngineService), 'calculate');
 
@@ -156,7 +152,7 @@ describe('Sale GST snapshots (e2e)', () => {
       }
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   // ───────────────────────── GST disabled ─────────────────────────
   describe('GST disabled — invoice generation is exactly as before', () => {
@@ -370,7 +366,7 @@ describe('Sale GST snapshots (e2e)', () => {
 
     beforeAll(async () => {
       plain = await newBooking(G, { exShowroom: 1_000_000, rto: 85_000 });
-    });
+    }, E2E_HOOK_TIMEOUT);
 
     it('vehicle model has no classification', async () => {
       await prisma.scooterModel.update({ where: { id: G.modelId }, data: { taxClassificationId: null } });

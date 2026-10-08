@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 function binaryParser(res: request.Response, callback: (err: Error | null, body: unknown) => void): void {
   const stream = res as unknown as NodeJS.ReadableStream;
@@ -17,37 +16,28 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 describe('Delivery (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  // Runs in its own throwaway company (see support/e2e-company).
+  let co: TestCompany;
   let ownerToken: string;
   let techToken: string;
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
   const stamp = Date.now().toString().slice(-8);
   const http = () => request(app.getHttpServer());
   const auth = (t: string): string => `Bearer ${t}`;
-  const login = async (e: string, p: string): Promise<string> =>
-    (await http().post('/api/v1/auth/login').send({ email: e, password: p }).expect(200)).body.accessToken;
 
   let unitId = '';
   let customerId = '';
   let bookingId = '';
-  const createdUserIds: string[] = [];
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
-    const tech = await prisma.user.create({ data: { companyId: owner.companyId, name: 'Dlv Tech', email: `dlv.tech.${stamp}@e2e.test`, role: 'TECHNICIAN', passwordHash: await bcrypt.hash('Test@12345', 12) } });
-    createdUserIds.push(tech.id);
-    ownerToken = await login(email, password);
-    techToken = await login(tech.email, 'Test@12345');
+    co = await createTestCompany(app, 'Dlv', { roles: ['TECHNICIAN'] });
+    ownerToken = co.user().token;
+    techToken = co.user('TECHNICIAN').token;
 
-    const models = await http().get('/api/v1/inventory/models').set('Authorization', auth(ownerToken)).expect(200);
     const unit = await http().post('/api/v1/inventory/units').set('Authorization', auth(ownerToken))
-      .send({ modelId: models.body[0].id, variant: `DLV-${stamp}`, colour: 'Blue', vin: `DLVVIN${stamp}`, motorNumber: `DLVM${stamp}`, batteryNumber: `DLVB${stamp}` }).expect(201);
+      .send({ modelId: co.modelId, variant: `DLV-${stamp}`, colour: 'Blue', vin: `DLVVIN${stamp}`, motorNumber: `DLVM${stamp}`, batteryNumber: `DLVB${stamp}` }).expect(201);
     unitId = unit.body.id;
     const customer = await http().post('/api/v1/customers').set('Authorization', auth(ownerToken)).send({ name: 'Delivery Customer', phone: `93${stamp}` }).expect(201);
     customerId = customer.body.id;
@@ -59,22 +49,12 @@ describe('Delivery (e2e)', () => {
     const balance = Number(booking.body.paymentSummary.balance);
     await http().post(`/api/v1/bookings/${bookingId}/payments`).set('Authorization', auth(ownerToken)).send({ amount: balance, mode: 'UPI' }).expect(201);
     await http().post(`/api/v1/bookings/${bookingId}/invoice`).set('Authorization', auth(ownerToken)).send({}).expect(201);
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    try {
-      await prisma.$executeRaw`DELETE FROM "Delivery" WHERE "saleId" IN (SELECT id FROM "Sale" WHERE "bookingId" = ${bookingId})`;
-      await prisma.$executeRaw`DELETE FROM "Payment" WHERE "bookingId" = ${bookingId}`;
-      await prisma.$executeRaw`DELETE FROM "Sale" WHERE "bookingId" = ${bookingId}`;
-      await prisma.$executeRaw`DELETE FROM "Booking" WHERE id = ${bookingId}`;
-      await prisma.$executeRaw`DELETE FROM "InventoryUnit" WHERE id = ${unitId}`;
-      await prisma.$executeRaw`DELETE FROM "Customer" WHERE id = ${customerId}`;
-    } catch {
-      /* best-effort */
-    }
-    if (createdUserIds.length) await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await purgeTestCompany(prisma, co?.id);
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('shows the booking in the pipeline as READY once invoiced + paid', async () => {
     // Locate this suite's own booking with the list's search (its unique VIN) rather than assuming it is
@@ -88,7 +68,7 @@ describe('Delivery (e2e)', () => {
   });
 
   it('schedules the delivery (→ SCHEDULED)', async () => {
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
+    const owner = co.user();
     const res = await http().post(`/api/v1/deliveries/${bookingId}/schedule`).set('Authorization', auth(ownerToken))
       .send({ expectedDelivery: new Date(Date.now() + 86_400_000).toISOString(), deliveryExecutiveId: owner.id, pendingDocuments: 'Address proof' }).expect(201);
     expect(res.body.booking.status).toBe('SCHEDULED');
@@ -160,9 +140,8 @@ describe('Delivery (e2e)', () => {
     const outstanding = 9_500_000; // total 10,500,000 − 1,000,000 advance
 
     beforeAll(async () => {
-      const models = await http().get('/api/v1/inventory/models').set('Authorization', auth(ownerToken)).expect(200);
       const unit = await http().post('/api/v1/inventory/units').set('Authorization', auth(ownerToken))
-        .send({ modelId: models.body[0].id, variant: `DLVP-${stamp}`, colour: 'Red', vin: `DLVVINP${stamp}`, motorNumber: `DLVPM${stamp}`, batteryNumber: `DLVPB${stamp}` }).expect(201);
+        .send({ modelId: co.modelId, variant: `DLVP-${stamp}`, colour: 'Red', vin: `DLVVINP${stamp}`, motorNumber: `DLVPM${stamp}`, batteryNumber: `DLVPB${stamp}` }).expect(201);
       pUnitId = unit.body.id;
       const customer = await http().post('/api/v1/customers').set('Authorization', auth(ownerToken)).send({ name: 'Partial Pay Customer', phone: `94${stamp}` }).expect(201);
       pCustomerId = customer.body.id;
@@ -172,20 +151,7 @@ describe('Delivery (e2e)', () => {
       pBookingId = booking.body.id;
       expect(Number(booking.body.paymentSummary.balance)).toBe(outstanding);
       await http().post(`/api/v1/bookings/${pBookingId}/invoice`).set('Authorization', auth(ownerToken)).send({}).expect(201);
-    });
-
-    afterAll(async () => {
-      try {
-        await prisma.$executeRaw`DELETE FROM "Delivery" WHERE "saleId" IN (SELECT id FROM "Sale" WHERE "bookingId" = ${pBookingId})`;
-        await prisma.$executeRaw`DELETE FROM "Payment" WHERE "bookingId" = ${pBookingId}`;
-        await prisma.$executeRaw`DELETE FROM "Sale" WHERE "bookingId" = ${pBookingId}`;
-        await prisma.$executeRaw`DELETE FROM "Booking" WHERE id = ${pBookingId}`;
-        await prisma.$executeRaw`DELETE FROM "InventoryUnit" WHERE id = ${pUnitId}`;
-        await prisma.$executeRaw`DELETE FROM "Customer" WHERE id = ${pCustomerId}`;
-      } catch {
-        /* best-effort */
-      }
-    });
+    }, E2E_HOOK_TIMEOUT);
 
     it('shows the invoiced-but-unpaid booking as AWAITING_PAYMENT with the balance', async () => {
       // Found by its unique VIN via the list's search, not by its position in the first page.

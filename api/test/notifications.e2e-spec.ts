@@ -1,32 +1,36 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 describe('Notifications (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  // Runs in its own throwaway company: notifications are generated from, and only touch, its data.
+  let co: TestCompany;
   let token: string;
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
+  const stamp = Date.now().toString().slice(-8);
   const http = () => request(app.getHttpServer());
   const auth = (): string => `Bearer ${token}`;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
-    await prisma.notification.deleteMany({});
-    token = (await http().post('/api/v1/auth/login').send({ email, password }).expect(200)).body.accessToken;
-  });
+    co = await createTestCompany(app, 'Ntf');
+    token = co.user().token;
+    // Live data that must raise a notification: a booking with an outstanding balance.
+    const unit = await http().post('/api/v1/inventory/units').set('Authorization', auth())
+      .send({ modelId: co.modelId, variant: `Ntf-${stamp}`, colour: 'Red', vin: `NTFV${stamp}`, motorNumber: `NTFM${stamp}`, batteryNumber: `NTFB${stamp}` }).expect(201);
+    const customer = await http().post('/api/v1/customers').set('Authorization', auth()).send({ name: `Ntf ${stamp}`, phone: `92${stamp}` }).expect(201);
+    await http().post('/api/v1/bookings').set('Authorization', auth())
+      .send({ customerId: customer.body.id, unitId: unit.body.id, exShowroom: 10000000, advanceAmount: 1000000 }).expect(201);
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    await prisma.notification.deleteMany({});
+    await purgeTestCompany(prisma, co?.id);
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('generates notifications from live data, de-duplicated on refresh', async () => {
     const first = await http().post('/api/v1/notifications/refresh').set('Authorization', auth()).expect(201);

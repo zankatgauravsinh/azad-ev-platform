@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 /** Collect a binary response body into a Buffer (supertest doesn't do this by default). */
 function binaryParser(res: request.Response, callback: (err: Error | null, body: unknown) => void): void {
@@ -16,38 +15,39 @@ function binaryParser(res: request.Response, callback: (err: Error | null, body:
 describe('Reports (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  // The suite runs in its own throwaway company: report figures are cross-checked against this
+  // company's rows only (other companies, including other suites' throwaway ones, may exist).
+  let co: TestCompany;
   let ownerToken: string;
   let salesToken: string;
   const stamp = Date.now().toString().slice(-8);
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
-  const createdUserIds: string[] = [];
   const http = () => request(app.getHttpServer());
   const auth = (t: string): string => `Bearer ${t}`;
-  const login = async (mail: string, pass: string): Promise<string> =>
-    (await http().post('/api/v1/auth/login').send({ email: mail, password: pass }).expect(200)).body.accessToken;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
+    co = await createTestCompany(app, 'Rep', { roles: ['SALES_EXECUTIVE'] });
+    ownerToken = co.user().token;
+    salesToken = co.user('SALES_EXECUTIVE').token;
 
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
-    const hash = await bcrypt.hash('Test@12345', 12);
-    const sales = await prisma.user.create({
-      data: { companyId: owner.companyId, name: 'Rep Sales', email: `rep.sales.${stamp}@e2e.test`, role: 'SALES_EXECUTIVE', passwordHash: hash },
-    });
-    createdUserIds.push(sales.id);
-    ownerToken = await login(email, password);
-    salesToken = await login(sales.email, 'Test@12345');
-  });
+    // Known data: two units; one sold, paid in full and delivered today, the other in stock.
+    const unit = (n: number) => http().post('/api/v1/inventory/units').set('Authorization', auth(ownerToken))
+      .send({ modelId: co.modelId, variant: `Rep-${stamp}`, colour: `C${n}`, vin: `REPV${stamp}${n}`, motorNumber: `REPM${stamp}${n}`, batteryNumber: `REPB${stamp}${n}` }).expect(201);
+    const sold = await unit(1);
+    await unit(2);
+    const customer = await http().post('/api/v1/customers').set('Authorization', auth(ownerToken)).send({ name: `Rep ${stamp}`, phone: `95${stamp}` }).expect(201);
+    const booking = await http().post('/api/v1/bookings').set('Authorization', auth(ownerToken))
+      .send({ customerId: customer.body.id, unitId: sold.body.id, exShowroom: 10000000, advanceAmount: 1000000 }).expect(201);
+    await http().post(`/api/v1/bookings/${booking.body.id}/payments`).set('Authorization', auth(ownerToken)).send({ amount: Number(booking.body.paymentSummary.balance), mode: 'UPI' }).expect(201);
+    await http().post(`/api/v1/bookings/${booking.body.id}/invoice`).set('Authorization', auth(ownerToken)).send({}).expect(201);
+    await http().post(`/api/v1/bookings/${booking.body.id}/deliver`).set('Authorization', auth(ownerToken)).send({}).expect(201);
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await purgeTestCompany(prisma, co?.id);
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('overview returns the 7 dealership KPIs + charts', async () => {
     const res = await http().get('/api/v1/reports/overview').set('Authorization', auth(ownerToken)).expect(200);
@@ -63,14 +63,16 @@ describe('Reports (e2e)', () => {
     expect(res.body.monthlySales).toHaveLength(6);
     // Delivered KPI equals bookings with an actualDelivery in the last 30 days.
     const from = new Date(Date.now() - 30 * 86_400_000);
-    const delivered = await prisma.booking.count({ where: { actualDelivery: { gte: from } } });
+    const delivered = await prisma.booking.count({ where: { companyId: co.id, actualDelivery: { gte: from } } });
+    expect(delivered).toBe(1);
     const deliveredKpi = res.body.kpis.find((k: { label: string }) => k.label === 'Delivered');
     expect(Number(deliveredKpi.value)).toBe(delivered);
   });
 
   it('inventory report total matches the unit count', async () => {
     const res = await http().get('/api/v1/reports/inventory').set('Authorization', auth(ownerToken)).expect(200);
-    const total = await prisma.inventoryUnit.count();
+    const total = await prisma.inventoryUnit.count({ where: { companyId: co.id } });
+    expect(total).toBe(2);
     const totalKpi = res.body.kpis.find((k: { label: string }) => k.label === 'Total units');
     expect(Number(totalKpi.value)).toBe(total);
     expect(Array.isArray(res.body.byModel)).toBe(true);

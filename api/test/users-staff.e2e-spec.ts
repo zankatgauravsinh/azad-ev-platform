@@ -1,10 +1,9 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { seedRbac } from '../src/common/rbac/rbac-seed';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 /**
  * Staff management (OWNER-only) e2e — authorization, tenant isolation across two companies,
@@ -13,8 +12,6 @@ import { seedRbac } from '../src/common/rbac/rbac-seed';
 describe('Staff Management (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
   const stamp = Date.now().toString().slice(-8);
   const http = () => request(app.getHttpServer());
   const auth = (t: string): string => `Bearer ${t}`;
@@ -23,11 +20,11 @@ describe('Staff Management (e2e)', () => {
 
   let ownerAToken = '';
   let ownerBToken = '';
+  // Two throwaway companies (see support/e2e-company); A is the one whose staff are managed.
+  let coA: TestCompany;
+  let coB: TestCompany;
   let companyAId = '';
   let companyBId = '';
-  const createdUserIds: string[] = [];
-  const createdCompanyIds: string[] = [];
-  const createdRoleIds: string[] = [];
   const roleTokens: Record<string, string> = {};
 
   // bcrypt(12) dominates setup time; memoize by plaintext so each distinct test password is hashed once.
@@ -43,56 +40,34 @@ describe('Staff Management (e2e)', () => {
   const mkUser = async (companyId: string, role: string, pwd: string): Promise<{ id: string; email: string }> => {
     const e = `${role.toLowerCase()}.${stamp}.${Math.random().toString(36).slice(2, 6)}@e2e.test`;
     const u = await prisma.user.create({ data: { companyId, name: `${role} ${stamp}`, email: e, role: role as never, passwordHash: await hashPw(pwd), isActive: true } });
-    createdUserIds.push(u.id);
     return { id: u.id, email: e };
   };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    const ownerA = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
-    companyAId = ownerA.companyId;
-    ownerAToken = await token(email, password);
-
-    // Company B with its own owner.
-    const companyB = await prisma.company.create({ data: { name: `B ${stamp}`, slug: `b-${stamp}` } });
-    companyBId = companyB.id;
-    createdCompanyIds.push(companyB.id);
-    const ownerBEmail = `owner.b.${stamp}@e2e.test`;
-    const ownerB = await prisma.user.create({ data: { companyId: companyB.id, name: 'Owner B', email: ownerBEmail, role: 'OWNER', passwordHash: await hashPw('Owner@12345'), isActive: true } });
-    createdUserIds.push(ownerB.id);
-    ownerBToken = await token(ownerBEmail, 'Owner@12345');
-
-    // Staff creation now assigns a dynamic AppRole (roleId) → both companies need the system roles seeded.
-    await seedRbac(prisma);
+    // Each company gets its own owner and the system roles (staff creation assigns a dynamic AppRole).
+    coA = await createTestCompany(app, 'StaffA');
+    coB = await createTestCompany(app, 'StaffB');
+    companyAId = coA.id;
+    companyBId = coB.id;
+    ownerAToken = coA.user().token;
+    ownerBToken = coB.user().token;
 
     // One non-owner of each role in company A, to prove rejection.
     for (const role of ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT']) {
       const u = await mkUser(companyAId, role, 'Role@12345');
       roleTokens[role] = await token(u.email, 'Role@12345');
     }
-  }, 30000); // bootstrapping the Nest app + several bcrypt logins can exceed the 5s hook default under full-suite load
+  }, E2E_HOOK_TIMEOUT); // bootstrapping the Nest app + several bcrypt logins can exceed the 5s hook default under full-suite load
 
   afterAll(async () => {
-    try {
-      await prisma.activityLog.deleteMany({ where: { actorId: { in: createdUserIds } } });
-      // Staff created via the API under company A — clean up by the e2e email marker.
-      const apiMade = await prisma.user.findMany({ where: { email: { contains: `.api.${stamp}@` } }, select: { id: true } });
-      const ids = [...createdUserIds, ...apiMade.map((u) => u.id)];
-      await prisma.activityLog.deleteMany({ where: { actorId: { in: ids } } });
-      await prisma.user.deleteMany({ where: { id: { in: ids } } });
-      // Custom roles created in company A (the seed company isn't deleted) — remove after their users.
-      if (createdRoleIds.length) await prisma.appRole.deleteMany({ where: { id: { in: createdRoleIds } } });
-      await prisma.company.deleteMany({ where: { id: { in: createdCompanyIds } } });
-    } catch {
-      /* best-effort */
-    }
+    // Everything either company owns — staff created through the API and custom roles included.
+    await purgeTestCompany(prisma, coA?.id);
+    await purgeTestCompany(prisma, coB?.id);
     await app.close();
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   const newStaff = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
     name: 'Asha', email: `asha.api.${stamp}.${Math.random().toString(36).slice(2, 6)}@e2e.test`, phone: '9876543210', role: 'SALES_EXECUTIVE', password: 'Abcd1234', ...over,
@@ -148,7 +123,7 @@ describe('Staff Management (e2e)', () => {
   });
 
   it('rejects a duplicate email with a clean 409 (no Prisma/P2002/stack leak)', async () => {
-    const res = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(newStaff({ email: email.toLowerCase() })).expect(409);
+    const res = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(newStaff({ email: coA.user().email })).expect(409);
     const s = JSON.stringify(res.body);
     expect(s).not.toContain('P2002');
     expect(s).not.toContain('prisma');
@@ -226,11 +201,9 @@ describe('Staff Management (e2e)', () => {
 
   // ── H1: dynamic role (roleId) assignment — created/updated staff get working permissions ──
   const sysRole = (companyId: string, key: string) => prisma.appRole.findFirstOrThrow({ where: { companyId, key } });
-  const track = (id: string): string => (createdUserIds.push(id), id);
 
   it('create wires roleId to the enum’s system role, and the new staff can use those permissions', async () => {
     const res = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(newStaff({ role: 'MANAGER', password: 'Mgr@12345' })).expect(201);
-    track(res.body.id);
     const row = await prisma.user.findUniqueOrThrow({ where: { id: res.body.id } });
     expect(row.roleId).toBe((await sysRole(companyAId, 'MANAGER')).id); // not just the legacy enum
     const me = await http().get('/api/v1/auth/me').set('Authorization', auth(await token(row.email, 'Mgr@12345'))).expect(200);
@@ -240,7 +213,6 @@ describe('Staff Management (e2e)', () => {
 
   it('changing the role moves roleId and the effective permissions with it (same token, re-validated per request)', async () => {
     const created = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(newStaff({ role: 'SALES_EXECUTIVE', password: 'Sls@12345' })).expect(201);
-    track(created.body.id);
     const t = await token(created.body.email, 'Sls@12345');
     const before = await http().get('/api/v1/auth/me').set('Authorization', auth(t)).expect(200);
     expect(before.body.permissions).toContain('service.view');
@@ -256,12 +228,10 @@ describe('Staff Management (e2e)', () => {
 
   it('assigns an explicit custom roleId and preserves the legacy enum', async () => {
     const custom = await prisma.appRole.create({ data: { companyId: companyAId, name: `Custom ${stamp}`, isSystem: false } });
-    createdRoleIds.push(custom.id);
     const perm = await prisma.permission.findUniqueOrThrow({ where: { key: 'dashboard.view' } });
     await prisma.rolePermission.create({ data: { roleId: custom.id, permissionId: perm.id } });
 
     const res = await http().post('/api/v1/users/staff').set('Authorization', auth(ownerAToken)).send(newStaff({ role: 'SALES_EXECUTIVE', roleId: custom.id, password: 'Cst@12345' })).expect(201);
-    track(res.body.id);
     // The DTO surfaces the assigned AppRole so the UI can display/edit the real role (not just the enum).
     expect(res.body.roleId).toBe(custom.id);
     expect(res.body.roleName).toBe(`Custom ${stamp}`);

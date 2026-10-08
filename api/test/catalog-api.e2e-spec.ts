@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 
 /**
  * Catalog M2 — the model / variant management API through HTTP: lists and filters, create / update /
@@ -57,10 +56,7 @@ describe('Catalog API (e2e)', () => {
   const VARIANT = { name: 'Pro', colour: 'Teal', hexColour: '#00B8A9', exShowroomPrice: 12_500_000, batteryType: 'Li-ion', batteryCapacity: '3.2 kWh', rangeKm: 120, topSpeedKmph: 80, chargingTimeHrs: 4.5, motorPowerW: 2500, warrantyMonths: 36 };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     await setupCompany(A, 'a');
     await setupCompany(B, 'b');
@@ -83,7 +79,7 @@ describe('Catalog API (e2e)', () => {
       ]) await prisma.$executeRawUnsafe(sql, id);
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   // ───────────────────────── Models ─────────────────────────
   describe('models', () => {
@@ -170,7 +166,7 @@ describe('Catalog API (e2e)', () => {
     let teal = '';
     beforeAll(async () => {
       modelId = (await createModel(A.owner, { brand: 'TESTBRAND', name: `Var ${stamp}` }).expect(201)).body.id;
-    });
+    }, E2E_HOOK_TIMEOUT);
 
     it('14 + 30. create: full DTO with money as a string and the decimal as "4.50"; audited', async () => {
       const res = await createVariant(A.owner, modelId, { ...VARIANT, modelId: 'ignored', companyId: B.id }).expect(201);
@@ -251,7 +247,7 @@ describe('Catalog API (e2e)', () => {
     beforeAll(async () => {
       modelId = (await createModel(A.owner, { brand: 'TESTBRAND', name: `Auth ${stamp}` }).expect(201)).body.id;
       variantId = (await createVariant(A.owner, modelId, VARIANT).expect(201)).body.id;
-    });
+    }, E2E_HOOK_TIMEOUT);
 
     it('24. unauthenticated → 401 everywhere', async () => {
       await http().get('/api/v1/inventory/models').expect(401);

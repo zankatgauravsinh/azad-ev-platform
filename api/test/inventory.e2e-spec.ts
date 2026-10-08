@@ -1,9 +1,8 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 
 // 1×1 transparent PNG
 const PNG_1PX = Buffer.from(
@@ -26,10 +25,7 @@ describe('Inventory (e2e)', () => {
   const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
 
     const login = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
@@ -42,7 +38,7 @@ describe('Inventory (e2e)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     modelId = models.body[0].id;
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     if (unitId) {
@@ -51,7 +47,7 @@ describe('Inventory (e2e)', () => {
         .set('Authorization', `Bearer ${token}`);
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   const bearer = (): string => `Bearer ${token}`;
 

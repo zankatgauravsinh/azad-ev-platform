@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 
 /**
  * M4A — inventory units attached to a CURATED variant (variantId) through the real endpoints, next to
@@ -46,10 +45,7 @@ describe('Inventory ↔ catalogue (e2e)', () => {
   const unitCount = (co: Co) => prisma.inventoryUnit.count({ where: { companyId: co.id } });
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     await setupCompany(A, 'a');
     await setupCompany(B, 'b');
@@ -68,7 +64,7 @@ describe('Inventory ↔ catalogue (e2e)', () => {
       ]) await prisma.$executeRawUnsafe(sql, id);
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   describe('create with a curated variant', () => {
     it('1 + 2 + 3 + 13. attaches the existing variant, creates nothing, keeps the response shape', async () => {

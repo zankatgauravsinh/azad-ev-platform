@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 /**
@@ -27,10 +26,7 @@ describe('GET /auth/me effective permissions (e2e)', () => {
   const me = (t: string): request.Test => http().get('/api/v1/auth/me').set('Authorization', `Bearer ${t}`);
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
     const owner = await prisma.user.findUniqueOrThrow({ where: { email } });
@@ -54,12 +50,12 @@ describe('GET /auth/me effective permissions (e2e)', () => {
     }
     inactiveToken = await login(`me.inactive.${stamp}@e2e.test`, 'Test@12345');
     await prisma.user.update({ where: { id: inactiveId }, data: { isActive: false } }); // deactivate after issuing the token
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await app.close();
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   const perms = async (t: string): Promise<string[]> => (await me(t).expect(200)).body.permissions as string[];
 

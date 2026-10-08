@@ -1,12 +1,14 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 describe('Sales domain (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  // Runs in its own throwaway company (see support/e2e-company).
+  let co: TestCompany;
   let token: string;
   let modelId: string;
   let customerId: string;
@@ -15,21 +17,16 @@ describe('Sales domain (e2e)', () => {
   let bookingId: string;
   let invoiceNumber: string;
   const stamp = Date.now().toString().slice(-8);
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
   const auth = (): string => `Bearer ${token}`;
   const http = () => request(app.getHttpServer());
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    token = (await http().post('/api/v1/auth/login').send({ email, password }).expect(200)).body.accessToken;
-    const models = await http().get('/api/v1/inventory/models').set('Authorization', auth()).expect(200);
-    modelId = models.body[0].id;
+    co = await createTestCompany(app, 'Sales');
+    token = co.user().token;
+    modelId = co.modelId;
 
     const unit = await http()
       .post('/api/v1/inventory/units')
@@ -45,13 +42,12 @@ describe('Sales domain (e2e)', () => {
       .send({ name: 'E2E Sales', phone: `97${stamp}` })
       .expect(201);
     customerId = customer.body.id;
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    // Data is namespaced by a unique run stamp; a psql wipe after the suite keeps
-    // the DB pristine. Avoid deleteMany here (soft-delete middleware + FK restricts).
+    await purgeTestCompany(prisma, co?.id);
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('creates a quotation with a computed on-road total', async () => {
     const res = await http()

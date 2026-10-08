@@ -1,8 +1,7 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { PERMISSION_KEYS, SYSTEM_ROLE_PERMISSIONS, Role } from '@azad/shared';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { PermissionResolver } from '../src/common/rbac/permission-resolver.service';
 import { RoleService, type RoleActor } from '../src/modules/roles/role.service';
 import { seedRbac } from '../src/common/rbac/rbac-seed';
@@ -27,10 +26,7 @@ describe('Permission resolver parity (e2e)', () => {
   const roleUserIds: Record<string, string> = {}; // enum role → a user's id (backfilled)
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     resolver = app.get(PermissionResolver);
     roleService = app.get(RoleService);
@@ -49,13 +45,13 @@ describe('Permission resolver parity (e2e)', () => {
       roleUserIds[role] = u.id;
     }
     await seedRbac(prisma); // creates the two inventory perms + backfills the new users' roleId
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await prisma.appRole.deleteMany({ where: { id: { in: createdRoleIds } } });
     await app.close();
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   const sorted = (s: Iterable<string>): string[] => [...s].sort();
 

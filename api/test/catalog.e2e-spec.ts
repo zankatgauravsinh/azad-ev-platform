@@ -1,8 +1,7 @@
 import { ConflictException, INestApplication, NotFoundException } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { TenantContext } from '../src/tenant/tenant-context.service';
 import { CatalogRepository } from '../src/modules/inventory/catalog/catalog.repository';
 import { CatalogService } from '../src/modules/inventory/catalog/catalog.service';
@@ -31,9 +30,7 @@ describe('Catalog foundation (integration)', () => {
   const inB = <T>(fn: () => Promise<T>): Promise<T> => tenant.runWith(coB, fn);
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     tenant = app.get(TenantContext);
     service = app.get(CatalogService);
@@ -56,7 +53,7 @@ describe('Catalog foundation (integration)', () => {
       ]) await prisma.$executeRawUnsafe(sql, id);
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   // ───────────────────────── Tenant-scoped uniqueness ─────────────────────────
   describe('model uniqueness', () => {
@@ -84,7 +81,7 @@ describe('Catalog foundation (integration)', () => {
     beforeAll(async () => {
       aModel = (await inA(() => service.createModel({ brand: 'TESTBRAND', name: `Iso ${stamp}` }, USER))).id;
       aVariant = (await inA(() => service.createVariant(aModel, { name: 'Pro', colour: 'Red', exShowroomPrice: 12_000_000 }, USER))).id;
-    });
+    }, E2E_HOOK_TIMEOUT);
 
     it("company B cannot read, update or deactivate company A's model", async () => {
       await expect(inB(() => service.getModel(aModel))).rejects.toBeInstanceOf(NotFoundException);
@@ -118,7 +115,7 @@ describe('Catalog foundation (integration)', () => {
     let modelId = '';
     beforeAll(async () => {
       modelId = (await inA(() => service.createModel({ brand: 'TESTBRAND', name: `Life ${stamp}`, description: 'Flagship' }, USER))).id;
-    });
+    }, E2E_HOOK_TIMEOUT);
 
     it('the variant key is exact: a different case or a different colour is another variant; the same key is refused', async () => {
       const red = await inA(() => service.createVariant(modelId, { name: 'Pro', colour: 'Red', exShowroomPrice: 10_000_000 }, USER));

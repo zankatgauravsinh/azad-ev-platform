@@ -1,10 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { seedRbac } from '../src/common/rbac/rbac-seed';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 /**
  * Role-boundary coverage for the fixed-role model (documents, does not change, authorization).
@@ -14,10 +12,9 @@ import { seedRbac } from '../src/common/rbac/rbac-seed';
 describe('Authorization boundaries (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  // Runs in its own throwaway company (see support/e2e-company): allowed calls may create rows.
+  let co: TestCompany;
   const stamp = Date.now().toString().slice(-8);
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
-  const createdUserIds: string[] = [];
   const http = () => request(app.getHttpServer());
   const T: Record<string, string> = {};
 
@@ -36,35 +33,21 @@ describe('Authorization boundaries (e2e)', () => {
   };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
-    const hash = await bcrypt.hash('Test@12345', 12);
+    // One user per role, each with its system role assigned exactly as production backfills it.
+    // Role enum / RolesGuard still gate un-migrated routes.
     const roles = ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT'] as const;
-    for (const role of roles) {
-      const u = await prisma.user.create({
-        data: { companyId: owner.companyId, name: `Authz ${role}`, email: `authz.${role.toLowerCase()}.${stamp}@e2e.test`, role, passwordHash: hash, isActive: true },
-      });
-      createdUserIds.push(u.id);
-    }
-    // Backfill roleId for these test users so permission-migrated endpoints resolve exactly as in
-    // production (where every user is backfilled). Role enum / RolesGuard still gate un-migrated routes.
-    await seedRbac(prisma);
-    const login = async (mail: string, pass: string): Promise<string> =>
-      (await http().post('/api/v1/auth/login').send({ email: mail, password: pass }).expect(200)).body.accessToken;
-    T.OWNER = await login(email, password);
-    for (const role of roles) T[role] = await login(`authz.${role.toLowerCase()}.${stamp}@e2e.test`, 'Test@12345');
-  }, 30000);
+    co = await createTestCompany(app, 'Authz', { roles: [...roles] });
+    T.OWNER = co.user().token;
+    for (const role of roles) T[role] = co.user(role).token;
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    await prisma.activityLog.deleteMany({ where: { actorId: { in: createdUserIds } } }).catch(() => undefined);
-    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await purgeTestCompany(prisma, co?.id);
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   describe('Dashboard (OWNER|MANAGER)', () => {
     it('allows OWNER/MANAGER', async () => { await allowed('OWNER', 'get', '/dashboard/summary'); await allowed('MANAGER', 'get', '/dashboard/summary'); });

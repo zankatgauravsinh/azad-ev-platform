@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 /**
@@ -33,10 +32,7 @@ describe('Role management (e2e)', () => {
   let bRoleId = '';
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
     await seedRbac(prisma); // ensure system roles exist for the seeded company (idempotent)
@@ -60,7 +56,7 @@ describe('Role management (e2e)', () => {
     companyBId = companyB.id;
     const bRole = await prisma.appRole.create({ data: { companyId: companyB.id, name: 'B Custom', isSystem: false, isProtected: false } });
     bRoleId = bRole.id;
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } }); // frees roleId references
@@ -68,7 +64,7 @@ describe('Role management (e2e)', () => {
     await prisma.appRole.deleteMany({ where: { companyId: companyBId } });
     await prisma.company.deleteMany({ where: { id: companyBId } });
     await app.close();
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   // ── authorization ──
   it('rejects unauthenticated and non-owner callers', async () => {

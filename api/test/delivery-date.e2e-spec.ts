@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { businessDateOf, noonOf } from '../src/common/utils/business-date';
 
 function binaryParser(res: request.Response, callback: (err: Error | null, body: unknown) => void): void {
@@ -89,10 +88,7 @@ describe('Delivery date (e2e)', () => {
   const shift = (date: string, days: number): string => new Date(Date.parse(`${date}T00:00:00.000Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     await setupCompany(A, 'a', 'Asia/Kolkata');
     await setupCompany(K, 'k', 'Pacific/Kiritimati');
@@ -124,7 +120,7 @@ describe('Delivery date (e2e)', () => {
       }
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   // ───────────────────────── Both entry points, one behaviour ─────────────────────────
   describe.each(ENTRY_POINTS)('%s', (_name, deliver) => {

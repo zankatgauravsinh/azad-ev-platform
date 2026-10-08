@@ -1,10 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { seedRbac } from '../src/common/rbac/rbac-seed';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 /** Collect a binary response body into a Buffer. */
 function binaryParser(res: request.Response, callback: (err: Error | null, body: unknown) => void): void {
@@ -17,15 +15,13 @@ function binaryParser(res: request.Response, callback: (err: Error | null, body:
 describe('Warranty & AMC (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  // Runs in its own throwaway company (see support/e2e-company).
+  let co: TestCompany;
   let ownerToken: string;
   let salesToken: string;
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
   const stamp = Date.now().toString().slice(-8);
   const http = () => request(app.getHttpServer());
   const auth = (t: string): string => `Bearer ${t}`;
-  const login = async (e: string, p: string): Promise<string> =>
-    (await http().post('/api/v1/auth/login').send({ email: e, password: p }).expect(200)).body.accessToken;
 
   let unitId = '';
   let customerId = '';
@@ -33,44 +29,26 @@ describe('Warranty & AMC (e2e)', () => {
   let warrantyNumber = '';
   let claimId = '';
   let amcId = '';
-  const createdUserIds: string[] = [];
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
-    const hash = await bcrypt.hash('Test@12345', 12);
-    const sales = await prisma.user.create({ data: { companyId: owner.companyId, name: 'Wty Sales', email: `wty.sales.${stamp}@e2e.test`, role: 'SALES_EXECUTIVE', passwordHash: hash } });
-    createdUserIds.push(sales.id);
+    co = await createTestCompany(app, 'Wty', { roles: ['SALES_EXECUTIVE'] });
+    ownerToken = co.user().token;
+    salesToken = co.user('SALES_EXECUTIVE').token;
 
-    // Backfill roleId so permission-migrated warranty/amc/claims endpoints resolve as in production.
-    await seedRbac(prisma);
-    ownerToken = await login(email, password);
-    salesToken = await login(sales.email, 'Test@12345');
-
-    const models = await http().get('/api/v1/inventory/models').set('Authorization', auth(ownerToken)).expect(200);
     const unit = await http().post('/api/v1/inventory/units').set('Authorization', auth(ownerToken))
-      .send({ modelId: models.body[0].id, variant: `WTY-${stamp}`, colour: 'Teal', vin: `WTYVIN${stamp}`, motorNumber: `WTYMOT${stamp}`, batteryNumber: `WTYBAT${stamp}` }).expect(201);
+      .send({ modelId: co.modelId, variant: `WTY-${stamp}`, colour: 'Teal', vin: `WTYVIN${stamp}`, motorNumber: `WTYMOT${stamp}`, batteryNumber: `WTYBAT${stamp}` }).expect(201);
     unitId = unit.body.id;
     const customer = await http().post('/api/v1/customers').set('Authorization', auth(ownerToken)).send({ name: 'Warranty Customer', phone: `97${stamp}` }).expect(201);
     customerId = customer.body.id;
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    await prisma.notification.deleteMany({ where: { entityType: { in: ['Warranty', 'AmcPlan', 'WarrantyClaim', 'FreeService'] } } });
-    if (unitId) {
-      await prisma.warranty.deleteMany({ where: { unitId } });
-      await prisma.amcPlan.deleteMany({ where: { unitId } });
-      await prisma.inventoryUnit.delete({ where: { id: unitId } }).catch(() => undefined);
-    }
-    if (customerId) await prisma.customer.delete({ where: { id: customerId } }).catch(() => undefined);
-    if (createdUserIds.length) await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await purgeTestCompany(prisma, co?.id);
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('creates a warranty with default coverage and three free services', async () => {
     const res = await http().post('/api/v1/warranties').set('Authorization', auth(ownerToken))

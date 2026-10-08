@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { readPdfText } from './support/pdf-text';
 
 function binaryParser(res: request.Response, cb: (err: Error | null, body: unknown) => void): void {
@@ -86,10 +85,7 @@ describe('Inventory identity guard (e2e)', () => {
   const legacySame = { variant: 'Pro', colour: 'Teal' };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     await setupCompany(A, 'a');
     await setupCompany(B, 'b');
@@ -112,7 +108,7 @@ describe('Inventory identity guard (e2e)', () => {
       ]) await prisma.$executeRawUnsafe(sql, id);
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   // ───────────────────────── Allowed before commitment ─────────────────────────
   describe.each(['AVAILABLE', 'RESERVED'])('%s', (status) => {
@@ -142,7 +138,7 @@ describe('Inventory identity guard (e2e)', () => {
 
   describe.each(committed)('%s', (status, prepare) => {
     let unitId = '';
-    beforeAll(async () => { unitId = await prepare(A); expect((await row(unitId)).status).toBe(status); });
+    beforeAll(async () => { unitId = await prepare(A); expect((await row(unitId)).status).toBe(status); }, E2E_HOOK_TIMEOUT);
 
     it('curated change → 409 and NOTHING is written (atomic)', async () => {
       const before = await row(unitId);
@@ -230,7 +226,7 @@ describe('Inventory identity guard (e2e)', () => {
     ['RETURNED', async (co: Co) => { const u = await newUnit(co); const b = await book(co, u.id, true); await returnUnit(co, b); return u.id; }],
   ])('identification while %s', (status, prepare) => {
     let id = '';
-    beforeAll(async () => { id = await prepare(A); expect((await row(id)).status).toBe(status); });
+    beforeAll(async () => { id = await prepare(A); expect((await row(id)).status).toBe(status); }, E2E_HOOK_TIMEOUT);
 
     it('6–14. VIN, motor and battery are each locked → 409, nothing written, no audit', async () => {
       const before = await row(id);

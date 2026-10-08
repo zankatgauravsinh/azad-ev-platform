@@ -1,8 +1,7 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { SYSTEM_ROLES, SYSTEM_ROLE_PERMISSIONS, Role } from '@azad/shared';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 /**
@@ -21,14 +20,11 @@ describe('RBAC seed & backfill (e2e)', () => {
   const cleanup = { companyBId: '', userBId: '' };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     const owner = await prisma.user.findUniqueOrThrow({ where: { email } });
     companyAId = owner.companyId;
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     if (cleanup.userBId) await prisma.user.deleteMany({ where: { id: cleanup.userBId } });
@@ -37,7 +33,7 @@ describe('RBAC seed & backfill (e2e)', () => {
       await prisma.company.deleteMany({ where: { id: cleanup.companyBId } });
     }
     await app.close();
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   it('seeds the 73-permission global catalog and is idempotent', async () => {
     const r1 = await seedRbac(prisma);

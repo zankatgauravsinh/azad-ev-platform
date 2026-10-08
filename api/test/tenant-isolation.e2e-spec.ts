@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 
 /**
  * Proves company (tenant) isolation for future single-tenant → multi-tenant
@@ -24,10 +23,7 @@ describe('Tenant isolation (e2e)', () => {
   const bearer = (t: string): string => `Bearer ${t}`;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
     // Company B (a second tenant) — created in system context.
@@ -40,7 +36,7 @@ describe('Tenant isolation (e2e)', () => {
 
     tokenA = (await http().post('/api/v1/auth/login').send({ email: emailA, password: passwordA }).expect(200)).body.accessToken;
     tokenB = (await http().post('/api/v1/auth/login').send({ email: emailB, password: 'Test@12345' }).expect(200)).body.accessToken;
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     await prisma.$executeRawUnsafe('DELETE FROM "CustomerTimelineEntry" WHERE "companyId" = $1', companyBId);
@@ -53,7 +49,7 @@ describe('Tenant isolation (e2e)', () => {
     await prisma.$executeRawUnsafe('DELETE FROM "Branch" WHERE "companyId" = $1', companyBId);
     await prisma.$executeRawUnsafe('DELETE FROM "Company" WHERE id = $1', companyBId);
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('scopes the JWT to the correct company', async () => {
     const meA = await http().get('/api/v1/auth/me').set('Authorization', bearer(tokenA)).expect(200);

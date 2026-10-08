@@ -1,7 +1,6 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 
 /**
  * End-to-end auth flow. Requires a running Postgres (docker compose up -d)
@@ -13,15 +12,12 @@ describe('Auth (e2e)', () => {
   const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
-  });
+    app = await createE2eApp();
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('GET /health is public and reports status', async () => {
     const res = await request(app.getHttpServer()).get('/api/v1/health').expect(200);

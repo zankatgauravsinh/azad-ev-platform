@@ -1,38 +1,36 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 describe('Dashboard & search (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  let token: string;
+  // The suite runs in its own throwaway company, so every figure it checks is this company's alone.
+  let co: TestCompany;
   const stamp = Date.now().toString().slice(-8);
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
-  const auth = (): string => `Bearer ${token}`;
+  const auth = (): string => co.auth();
   const http = () => request(app.getHttpServer());
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
-    token = (await http().post('/api/v1/auth/login').send({ email, password }).expect(200)).body.accessToken;
+    co = await createTestCompany(app, 'Dash');
 
     // Seed a known scenario: customer + unit + booking + advance payment
-    const models = await http().get('/api/v1/inventory/models').set('Authorization', auth());
     const unit = await http().post('/api/v1/inventory/units').set('Authorization', auth())
-      .send({ modelId: models.body[0].id, variant: `Dash-${stamp}`, colour: 'Grey', vin: `DASH${stamp}`, motorNumber: `DM${stamp}`, batteryNumber: `DB${stamp}`, sellingPrice: 11800000 });
+      .send({ modelId: co.modelId, variant: `Dash-${stamp}`, colour: 'Grey', vin: `DASH${stamp}`, motorNumber: `DM${stamp}`, batteryNumber: `DB${stamp}`, sellingPrice: 11800000 }).expect(201);
     const customer = await http().post('/api/v1/customers').set('Authorization', auth())
-      .send({ name: `Dash ${stamp}`, phone: `96${stamp}`, leadStatus: 'NEGOTIATION' });
+      .send({ name: `Dash ${stamp}`, phone: `96${stamp}`, leadStatus: 'NEGOTIATION' }).expect(201);
     await http().post('/api/v1/bookings').set('Authorization', auth())
-      .send({ customerId: customer.body.id, unitId: unit.body.id, exShowroom: 10500000, rto: 850000, advanceAmount: 500000 });
-  });
+      .send({ customerId: customer.body.id, unitId: unit.body.id, exShowroom: 10500000, rto: 850000, advanceAmount: 500000 }).expect(201);
+  }, E2E_HOOK_TIMEOUT);
 
-  afterAll(async () => { await app.close(); });
+  afterAll(async () => {
+    await purgeTestCompany(prisma, co?.id);
+    await app.close();
+  }, E2E_HOOK_TIMEOUT);
 
   it('returns the full dashboard payload', async () => {
     const res = await http().get('/api/v1/dashboard/summary').set('Authorization', auth()).expect(200);
@@ -46,12 +44,15 @@ describe('Dashboard & search (e2e)', () => {
 
   it('matches database totals for inventory and active customers', async () => {
     const res = await http().get('/api/v1/dashboard/summary').set('Authorization', auth()).expect(200);
+    const companyId = co.id;
     const [available, booked, delivered, activeCustomers] = await Promise.all([
-      prisma.inventoryUnit.count({ where: { status: 'AVAILABLE' } }),
-      prisma.inventoryUnit.count({ where: { status: 'BOOKED' } }),
-      prisma.inventoryUnit.count({ where: { status: 'DELIVERED' } }),
-      prisma.customer.count({ where: { leadStatus: { not: 'LOST' } } }),
+      prisma.inventoryUnit.count({ where: { companyId, status: 'AVAILABLE' } }),
+      prisma.inventoryUnit.count({ where: { companyId, status: 'BOOKED' } }),
+      prisma.inventoryUnit.count({ where: { companyId, status: 'DELIVERED' } }),
+      prisma.customer.count({ where: { companyId, leadStatus: { not: 'LOST' } } }),
     ]);
+    // The seeded scenario: one unit, booked, for one active customer.
+    expect([available, booked, delivered, activeCustomers]).toEqual([0, 1, 0, 1]);
     expect(res.body.businessOverview.availableInventory).toBe(available);
     expect(res.body.businessOverview.bookedInventory).toBe(booked);
     expect(res.body.businessOverview.deliveredVehicles).toBe(delivered);
@@ -62,9 +63,10 @@ describe('Dashboard & search (e2e)', () => {
     const res = await http().get('/api/v1/dashboard/summary').set('Authorization', auth()).expect(200);
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const agg = await prisma.payment.aggregate({ where: { paidAt: { gte: start } }, _sum: { amount: true } });
+    const agg = await prisma.payment.aggregate({ where: { companyId: co.id, paidAt: { gte: start } }, _sum: { amount: true } });
+    expect(agg._sum.amount).toBe(500000n); // the advance
     expect(res.body.businessOverview.todayCollections).toBe((agg._sum.amount ?? 0n).toString());
-    expect(res.body.todaysWork.pendingPayments.count).toBeGreaterThanOrEqual(1);
+    expect(res.body.todaysWork.pendingPayments.count).toBe(1);
   });
 
   it('produces three charts with six monthly points each', async () => {
@@ -83,7 +85,7 @@ describe('Dashboard & search (e2e)', () => {
 
   it('generates reminders from real data (pending balance)', async () => {
     const res = await http().get('/api/v1/dashboard/summary').set('Authorization', auth()).expect(200);
-    expect(res.body.reminders.pendingBalance.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.reminders.pendingBalance).toHaveLength(1);
   });
 
   it('global search finds the customer by name and phone, and the unit by VIN', async () => {

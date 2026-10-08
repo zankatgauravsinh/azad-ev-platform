@@ -1,10 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { seedRbac } from '../src/common/rbac/rbac-seed';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 function binaryParser(res: request.Response, callback: (err: Error | null, body: unknown) => void): void {
   const stream = res as unknown as NodeJS.ReadableStream;
@@ -16,16 +14,14 @@ function binaryParser(res: request.Response, callback: (err: Error | null, body:
 describe('Finance & Expenses (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  // Runs in its own throwaway company (see support/e2e-company).
+  let co: TestCompany;
   let ownerToken: string;
   let accountantToken: string;
   let salesToken: string;
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
   const stamp = Date.now().toString().slice(-8);
   const http = () => request(app.getHttpServer());
   const auth = (t: string): string => `Bearer ${t}`;
-  const login = async (e: string, p: string): Promise<string> =>
-    (await http().post('/api/v1/auth/login').send({ email: e, password: p }).expect(200)).body.accessToken;
 
   let categoryId = '';
   let vendorId = '';
@@ -33,47 +29,24 @@ describe('Finance & Expenses (e2e)', () => {
   let expenseNumber = '';
   let incomeId = '';
   let customerId = '';
-  const createdUserIds: string[] = [];
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
-    const hash = await bcrypt.hash('Test@12345', 12);
-    const accountant = await prisma.user.create({ data: { companyId: owner.companyId, name: 'Fin Accountant', email: `fin.acc.${stamp}@e2e.test`, role: 'ACCOUNTANT', passwordHash: hash } });
-    const sales = await prisma.user.create({ data: { companyId: owner.companyId, name: 'Fin Sales', email: `fin.sales.${stamp}@e2e.test`, role: 'SALES_EXECUTIVE', passwordHash: hash } });
-    createdUserIds.push(accountant.id, sales.id);
-
-    // Backfill roleId so permission-migrated finance endpoints resolve as in production.
-    await seedRbac(prisma);
-    ownerToken = await login(email, password);
-    accountantToken = await login(accountant.email, 'Test@12345');
-    salesToken = await login(sales.email, 'Test@12345');
+    co = await createTestCompany(app, 'Fin', { roles: ['ACCOUNTANT', 'SALES_EXECUTIVE'] });
+    ownerToken = co.user().token;
+    accountantToken = co.user('ACCOUNTANT').token;
+    salesToken = co.user('SALES_EXECUTIVE').token;
 
     const customer = await http().post('/api/v1/customers').set('Authorization', auth(ownerToken)).send({ name: 'Finance Customer', phone: `95${stamp}` }).expect(201);
     customerId = customer.body.id;
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    // Raw deletes bypass the soft-delete middleware so the FK-referenced rows are truly removed.
-    await prisma.notification.deleteMany({ where: { entityType: { in: ['Expense', 'CashBook'] } } });
-    if (categoryId) await prisma.$executeRaw`DELETE FROM "Expense" WHERE "categoryId" = ${categoryId}`;
-    if (vendorId) await prisma.$executeRaw`DELETE FROM "Expense" WHERE "vendorId" = ${vendorId}`;
-    await prisma.income.deleteMany({ where: { referenceNumber: { contains: stamp } } });
-    await prisma.bankTransaction.deleteMany({ where: { reference: { contains: stamp } } });
-    await prisma.cashAdjustment.deleteMany({ where: { notes: { contains: stamp } } });
-    await prisma.monthlyClosing.deleteMany({ where: { notes: { contains: stamp } } });
-    if (categoryId) await prisma.$executeRaw`DELETE FROM "RecurringExpense" WHERE "categoryId" = ${categoryId}`;
-    if (vendorId) await prisma.$executeRaw`DELETE FROM "Vendor" WHERE id = ${vendorId}`;
-    if (categoryId) await prisma.$executeRaw`DELETE FROM "ExpenseCategory" WHERE id = ${categoryId}`;
-    if (customerId) await prisma.customer.delete({ where: { id: customerId } }).catch(() => undefined);
-    if (createdUserIds.length) await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await purgeTestCompany(prisma, co?.id);
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('seeds the 15 default categories and adds a custom one', async () => {
     const list = await http().get('/api/v1/finance/categories').set('Authorization', auth(ownerToken)).expect(200);

@@ -1,10 +1,9 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 /**
@@ -32,10 +31,7 @@ describe('Tax management (e2e)', () => {
   const createdClassIds: string[] = [];
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
     await seedRbac(prisma);
@@ -56,7 +52,7 @@ describe('Tax management (e2e)', () => {
     companyBId = companyB.id;
     const bClass = await prisma.taxClassification.create({ data: { companyId: companyB.id, name: `B Vehicle ${stamp}`, codeType: 'HSN', code: '8703', treatment: 'TAXABLE' } });
     bClassificationId = bClass.id;
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     // TaxClassification is a soft-delete model (deleteMany only archives), so remove this suite's own
@@ -66,7 +62,7 @@ describe('Tax management (e2e)', () => {
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await prisma.company.deleteMany({ where: { id: companyBId } });
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   let classId = '';
   it('OWNER creates a taxable classification', async () => {

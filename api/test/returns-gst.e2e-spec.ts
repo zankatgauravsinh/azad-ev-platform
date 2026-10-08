@@ -1,10 +1,9 @@
 import { INestApplication, Logger } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { TaxEngineService } from '../src/modules/tax/tax-engine.service';
 import { SaleTaxService } from '../src/modules/tax/sale-tax.service';
 
@@ -125,10 +124,7 @@ describe('Vehicle return GST reversal (e2e)', () => {
   };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     engine = app.get(TaxEngineService);
     saleTax = app.get(SaleTaxService);
@@ -188,7 +184,7 @@ describe('Vehicle return GST reversal (e2e)', () => {
       }
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   // ───────────────────────── GST sales ─────────────────────────
   describe('a sale invoiced under GST', () => {

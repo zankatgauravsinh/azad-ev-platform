@@ -1,11 +1,10 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 const PNG_1PX = Buffer.from(
@@ -35,10 +34,7 @@ describe('Customers (e2e)', () => {
   };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
     const hash = await bcrypt.hash('Test@12345', 12);
@@ -62,13 +58,13 @@ describe('Customers (e2e)', () => {
     });
     salesToken = await login(sales!.email, 'Test@12345');
     techToken = await login(tech!.email, 'Test@12345');
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     if (customerId) await prisma.customer.deleteMany({ where: { id: customerId } });
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   const owner = (): string => `Bearer ${ownerToken}`;
 

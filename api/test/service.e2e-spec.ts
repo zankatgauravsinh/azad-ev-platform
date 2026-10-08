@@ -1,14 +1,15 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { seedRbac } from '../src/common/rbac/rbac-seed';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TEST_PASSWORD, TestCompany } from './support/e2e-company';
 
 describe('Service & after-sales (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  // Runs in its own throwaway company (see support/e2e-company).
+  let co: TestCompany;
   let ownerToken: string;
   let techToken: string;
   let salesToken: string;
@@ -19,9 +20,6 @@ describe('Service & after-sales (e2e)', () => {
   let sparePartId: string;
   let jobCode: string;
   const stamp = Date.now().toString().slice(-8);
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
-  const createdUserIds: string[] = [];
   const http = () => request(app.getHttpServer());
   const auth = (t: string): string => `Bearer ${t}`;
   const login = async (mail: string, pass: string): Promise<string> =>
@@ -30,45 +28,33 @@ describe('Service & after-sales (e2e)', () => {
     http().post(`/api/v1/service/jobs/${id}/status`).set('Authorization', auth(ownerToken)).send({ status });
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
-    const hash = await bcrypt.hash('Test@12345', 12);
-    for (const role of ['TECHNICIAN', 'SALES_EXECUTIVE'] as const) {
-      const u = await prisma.user.create({ data: { companyId: owner.companyId, name: `Svc ${role}`, email: `svc.${role.toLowerCase()}.${stamp}@e2e.test`, role, passwordHash: hash } });
-      createdUserIds.push(u.id);
-    }
-    // Backfill roleId so permission-migrated service-jobs endpoints resolve as in production.
-    await seedRbac(prisma);
-    const [tech, sales] = await prisma.user.findMany({ where: { id: { in: createdUserIds } }, orderBy: { role: 'asc' } });
-    techId = sales!.role === 'TECHNICIAN' ? sales!.id : tech!.id;
-    const techUser = [tech, sales].find((u) => u!.role === 'TECHNICIAN')!;
-    const salesUser = [tech, sales].find((u) => u!.role === 'SALES_EXECUTIVE')!;
-    techId = techUser.id;
-    ownerToken = await login(email, password);
-    techToken = await login(techUser.email, 'Test@12345');
-    salesToken = await login(salesUser.email, 'Test@12345');
+    co = await createTestCompany(app, 'Svc', { roles: ['TECHNICIAN', 'SALES_EXECUTIVE'] });
+    techId = co.user('TECHNICIAN').id;
+    ownerToken = co.user().token;
+    techToken = co.user('TECHNICIAN').token;
+    salesToken = co.user('SALES_EXECUTIVE').token;
 
-    const models = await http().get('/api/v1/inventory/models').set('Authorization', auth(ownerToken)).expect(200);
     const unit = await http().post('/api/v1/inventory/units').set('Authorization', auth(ownerToken))
-      .send({ modelId: models.body[0].id, variant: `SVC-${stamp}`, colour: 'Black', vin: `SVC${stamp}`, motorNumber: `SM${stamp}`, batteryNumber: `SB${stamp}` }).expect(201);
+      .send({ modelId: co.modelId, variant: `SVC-${stamp}`, colour: 'Black', vin: `SVC${stamp}`, motorNumber: `SM${stamp}`, batteryNumber: `SB${stamp}` }).expect(201);
     unitId = unit.body.id;
     const customer = await http().post('/api/v1/customers').set('Authorization', auth(ownerToken)).send({ name: 'Svc Customer', phone: `96${stamp}` }).expect(201);
     customerId = customer.body.id;
-    // Use a dedicated part (not shared seed stock) so repeated runs stay idempotent.
+    // A dedicated part with known stock.
     const part = await http().post('/api/v1/service/spare-parts').set('Authorization', auth(ownerToken))
       .send({ name: 'Svc Test Part', sku: `SVCP-${stamp}`, quantity: 100, cost: 1000, sellingPrice: 1500, minStock: 5 }).expect(201);
     sparePartId = part.body.id;
-  });
+    // The company's own labour catalogue entry (a new company starts with an empty catalogue).
+    await http().post('/api/v1/service/labour-items').set('Authorization', auth(ownerToken))
+      .send({ name: 'Svc Test Labour', defaultCost: 45000, durationMins: 30 }).expect(201);
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await purgeTestCompany(prisma, co?.id);
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('rejects unauthenticated access', async () => {
     await http().get('/api/v1/service/jobs').expect(401);
@@ -166,9 +152,8 @@ describe('Service & after-sales (e2e)', () => {
   });
 
   it('technician only sees their own jobs', async () => {
-    const otherTech = await prisma.user.create({ data: { companyId: (await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } })).companyId, name: 'Other Tech', email: `other.tech.${stamp}@e2e.test`, role: 'TECHNICIAN', passwordHash: await bcrypt.hash('Test@12345', 12) } });
-    createdUserIds.push(otherTech.id);
-    const otherToken = await login(otherTech.email, 'Test@12345');
+    const otherTech = await prisma.user.create({ data: { companyId: co.id, name: 'Other Tech', email: `other.tech.${stamp}@e2e.test`, role: 'TECHNICIAN', passwordHash: await bcrypt.hash(TEST_PASSWORD, 12) } });
+    const otherToken = await login(otherTech.email, TEST_PASSWORD);
     await http().get(`/api/v1/service/jobs/${jobId}`).set('Authorization', auth(otherToken)).expect(403);
     const mine = await http().get('/api/v1/service/jobs').set('Authorization', auth(techToken)).expect(200);
     expect(mine.body.data.every((j: { technician: { id: string } | null }) => j.technician?.id === techId)).toBe(true);

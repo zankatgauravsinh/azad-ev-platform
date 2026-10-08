@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 describe('Company settings (e2e)', () => {
@@ -22,10 +21,7 @@ describe('Company settings (e2e)', () => {
     (await http().post('/api/v1/auth/login').send({ email: mail, password: pass }).expect(200)).body.accessToken;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
     const owner = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
@@ -42,12 +38,12 @@ describe('Company settings (e2e)', () => {
     ownerToken = await login(email, password);
     managerToken = await login(manager!.email, 'Test@12345');
     salesToken = await login(sales!.email, 'Test@12345');
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('rejects unauthenticated access', async () => {
     await http().get('/api/v1/settings/company').expect(401);

@@ -1,10 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { seedRbac } from '../src/common/rbac/rbac-seed';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 function binaryParser(res: request.Response, cb: (err: Error | null, body: Buffer) => void): void {
   const chunks: Buffer[] = [];
@@ -19,19 +17,15 @@ function binaryParser(res: request.Response, cb: (err: Error | null, body: Buffe
 describe('Vehicle Returns (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  // Runs in its own throwaway company (see support/e2e-company).
+  let co: TestCompany;
   let ownerToken = '';
   let managerToken = '';
   let salesToken = '';
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
   const stamp = Date.now().toString().slice(-8);
   const http = () => request(app.getHttpServer());
   const auth = (t: string): string => `Bearer ${t}`;
-  const login = async (e: string, p: string): Promise<string> =>
-    (await http().post('/api/v1/auth/login').send({ email: e, password: p }).expect(200)).body.accessToken;
 
-  const createdUserIds: string[] = [];
-  const saleIds: string[] = [];
   let modelId = '';
 
   let saleSeq = 0;
@@ -53,7 +47,6 @@ describe('Vehicle Returns (e2e)', () => {
     await http().post(`/api/v1/bookings/${bId}/invoice`).set('Authorization', auth(ownerToken)).send({}).expect(201);
     await http().post(`/api/v1/bookings/${bId}/deliver`).set('Authorization', auth(ownerToken)).send({}).expect(201);
     const detail = await http().get(`/api/v1/bookings/${bId}`).set('Authorization', auth(ownerToken)).expect(200);
-    saleIds.push(detail.body.sale.id);
     return { saleId: detail.body.sale.id, bookingId: bId, unitId: unit.body.id, customerId: customer.body.id };
   };
 
@@ -70,45 +63,24 @@ describe('Vehicle Returns (e2e)', () => {
   let saleC = '';
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
-    const hash = await bcrypt.hash('Test@12345', 12);
-    const manager = await prisma.user.create({ data: { companyId: owner.companyId, name: 'Ret Mgr', email: `ret.mgr.${stamp}@e2e.test`, role: 'MANAGER', passwordHash: hash } });
-    const sales = await prisma.user.create({ data: { companyId: owner.companyId, name: 'Ret Sales', email: `ret.sales.${stamp}@e2e.test`, role: 'SALES_EXECUTIVE', passwordHash: hash } });
-    createdUserIds.push(manager.id, sales.id);
-
-    // Backfill roleId so permission-migrated returns endpoints resolve as in production.
-    await seedRbac(prisma);
-    ownerToken = await login(email, password);
-    managerToken = await login(manager.email, 'Test@12345');
-    salesToken = await login(sales.email, 'Test@12345');
-
-    const models = await http().get('/api/v1/inventory/models').set('Authorization', auth(ownerToken)).expect(200);
-    modelId = models.body[0].id;
+    co = await createTestCompany(app, 'Ret', { roles: ['MANAGER', 'SALES_EXECUTIVE'] });
+    ownerToken = co.user().token;
+    managerToken = co.user('MANAGER').token;
+    salesToken = co.user('SALES_EXECUTIVE').token;
+    modelId = co.modelId;
 
     saleA = (await makeDeliveredSale(`A${stamp}`)).saleId;
     saleB = (await makeDeliveredSale(`B${stamp}`)).saleId;
     saleC = (await makeDeliveredSale(`C${stamp}`)).saleId;
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    try {
-      for (const sid of saleIds) {
-        await prisma.$executeRaw`DELETE FROM "Refund" WHERE "saleId" = ${sid}`;
-        await prisma.$executeRaw`DELETE FROM "CreditNote" WHERE "saleId" = ${sid}`;
-        await prisma.$executeRaw`DELETE FROM "VehicleReturn" WHERE "saleId" = ${sid}`;
-      }
-    } catch {
-      /* best-effort */
-    }
-    if (createdUserIds.length) await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await purgeTestCompany(prisma, co?.id);
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   it('blocks unauthenticated access', async () => {
     await http().get('/api/v1/returns').expect(401);
@@ -440,7 +412,7 @@ describe('Vehicle Returns (e2e)', () => {
       sB = await makeDeliveredSale(`RB${stamp}`, false);
       const rb = await makeApprovedReturn(sB.saleId);
       bDto = (await http().post(`/api/v1/returns/${rb}/complete`).set('Authorization', auth(ownerToken)).send({ disposition: 'SCRAP', deductionAmount: 300000, deductionReason: 'damage', refundMethod: 'CASH' }).expect(201)).body;
-    });
+    }, E2E_HOOK_TIMEOUT);
 
     it('reports a completed return with financials straight from the records (no recompute, no dup rows)', async () => {
       const r = await report(ownerToken, `?saleId=${sA.saleId}`);
@@ -525,9 +497,9 @@ describe('Vehicle Returns (e2e)', () => {
     });
 
     it('accessory-restock seam: completing returns changes no accessory stock/records', async () => {
-      // The seam is a no-op; the accessory redesign is untouched, so no movements exist at all.
-      expect(await prisma.accessoryStockMovement.count()).toBe(0);
-      expect(await prisma.accessoryPurchase.count()).toBe(0);
+      // The seam is a no-op: this company completed returns and has no accessory movements or purchases.
+      expect(await prisma.accessoryStockMovement.count({ where: { companyId: co.id } })).toBe(0);
+      expect(await prisma.accessoryPurchase.count({ where: { companyId: co.id } })).toBe(0);
     });
   });
 });

@@ -1,10 +1,9 @@
 import { INestApplication, Logger } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { TaxEngineService } from '../src/modules/tax/tax-engine.service';
 import { SaleTaxService } from '../src/modules/tax/sale-tax.service';
 import { readPdfText, type PdfText } from './support/pdf-text';
@@ -97,10 +96,7 @@ describe('GST invoice PDF (e2e)', () => {
   const taxText = (text: PdfText): string[] => text.strings.filter((s) => !/^(Showroom|Legal|Customer|Renamed Customer|intra house|inter house|Una)/.test(s));
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    app.setGlobalPrefix('api/v1');
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     engine = app.get(TaxEngineService);
     saleTax = app.get(SaleTaxService);
@@ -159,7 +155,7 @@ describe('GST invoice PDF (e2e)', () => {
       }
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   // ───────────────────────── GST invoice ─────────────────────────
   describe('a sale invoiced under GST', () => {
@@ -341,7 +337,7 @@ describe('GST invoice PDF (e2e)', () => {
       sale = await invoiced(G, { exShowroom: 1_000_000, extendedWarranty: 118_000, rto: 85_000, accessories: [{ accessoryId: acc.a, qty: 1, unitPrice: 59_000 }] });
       original = (await pdf(G.token, sale.bookingId)).text.strings;
       expect(original).toEqual(expect.arrayContaining(['GSTIN: TEST-GSTIN-g', 'HSN: TEST-VEHICLE', '5.00%', '9,523.81', '238.10', 'HSN: TEST-ACCESSORY-A', '18.00%', 'SAC: TEST-WARRANTY', 'Non-taxable', '₹12,620.00']));
-    });
+    }, E2E_HOOK_TIMEOUT);
 
     it('rates, classifications, mappings, product classifications and GST settings all change — the invoice does not', async () => {
       await prisma.taxRate.updateMany({ where: { companyId: G.id }, data: { ratePercent: new Prisma.Decimal('12.00') } });

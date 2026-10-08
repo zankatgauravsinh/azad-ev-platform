@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { TenantContext } from '../src/tenant/tenant-context.service';
 import { TaxEngineService } from '../src/modules/tax/tax-engine.service';
 import { TAX_ENGINE_VERSION, type TaxCalculationRequest } from '../src/modules/tax/tax.types';
@@ -41,9 +40,7 @@ describe('Tax engine (integration)', () => {
   };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
-    await app.init();
+    app = await createE2eApp();
     prisma = app.get(PrismaService);
     tenant = app.get(TenantContext);
     engine = app.get(TaxEngineService);
@@ -84,7 +81,7 @@ describe('Tax engine (integration)', () => {
     await makeRate(coOff, ids.offVeh, '5.00', '2026-01-01', null);
     ids.nsVeh = await makeClass(coNoSettings, 'NoSettings vehicle');
     await makeRate(coNoSettings, ids.nsVeh, '5.00', '2026-01-01', null);
-  }, 30000);
+  }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
     const companies = [coX, coY, coOff, coNoSettings].filter(Boolean);
@@ -95,7 +92,7 @@ describe('Tax engine (integration)', () => {
       await prisma.company.deleteMany({ where: { id: { in: companies } } });
     }
     await app.close();
-  });
+  }, E2E_HOOK_TIMEOUT);
 
   const mixed = (asOf: string, supplyType: 'INTRA' | 'INTER'): TaxCalculationRequest => ({
     asOf, supplyType,
