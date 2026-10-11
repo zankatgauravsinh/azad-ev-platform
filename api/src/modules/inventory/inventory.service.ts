@@ -4,19 +4,18 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { parse } from 'csv-parse/sync';
-import { ZodError } from 'zod';
 import {
   ActivityAction,
   Role,
   UnitStatus,
-  UNIT_STATUSES,
   buildPageMeta,
   canTransitionUnit,
   csvUnitRowSchema,
+  type CsvUnitRow,
   type CreateUnitInput,
   type CsvImportResult,
   type ChangeUnitStatusInput,
@@ -34,6 +33,7 @@ import { rupeesToPaise, formatInr } from '../../common/utils/money';
 import { InventoryRepository } from './inventory.repository';
 import { CatalogRepository, type VariantRow } from './catalog/catalog.repository';
 import { TenantContext } from '../../tenant/tenant-context.service';
+import { csvParseMessage, CsvRowError, csvRowMessage, csvStatus, parseCsvDate, readCsvRows, resolveCsvVariant, type Catalogue, type CsvSourceRow } from './csv-import';
 
 const LOW_STOCK_THRESHOLD = 2;
 // High enough to export a whole dealership's stock in one file; a single
@@ -131,6 +131,8 @@ const identityRef = (v: { id: string; name: string; colour: string; model: { id:
 
 @Injectable()
 export class InventoryService {
+  private readonly logger = new Logger(InventoryService.name);
+
   constructor(
     private readonly repo: InventoryRepository,
     private readonly activityLog: ActivityLogService,
@@ -531,66 +533,69 @@ export class InventoryService {
   }
 
   // ── Bulk CSV import ────────────────────────────────────
+  /**
+   * M4D.1 — creates AVAILABLE units from a CSV, one transaction per row (a failed row leaves no trace;
+   * the other rows still import). Each row must name an existing, active model and variant of the
+   * company: nothing is ever created in the catalogue (see csv-import.ts for the matching rules). A blank
+   * selling price takes the variant's list price. Errors carry the row's source line.
+   */
   async importCsv(file: UploadedFile, userId: string): Promise<CsvImportResult> {
-    let records: Record<string, string>[];
+    const companyId = this.tenant.requireCompanyId();
+    let rows: CsvSourceRow[];
     try {
-      records = parse(file.buffer, {
-        columns: (header: string[]) => header.map((h) => this.normalizeHeader(h)),
-        skip_empty_lines: true,
-        trim: true,
-      }) as Record<string, string>[];
-    } catch {
-      throw new BadRequestException('Could not parse the CSV file');
+      rows = readCsvRows(file.buffer, (h) => this.normalizeHeader(h));
+    } catch (error) {
+      throw new BadRequestException(csvParseMessage(error));
     }
 
+    // The company's whole catalogue, active and inactive (inactive is reported as such), read once.
+    const [models, variants] = await Promise.all([
+      this.catalog.listModels(companyId, { status: 'all' }),
+      this.catalog.listVariants(companyId, { status: 'all' }),
+    ]);
+    const catalogue: Catalogue = { models, variants };
+
     const result: CsvImportResult = { created: 0, failed: 0, errors: [] };
-    for (let i = 0; i < records.length; i += 1) {
-      const rowNumber = i + 2; // account for header row
+    for (const { line, record } of rows) {
+      let row: CsvUnitRow | null = null;
       try {
-        const row = csvUnitRowSchema.parse(records[i]);
-        const status = this.normalizeStatus(row.status);
+        row = csvUnitRowSchema.parse(record);
+        const status = csvStatus(row.status);
+        const purchaseDate = row.purchaseDate ? parseCsvDate(row.purchaseDate) : null;
+        const match = resolveCsvVariant(catalogue, row);
+        const parsed = row;
         await this.repo.transaction(async (tx) => {
-          const model = await this.resolveModelByName(tx, row.model);
-          const variant = await this.resolveVariant(
-            tx,
-            model.id,
-            row.variant,
-            row.colour,
-            undefined,
-            rupeesToPaise(row.sellingPrice),
-          );
+          // Re-checked when the unit is written — the same rule as Add Scooter (company's, both active).
+          const found = await this.catalog.findActiveVariantForUnit(companyId, match.id, tx);
+          if (!('variant' in found)) {
+            throw new CsvRowError(found.error === 'NOT_FOUND' ? 'The variant is no longer in the catalogue.' : 'The model or variant was deactivated during the import — activate it under Inventory → Models.');
+          }
           const unit = await this.repo.createUnit(
             {
-              variant: { connect: { id: variant.id } },
-              vin: row.vin,
-              motorNumber: row.motorNumber,
-              batteryNumber: row.batteryNumber,
+              variant: { connect: { id: found.variant.id } },
+              vin: parsed.vin,
+              motorNumber: parsed.motorNumber,
+              batteryNumber: parsed.batteryNumber,
               status,
-              purchaseDate: row.purchaseDate ? new Date(row.purchaseDate) : null,
-              purchaseCost: rupeesToPaise(row.purchaseCost),
-              sellingPrice: rupeesToPaise(row.sellingPrice),
-              supplier: row.supplier ?? null,
-              location: row.location ?? null,
+              purchaseDate,
+              purchaseCost: rupeesToPaise(parsed.purchaseCost),
+              // Blank → the variant's list price. The list price itself is never changed by an import.
+              sellingPrice: parsed.sellingPrice !== undefined ? rupeesToPaise(parsed.sellingPrice) : found.variant.exShowroomPrice,
+              supplier: parsed.supplier || null,
+              location: parsed.location || null,
               createdById: userId,
               updatedById: userId,
             },
             tx,
           );
-          await this.repo.addEvent(
-            {
-              unitId: unit.id,
-              fromStatus: null,
-              toStatus: status,
-              note: 'Imported via CSV',
-              createdById: userId,
-            },
-            tx,
-          );
+          await this.repo.addEvent({ unitId: unit.id, fromStatus: null, toStatus: status, note: 'Imported via CSV', createdById: userId }, tx);
         });
         result.created += 1;
       } catch (error) {
+        const { message, unexpected } = csvRowMessage(error, row);
+        if (unexpected) this.logger.error(`CSV import: unexpected error on line ${line}`, error instanceof Error ? error.stack : String(error));
         result.failed += 1;
-        result.errors.push({ row: rowNumber, message: this.humanizeError(error) });
+        result.errors.push({ row: line, message });
       }
     }
 
@@ -754,9 +759,9 @@ export class InventoryService {
   }
 
   // ── Models (for the add form) ──────────────────────────
-  // Models and variants are managed by the CatalogService / CatalogController. The IMPLICIT creation
-  // below (resolveVariant on unit create / update, resolveModelByName on CSV import — brand defaults
-  // to 'Comptech' there) is unchanged in M2 and is replaced by curated selection in M4.
+  // Models and variants are managed by the CatalogService / CatalogController. The remaining IMPLICIT
+  // creation below (resolveVariant on a legacy free-text unit create / update) is retired in M4E; the CSV
+  // import no longer creates catalogue entries (M4D.1).
 
   // ── Helpers ────────────────────────────────────────────
   private async getUnitOrThrow(id: string) {
@@ -811,22 +816,11 @@ export class InventoryService {
     );
   }
 
-  private async resolveModelByName(tx: Prisma.TransactionClient, name: string) {
-    const existing = await this.repo.findModelByName(name);
-    if (existing) return existing;
-    return this.repo.createModel({ name, brand: 'Comptech' }, tx);
-  }
-
-  private normalizeStatus(raw: string | undefined): UnitStatus {
-    if (!raw) return UnitStatus.AVAILABLE;
-    const upper = raw.toUpperCase().replace(/\s+/g, '_');
-    if ((UNIT_STATUSES as string[]).includes(upper)) return upper as UnitStatus;
-    throw new BadRequestException(`Unknown status "${raw}"`);
-  }
-
   private normalizeHeader(header: string): string {
     const key = header.toLowerCase().replace(/[\s_-]+/g, '');
     const map: Record<string, string> = {
+      brand: 'brand',
+      make: 'brand',
       model: 'model',
       variant: 'variant',
       colour: 'colour',
@@ -848,21 +842,6 @@ export class InventoryService {
       status: 'status',
     };
     return map[key] ?? key;
-  }
-
-  private humanizeError(error: unknown): string {
-    if (error instanceof ZodError) {
-      return error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
-    }
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      const target = (error.meta?.target as string[] | undefined)?.join(', ');
-      return `Duplicate ${target ?? 'value'}`;
-    }
-    if (error instanceof BadRequestException) {
-      const res = error.getResponse();
-      return typeof res === 'string' ? res : (res as { message?: string }).message ?? 'Invalid row';
-    }
-    return error instanceof Error ? error.message : 'Invalid row';
   }
 
   private buildWhere(query: ListUnitsQuery): Prisma.InventoryUnitWhereInput {

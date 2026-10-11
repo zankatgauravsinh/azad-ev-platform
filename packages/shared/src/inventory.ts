@@ -113,8 +113,16 @@ export const listUnitsQuerySchema = paginationQuerySchema.extend({
 });
 export type ListUnitsQuery = z.infer<typeof listUnitsQuerySchema>;
 
-/** One row of a bulk CSV import (values arrive as strings; rupees, not paise). */
+/** A blank CSV cell is "not given" (not zero). */
+const blankAsMissing = (v: unknown): unknown => (typeof v === 'string' && v.trim() === '' ? undefined : v);
+
+/**
+ * One row of a bulk CSV import (values arrive as strings; rupees, not paise). Brand is optional and
+ * narrows the model match. A blank selling price means "use the variant's list price". The purchase
+ * date and status are checked by the import itself (strict formats, AVAILABLE only).
+ */
 export const csvUnitRowSchema = z.object({
+  brand: z.string().trim().optional(),
   model: z.string().trim().min(1),
   variant: z.string().trim().min(1),
   colour: z.string().trim().min(1),
@@ -127,7 +135,7 @@ export const csvUnitRowSchema = z.object({
     .optional()
     .transform((v) => (v ? v : undefined)),
   purchaseCost: z.coerce.number().min(0).default(0),
-  sellingPrice: z.coerce.number().min(0).default(0),
+  sellingPrice: z.preprocess(blankAsMissing, z.coerce.number().min(0).optional()),
   supplier: z.string().trim().optional(),
   location: z.string().trim().optional(),
   status: z

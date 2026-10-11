@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { identificationCorrectionSchema } from '@azad/shared';
 import { InventoryService, unitIdentityPolicy } from './inventory.service';
 import type { InventoryRepository } from './inventory.repository';
@@ -47,7 +47,7 @@ const CHANGED = 'This vehicle was changed by someone else — reload and try aga
 describe('InventoryService', () => {
   let repo: RepoMock;
   let activityLog: jest.Mocked<Pick<ActivityLogService, 'record' | 'recordInTransaction'>>;
-  let catalog: { findActiveVariantForUnit: jest.Mock };
+  let catalog: { findActiveVariantForUnit: jest.Mock; listModels: jest.Mock; listVariants: jest.Mock };
   let service: InventoryService;
   const curated = { ...variant, id: 'variant-curated', colour: 'Red', exShowroomPrice: 12_500_000n, isActive: true };
 
@@ -70,7 +70,7 @@ describe('InventoryService', () => {
       findDetail: jest.fn(),
     } as never;
     activityLog = { record: jest.fn().mockResolvedValue(undefined), recordInTransaction: jest.fn().mockResolvedValue(undefined) } as never;
-    catalog = { findActiveVariantForUnit: jest.fn().mockResolvedValue({ variant: curated }) };
+    catalog = { findActiveVariantForUnit: jest.fn().mockResolvedValue({ variant: curated }), listModels: jest.fn().mockResolvedValue([]), listVariants: jest.fn().mockResolvedValue([]) };
 
     service = new InventoryService(
       repo as unknown as InventoryRepository,
@@ -625,6 +625,72 @@ describe('InventoryService', () => {
       const detail = await service.getById('unit-1');
       expect(detail.identity).toEqual({ committed: true, catalogueEditable: false, identificationEditable: false, correctionEligible: true });
       expect(repo.hasCommittedHistory).toHaveBeenCalledWith('unit-1');
+    });
+  });
+
+  describe('CSV import (M4D.1)', () => {
+    const TX = { tx: true };
+    const solo = { id: 'model-solo', brand: 'GAMMA', name: 'Solo', isActive: true };
+    const proTeal = { id: 'variant-pro', modelId: 'model-solo', name: 'Pro', colour: 'Teal', isActive: true, exShowroomPrice: 12_500_000n, model: { id: 'model-solo', brand: 'GAMMA', name: 'Solo' } };
+    const file = (csv: string) => ({ buffer: Buffer.from(csv, 'utf8'), originalname: 'units.csv', mimetype: 'text/csv' });
+    const HEAD = 'Model,Variant,Colour,VIN,Motor Number,Battery Number,Purchase Date,Purchase Cost,Selling Price,Supplier,Status\n';
+    beforeEach(() => {
+      catalog.listModels.mockResolvedValue([solo]);
+      catalog.listVariants.mockResolvedValue([proTeal]);
+      catalog.findActiveVariantForUnit.mockResolvedValue({ variant: proTeal });
+      repo.transaction.mockImplementation(((fn: (tx: unknown) => unknown) => fn(TX)) as never);
+      repo.createUnit.mockResolvedValue({ id: 'new-unit' } as never);
+    });
+
+    it('reads the whole catalogue of the company (explicitly scoped) once, and never creates a model or variant', async () => {
+      await service.importCsv(file(`${HEAD}solo,PRO,teal,vin1,m1,b1,,1000,,,\n`), 'user-1');
+      expect(catalog.listModels).toHaveBeenCalledWith('company-1', { status: 'all' });
+      expect(catalog.listVariants).toHaveBeenCalledWith('company-1', { status: 'all' });
+      expect(catalog.findActiveVariantForUnit).toHaveBeenCalledWith('company-1', 'variant-pro', TX);
+      expect(repo.createVariant).not.toHaveBeenCalled();
+      expect(repo.findModelById).not.toHaveBeenCalled();
+    });
+
+    it('creates an AVAILABLE unit on the matched variant; a blank selling price takes the list price; an explicit one (even 0) is kept', async () => {
+      const res = await service.importCsv(file(`${HEAD}Solo,Pro,Teal,vin1,m1,b1,01/06/2026,1000,,Depot,\nSolo,Pro,Teal,vin2,m2,b2,2026-06-02,0,0,,available\nSolo,Pro,Teal,vin3,m3,b3,,,99000.5,,\n`), 'user-1');
+      expect(res).toEqual({ created: 3, failed: 0, errors: [] });
+      const [first, second, third] = repo.createUnit.mock.calls.map((c) => c[0] as unknown as Record<string, unknown>);
+      expect(first).toMatchObject({ variant: { connect: { id: 'variant-pro' } }, vin: 'VIN1', status: 'AVAILABLE', sellingPrice: 12_500_000n, purchaseCost: 100_000n, supplier: 'Depot', purchaseDate: new Date('2026-06-01T00:00:00.000Z') });
+      expect(second).toMatchObject({ sellingPrice: 0n, purchaseCost: 0n, supplier: null, purchaseDate: new Date('2026-06-02T00:00:00.000Z') });
+      expect(third).toMatchObject({ sellingPrice: 9_900_050n, purchaseDate: null });
+      expect(repo.addEvent).toHaveBeenCalledWith(expect.objectContaining({ unitId: 'new-unit', fromStatus: null, toStatus: 'AVAILABLE', note: 'Imported via CSV' }), TX);
+    });
+
+    it('a failed row is reported with its source line (blank lines counted) and writes nothing; the other rows still import', async () => {
+      const csv = `${HEAD}Solo,Pro,Teal,vin1,m1,b1,,,,,\n\nNope,Pro,Teal,vin2,m2,b2,,,,,\nSolo,Pro,Teal,vin3,m3,b3,,,,,BOOKED\nSolo,Pro,Teal,vin4,m4,b4,31/02/2026,,,,\nSolo,Pro,Teal,vin5,m5,b5,,,,,\n`;
+      const res = await service.importCsv(file(csv), 'user-1');
+      expect(res.created).toBe(2);
+      expect(res.errors.map((e) => e.row)).toEqual([4, 5, 6]);
+      expect(res.errors[0]!.message).toContain('Model "Nope" was not found');
+      expect(res.errors[1]!.message).toContain('Status "BOOKED" cannot be imported');
+      expect(res.errors[2]!.message).toContain('is not a real date');
+      expect(repo.createUnit).toHaveBeenCalledTimes(2);
+    });
+
+    it('the variant is re-checked when the unit is written: deactivated meanwhile → a row error, no unit', async () => {
+      catalog.findActiveVariantForUnit.mockResolvedValue({ error: 'VARIANT_INACTIVE' });
+      const res = await service.importCsv(file(`${HEAD}Solo,Pro,Teal,vin1,m1,b1,,,,,\n`), 'user-1');
+      expect(res.errors).toEqual([{ row: 2, message: 'The model or variant was deactivated during the import — activate it under Inventory → Models.' }]);
+      expect(repo.createUnit).not.toHaveBeenCalled();
+    });
+
+    it('an unexpected error is logged server-side and shown generically', async () => {
+      const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      repo.createUnit.mockRejectedValue(new Error('connection reset by database internals'));
+      const res = await service.importCsv(file(`${HEAD}Solo,Pro,Teal,vin1,m1,b1,,,,,\n`), 'user-1');
+      expect(res.errors[0]!.message).toContain('unexpected error');
+      expect(res.errors[0]!.message).not.toContain('internals');
+      expect(logged).toHaveBeenCalledWith(expect.stringContaining('line 2'), expect.stringContaining('internals'));
+      logged.mockRestore();
+    });
+
+    it('an unreadable file is a 400 naming the line', async () => {
+      await expect(service.importCsv(file(`${HEAD}Solo,"open,Teal\n`), 'user-1')).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
