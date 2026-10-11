@@ -21,6 +21,8 @@ type RepoMock = jest.Mocked<
     | 'softDelete'
     | 'addEvent'
     | 'transaction'
+    | 'lockUnit'
+    | 'hasCommittedHistory'
   >
 >;
 
@@ -35,6 +37,11 @@ const variant = {
   model,
 };
 const unit = { id: 'unit-1', vin: 'VIN123', status: 'AVAILABLE', variantId: 'variant-1', variant };
+
+const NOT_ELIGIBLE = 'Identification correction applies only to delivered, in-service or returned vehicles, or to vehicles with a sale, warranty or AMC history — edit this vehicle instead.';
+const HISTORY_IDENTIFICATION = 'Vehicle identification cannot be changed once the vehicle has a sale, warranty or AMC history — use the owner identification correction.';
+const HISTORY_VARIANT = 'Vehicle model/variant cannot be changed once the vehicle has a sale, warranty or AMC history.';
+const CHANGED = 'This vehicle was changed by someone else — reload and try again.';
 
 describe('InventoryService', () => {
   let repo: RepoMock;
@@ -56,6 +63,9 @@ describe('InventoryService', () => {
       addEvent: jest.fn().mockResolvedValue({}),
       // run the callback immediately with a dummy tx client
       transaction: jest.fn((fn: (tx: unknown) => unknown) => fn({})),
+      // By default the locked row is the unit as read, and the vehicle has no committed history.
+      lockUnit: jest.fn(() => repo.findByIdWithVariant('unit-1')),
+      hasCommittedHistory: jest.fn().mockResolvedValue(false),
     } as never;
     activityLog = { record: jest.fn().mockResolvedValue(undefined), recordInTransaction: jest.fn().mockResolvedValue(undefined) } as never;
     catalog = { findActiveVariantForUnit: jest.fn().mockResolvedValue({ variant: curated }) };
@@ -335,10 +345,10 @@ describe('InventoryService', () => {
       nothingWritten();
     });
 
-    it.each(['AVAILABLE', 'RESERVED', 'BOOKED'])('%s is refused (409): the ordinary edit is the path before delivery', async (status) => {
+    it.each(['AVAILABLE', 'RESERVED', 'BOOKED'])('%s without committed history is refused (409): the ordinary edit is the path', async (status) => {
       at(status);
       await expect(service.correctIdentification('unit-1', correction({ vin: 'NEWVIN' }), OWNER)).rejects.toMatchObject({
-        status: 409, message: 'Identification correction applies only to delivered, in-service or returned vehicles — edit this vehicle instead.',
+        status: 409, message: NOT_ELIGIBLE,
       });
       nothingWritten();
     });
@@ -397,6 +407,140 @@ describe('InventoryService', () => {
     });
   });
 
+  describe('historical commitment (M4B.4)', () => {
+    const TX = { tx: true };
+    const OWNER = { id: 'owner-1', role: 'OWNER' as const };
+    const at = (status: string, committed: boolean) => {
+      repo.findByIdWithVariant.mockResolvedValue({ ...unit, status, motorNumber: 'M1', batteryNumber: 'B1' } as never);
+      repo.hasCommittedHistory.mockResolvedValue(committed);
+    };
+    const nothingWritten = () => {
+      expect(repo.updateUnit).not.toHaveBeenCalled();
+      expect(activityLog.record).not.toHaveBeenCalled();
+      expect(activityLog.recordInTransaction).not.toHaveBeenCalled();
+    };
+    beforeEach(() => {
+      repo.findByVin.mockResolvedValue(null);
+      repo.transaction.mockImplementation(((fn: (tx: unknown) => unknown) => fn(TX)) as never);
+    });
+
+    describe('ordinary edit', () => {
+      it.each(['AVAILABLE', 'RESERVED', 'BOOKED'])('%s with history: VIN / motor / battery changes are refused (409) before anything else, nothing written', async (status) => {
+        at(status, true);
+        await expect(service.update('unit-1', { vin: 'NEWVIN', motorNumber: 'M2', notes: 'x' }, 'user-1')).rejects.toMatchObject({ status: 409, message: HISTORY_IDENTIFICATION });
+        expect(repo.hasCommittedHistory).toHaveBeenCalledWith('unit-1');
+        expect(repo.findByVin).not.toHaveBeenCalled();
+        nothingWritten();
+      });
+
+      it.each(['AVAILABLE', 'RESERVED'])('%s with history: a variant change is refused (409), nothing written', async (status) => {
+        at(status, true);
+        catalog.findActiveVariantForUnit.mockResolvedValue({ variant: { ...variant, id: 'variant-2', colour: 'Red' } });
+        await expect(service.update('unit-1', { variantId: 'variant-2' }, 'user-1')).rejects.toMatchObject({ status: 409, message: HISTORY_VARIANT });
+        expect(repo.lockUnit).toHaveBeenCalledWith('company-1', 'unit-1', TX);
+        expect(repo.hasCommittedHistory).toHaveBeenCalledWith('unit-1', TX);
+        nothingWritten();
+      });
+
+      it('a legacy free-text variant change on a committed unit is refused too (and any variant it created rolls back)', async () => {
+        at('AVAILABLE', true);
+        repo.findVariant.mockResolvedValue(null);
+        repo.createVariant.mockResolvedValue({ ...variant, id: 'variant-lime', colour: 'Lime' } as never);
+        await expect(service.update('unit-1', { variant: 'Standard', colour: 'Lime' }, 'user-1')).rejects.toMatchObject({ status: 409, message: HISTORY_VARIANT });
+        nothingWritten();
+      });
+
+      it('the status rules come first: a delivered unit gets the M4B.2 message without a history query', async () => {
+        at('DELIVERED', true);
+        await expect(service.update('unit-1', { vin: 'NEWVIN' }, 'user-1')).rejects.toMatchObject({ status: 409, message: 'Vehicle identification cannot be changed after delivery.' });
+        expect(repo.hasCommittedHistory).not.toHaveBeenCalled();
+        nothingWritten();
+      });
+
+      it.each(['AVAILABLE', 'RESERVED', 'BOOKED'])('%s without history: identifier changes still work (M4B.2), checked again under the row lock', async (status) => {
+        at(status, false);
+        await service.update('unit-1', { vin: 'NEWVIN' }, 'user-1');
+        expect(repo.lockUnit).toHaveBeenCalledWith('company-1', 'unit-1', TX);
+        expect(repo.hasCommittedHistory).toHaveBeenNthCalledWith(1, 'unit-1');
+        expect(repo.hasCommittedHistory).toHaveBeenNthCalledWith(2, 'unit-1', TX);
+        expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', expect.objectContaining({ vin: 'NEWVIN' }), TX);
+      });
+
+      it('history that appears after the first check (an invoice committed meanwhile) is caught under the lock', async () => {
+        at('BOOKED', false);
+        repo.hasCommittedHistory.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+        await expect(service.update('unit-1', { batteryNumber: 'B2' }, 'user-1')).rejects.toMatchObject({ status: 409, message: HISTORY_IDENTIFICATION });
+        nothingWritten();
+      });
+
+      it('a status that moved on before the lock is caught under the lock (M4B.2 message)', async () => {
+        at('BOOKED', false);
+        repo.lockUnit.mockResolvedValue({ ...unit, status: 'DELIVERED', motorNumber: 'M1', batteryNumber: 'B1' } as never);
+        await expect(service.update('unit-1', { motorNumber: 'M2' }, 'user-1')).rejects.toMatchObject({ status: 409, message: 'Vehicle identification cannot be changed after delivery.' });
+        nothingWritten();
+      });
+
+      it('an identity changed by someone else before the lock stops the request (409, reload)', async () => {
+        at('AVAILABLE', false);
+        repo.lockUnit.mockResolvedValue({ ...unit, vin: 'OTHERVIN', motorNumber: 'M1', batteryNumber: 'B1' } as never);
+        await expect(service.update('unit-1', { motorNumber: 'M2' }, 'user-1')).rejects.toMatchObject({ status: 409, message: CHANGED });
+        nothingWritten();
+      });
+
+      it('non-identity edits on a committed unit are unchanged: no lock, no history query', async () => {
+        at('AVAILABLE', true);
+        await service.update('unit-1', { notes: 'n', location: 'Bay 4', supplier: 'S', sellingPrice: 123, purchaseCost: 100 }, 'user-1');
+        expect(repo.lockUnit).not.toHaveBeenCalled();
+        expect(repo.hasCommittedHistory).not.toHaveBeenCalled();
+        expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', expect.objectContaining({ notes: 'n', location: 'Bay 4', supplier: 'S', sellingPrice: 123n, purchaseCost: 100n }), TX);
+      });
+
+      it('sending the current identity values on a committed unit is not a change and is allowed', async () => {
+        at('AVAILABLE', true);
+        catalog.findActiveVariantForUnit.mockResolvedValue({ variant });
+        await service.update('unit-1', { vin: 'VIN123', motorNumber: 'M1', batteryNumber: 'B1', variantId: 'variant-1', location: 'Bay 5' }, 'user-1');
+        expect(repo.hasCommittedHistory).not.toHaveBeenCalled();
+        expect(repo.updateUnit).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('owner correction', () => {
+      it.each(['AVAILABLE', 'RESERVED', 'BOOKED'])('%s with history: eligible; checked again under the lock; one audit entry', async (status) => {
+        at(status, true);
+        await service.correctIdentification('unit-1', { vin: 'NEWVIN', reason: 'Typo at stock entry' } as never, OWNER);
+        expect(repo.hasCommittedHistory).toHaveBeenNthCalledWith(1, 'unit-1');
+        expect(repo.hasCommittedHistory).toHaveBeenNthCalledWith(2, 'unit-1', TX);
+        expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', { updatedById: 'owner-1', vin: 'NEWVIN' }, TX);
+        expect(activityLog.recordInTransaction).toHaveBeenCalledTimes(1);
+        expect(activityLog.recordInTransaction).toHaveBeenCalledWith(expect.objectContaining({
+          metadata: { identificationCorrection: { reason: 'Typo at stock entry', changes: [{ field: 'vin', from: 'VIN123', to: 'NEWVIN' }] } },
+        }), TX);
+      });
+
+      it.each(['DELIVERED', 'IN_SERVICE', 'RETURNED'])('%s: eligible by status, with or without history — no history query', async (status) => {
+        at(status, false);
+        await service.correctIdentification('unit-1', { batteryNumber: 'B2', reason: 'Typo at stock entry' } as never, OWNER);
+        expect(repo.hasCommittedHistory).not.toHaveBeenCalled();
+        expect(repo.lockUnit).toHaveBeenCalledWith('company-1', 'unit-1', TX);
+        expect(activityLog.recordInTransaction).toHaveBeenCalledTimes(1);
+      });
+
+      it('a never-committed IN_SERVICE unit put back to AVAILABLE before the lock is no longer eligible', async () => {
+        at('IN_SERVICE', false);
+        repo.lockUnit.mockResolvedValue({ ...unit, status: 'AVAILABLE', motorNumber: 'M1', batteryNumber: 'B1' } as never);
+        await expect(service.correctIdentification('unit-1', { vin: 'NEWVIN', reason: 'Typo at stock entry' } as never, OWNER)).rejects.toMatchObject({ status: 409, message: NOT_ELIGIBLE });
+        nothingWritten();
+      });
+
+      it('an identity changed by someone else before the lock stops the correction (409, reload)', async () => {
+        at('DELIVERED', false);
+        repo.lockUnit.mockResolvedValue({ ...unit, status: 'DELIVERED', motorNumber: 'OTHER', batteryNumber: 'B1' } as never);
+        await expect(service.correctIdentification('unit-1', { vin: 'NEWVIN', reason: 'Typo at stock entry' } as never, OWNER)).rejects.toMatchObject({ status: 409, message: CHANGED });
+        nothingWritten();
+      });
+    });
+  });
+
   describe('identificationCorrectionSchema', () => {
     const parse = (body: unknown) => identificationCorrectionSchema.safeParse(body);
     const messages = (body: unknown): string[] => {
@@ -419,6 +563,12 @@ describe('InventoryService', () => {
 
     it('requires at least one identifier', () => {
       expect(messages({ reason: 'Typo at entry' })).toEqual(['Give the VIN, motor number or battery number to correct']);
+    });
+
+    it('rejects model / variant / colour keys outright (M4B.4)', () => {
+      for (const key of ['variantId', 'modelId', 'variant', 'colour', 'hexColour']) {
+        expect(messages({ vin: 'MD9ABC123', reason: 'Typo at entry', [key]: 'x' })).toEqual(['Model, variant and colour cannot be changed by an identification correction']);
+      }
     });
 
     it('strips anything else — the tenant and the actor never come from the request', () => {

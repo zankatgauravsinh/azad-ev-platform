@@ -65,14 +65,23 @@ export type UpdateUnitInput = z.infer<typeof updateUnitSchema>;
 /** Shortest acceptable reason for an identification correction, counted after trimming. */
 export const IDENTIFICATION_CORRECTION_REASON_MIN = 5;
 
+/** A correction never touches the catalogue identity: these keys are refused outright, not ignored. */
+const notCorrectable = z.undefined({ invalid_type_error: 'Model, variant and colour cannot be changed by an identification correction' });
+
 /**
- * Owner-only correction of a delivered, in-service or returned vehicle's identification numbers.
- * The identifiers are normalised exactly like an ordinary edit (trimmed, upper-cased); a reason is
- * always required. Unknown keys (e.g. companyId, userId) are stripped — the tenant and the actor come
- * from the session, never from the request.
+ * Owner-only correction of the identification numbers of a delivered, in-service or returned vehicle,
+ * or of any vehicle with a sale, warranty or AMC history. The identifiers are normalised exactly like an
+ * ordinary edit (trimmed, upper-cased); a reason is always required. Model / variant / colour keys are
+ * rejected. Other unknown keys (e.g. companyId, userId) are stripped — the tenant and the actor come from
+ * the session, never from the request.
  */
 export const identificationCorrectionSchema = z
   .object({
+    variantId: notCorrectable,
+    modelId: notCorrectable,
+    variant: notCorrectable,
+    colour: notCorrectable,
+    hexColour: notCorrectable,
     vin: vinField.optional(),
     motorNumber: identifierField.optional(),
     batteryNumber: identifierField.optional(),

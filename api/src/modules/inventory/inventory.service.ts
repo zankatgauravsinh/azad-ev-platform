@@ -64,12 +64,35 @@ const IDENTIFICATION_EDITABLE_STATUSES: ReadonlySet<UnitStatus> = new Set([UnitS
  * After handover the numbers can only be CORRECTED (M4B.3): owner-only, with a reason, through
  * `correctIdentification`. It changes the unit alone — bookings, sales, deliveries, warranties, service
  * jobs, AMC plans, returns and GST snapshots keep what they recorded — and the audit entry explains it.
+ * The same applies to any vehicle with committed history, whatever its status (M4B.4).
  */
 const IDENTIFICATION_CORRECTION_STATUSES: ReadonlySet<UnitStatus> = new Set([UnitStatus.DELIVERED, UnitStatus.IN_SERVICE, UnitStatus.RETURNED]);
+
+/*
+ * M4B.4 — historical commitment. A vehicle with a Sale (invoiced), a Warranty or an AMC plan keeps its
+ * identity protected for good, even when its status later returns to AVAILABLE / RESERVED / BOOKED (e.g.
+ * restocked after a return). The status rules above still apply as well; history only adds protection.
+ */
+const MSG_IDENTIFICATION_AFTER_DELIVERY = 'Vehicle identification cannot be changed after delivery.';
+const MSG_IDENTIFICATION_HISTORY = 'Vehicle identification cannot be changed once the vehicle has a sale, warranty or AMC history — use the owner identification correction.';
+const MSG_VARIANT_AFTER_BOOKING = 'Vehicle model/variant cannot be changed after booking or delivery.';
+const MSG_VARIANT_HISTORY = 'Vehicle model/variant cannot be changed once the vehicle has a sale, warranty or AMC history.';
+const MSG_CORRECTION_NOT_ELIGIBLE = 'Identification correction applies only to delivered, in-service or returned vehicles, or to vehicles with a sale, warranty or AMC history — edit this vehicle instead.';
+const MSG_CHANGED_CONCURRENTLY = 'This vehicle was changed by someone else — reload and try again.';
+
+/** A lazily evaluated, memoised "has committed history" check (one query at most). */
+type HistoryCheck = () => Promise<boolean>;
+const once = (query: () => Promise<boolean>): HistoryCheck => {
+  let result: Promise<boolean> | null = null;
+  return () => (result ??= query());
+};
 
 const IDENTIFICATION_FIELDS = ['vin', 'motorNumber', 'batteryNumber'] as const;
 type IdentificationField = (typeof IDENTIFICATION_FIELDS)[number];
 type IdentificationChange = { field: IdentificationField; from: string; to: string };
+type IdentitySnapshot = Record<IdentificationField, string> & { variantId: string };
+const sameIdentity = (a: IdentitySnapshot, b: IdentitySnapshot): boolean =>
+  a.variantId === b.variantId && IDENTIFICATION_FIELDS.every((f) => a[f] === b[f]);
 
 /**
  * Only an ACTUAL change counts: a field that is sent and differs from the stored value. Inputs are
@@ -252,8 +275,8 @@ export class InventoryService {
     // schema, like the stored values). Refused as a whole after delivery — before anything is checked
     // or written, so the request leaves no trace.
     const identificationChanges = identificationChangesOf(existing, dto);
-    if (identificationChanges.length > 0 && !IDENTIFICATION_EDITABLE_STATUSES.has(existing.status as UnitStatus)) {
-      throw new ConflictException('Vehicle identification cannot be changed after delivery.');
+    if (identificationChanges.length > 0) {
+      await this.assertIdentificationEditable(existing.status as UnitStatus, once(() => this.repo.hasCommittedHistory(id)));
     }
     if (dto.vin && dto.vin !== existing.vin) {
       await this.assertVinAvailable(dto.vin);
@@ -262,8 +285,19 @@ export class InventoryService {
     const curated = dto.variantId !== undefined ? await this.curatedVariant(dto.variantId) : null;
 
     const identity: { change: { from: IdentityRef; to: IdentityRef } | null } = { change: null }; // set inside the transaction
+    const touchesIdentity = IDENTIFICATION_FIELDS.some((f) => dto[f] !== undefined)
+      || dto.variantId !== undefined || dto.modelId !== undefined || dto.variant !== undefined || dto.colour !== undefined;
     const unit = await this.repo.transaction(async (tx) => {
       const data: Prisma.InventoryUnitUpdateInput = { updatedById: userId };
+
+      // The checks above are a fast refusal; the authoritative ones run here, on the locked row, so an
+      // invoice / warranty / AMC plan created meanwhile is seen (see InventoryRepository.lockUnit).
+      let status = existing.status as UnitStatus;
+      const committed = once(() => this.repo.hasCommittedHistory(id, tx));
+      if (touchesIdentity) {
+        status = (await this.lockedUnchanged(id, existing, tx)).status;
+        if (identificationChanges.length > 0) await this.assertIdentificationEditable(status, committed);
+      }
 
       // The catalogue identity the request asks for — curated (wins over any free-text sent alongside)
       // or legacy text resolved exactly as before (the resolver may create a variant; a refusal below
@@ -283,9 +317,8 @@ export class InventoryService {
       // Only an ACTUAL change of variant is a reassignment: naming the current variant (by id or by the
       // same model / variant / colour) is not, whatever the status.
       if (target && target.id !== existing.variantId) {
-        if (!IDENTITY_EDITABLE_STATUSES.has(existing.status as UnitStatus)) {
-          throw new ConflictException('Vehicle model/variant cannot be changed after booking or delivery.');
-        }
+        if (!IDENTITY_EDITABLE_STATUSES.has(status)) throw new ConflictException(MSG_VARIANT_AFTER_BOOKING);
+        if (await committed()) throw new ConflictException(MSG_VARIANT_HISTORY);
         data.variant = { connect: { id: target.id } };
         identity.change = { from: identityRef(existing.variant), to: identityRef(target) };
       }
@@ -332,9 +365,7 @@ export class InventoryService {
     // The route is already owner-only; this keeps the rule true for any other caller of the service.
     if (actor.role !== Role.OWNER) throw new ForbiddenException('Only the owner can correct vehicle identification after delivery.');
     const existing = await this.getUnitOrThrow(id);
-    if (!IDENTIFICATION_CORRECTION_STATUSES.has(existing.status as UnitStatus)) {
-      throw new ConflictException('Identification correction applies only to delivered, in-service or returned vehicles — edit this vehicle instead.');
-    }
+    await this.assertCorrectionEligible(existing.status as UnitStatus, once(() => this.repo.hasCommittedHistory(id)));
     const changes = identificationChangesOf(existing, dto);
     if (changes.length === 0) {
       throw new BadRequestException('Nothing to correct: the identification given matches the vehicle.');
@@ -349,6 +380,9 @@ export class InventoryService {
     const identificationCorrection = { reason: dto.reason, changes };
 
     return this.repo.transaction(async (tx) => {
+      // Re-checked on the locked row: the eligibility seen above still holds when the update is written.
+      const locked = await this.lockedUnchanged(id, existing, tx);
+      await this.assertCorrectionEligible(locked.status, once(() => this.repo.hasCommittedHistory(id, tx)));
       const unit = await this.repo.updateUnit(id, data, tx);
       await this.activityLog.recordInTransaction({
         actorId: actor.id,
@@ -360,6 +394,29 @@ export class InventoryService {
       }, tx);
       return unit;
     });
+  }
+
+  /** Ordinary edit of VIN / motor / battery: the M4B.2 status rule, then historical commitment (M4B.4). */
+  private async assertIdentificationEditable(status: UnitStatus, committed: HistoryCheck): Promise<void> {
+    if (!IDENTIFICATION_EDITABLE_STATUSES.has(status)) throw new ConflictException(MSG_IDENTIFICATION_AFTER_DELIVERY);
+    if (await committed()) throw new ConflictException(MSG_IDENTIFICATION_HISTORY);
+  }
+
+  /** Correction: delivered / in-service / returned by status (M4B.3), or any vehicle with committed history (M4B.4). */
+  private async assertCorrectionEligible(status: UnitStatus, committed: HistoryCheck): Promise<void> {
+    if (IDENTIFICATION_CORRECTION_STATUSES.has(status)) return;
+    if (!(await committed())) throw new ConflictException(MSG_CORRECTION_NOT_ELIGIBLE);
+  }
+
+  /**
+   * Locks the unit for the transaction and returns its current state. Its identity must still be the
+   * one this request was validated against; otherwise another change won the race and this one stops.
+   */
+  private async lockedUnchanged(id: string, existing: IdentitySnapshot, tx: Prisma.TransactionClient) {
+    const locked = await this.repo.lockUnit(this.tenant.requireCompanyId(), id, tx);
+    if (!locked) throw new NotFoundException('Scooter not found');
+    if (!sameIdentity(locked, existing)) throw new ConflictException(MSG_CHANGED_CONCURRENTLY);
+    return locked;
   }
 
   private async modelRef(modelId: string): Promise<{ id: string; brand: string; name: string }> {

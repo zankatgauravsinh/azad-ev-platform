@@ -336,10 +336,10 @@ describe('Inventory identification correction (e2e)', () => {
 
   // ───────────────────────── M4B.2 unchanged ─────────────────────────
   describe('the ordinary edit (M4B.2) is unchanged', () => {
-    it.each(['AVAILABLE', 'RESERVED', 'BOOKED'])('%s: the ordinary edit changes identification; the correction endpoint refuses (409)', async (status) => {
+    it.each(['AVAILABLE', 'RESERVED', 'BOOKED'])('%s (never committed): the ordinary edit changes identification; the correction endpoint refuses (409)', async (status) => {
       const u = await unitIn(status);
       const res = await correct(u.id, { vin: `ORDV${stamp}${serial++}`, reason }).expect(409);
-      expect(res.body.message).toBe('Identification correction applies only to delivered, in-service or returned vehicles — edit this vehicle instead.');
+      expect(res.body.message).toBe('Identification correction applies only to delivered, in-service or returned vehicles, or to vehicles with a sale, warranty or AMC history — edit this vehicle instead.');
       const vin = `ORDV${stamp}${serial++}`;
       await edit(u.id, { vin }).expect(200);
       expect((await row(u.id)).vin).toBe(vin);

@@ -207,4 +207,44 @@ export class InventoryRepository {
   transaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     return this.prisma.$transaction(fn);
   }
+
+  // ── Identity protection (M4B.4) ────────────────────────
+  /**
+   * Locks the unit's row (FOR UPDATE) for the rest of the transaction and returns its current status and
+   * identity. Creating a Sale (invoice), Warranty or AMC plan inserts a row whose foreign key references
+   * this unit, and Postgres takes a KEY SHARE lock on the unit for that insert until its transaction ends.
+   * FOR UPDATE conflicts with KEY SHARE, so after this lock a history check sees every such record that
+   * was being created, and none can be created until this transaction ends.
+   */
+  async lockUnit(companyId: string, id: string, tx: Prisma.TransactionClient): Promise<LockedUnit | null> {
+    const rows = await tx.$queryRaw<LockedUnit[]>`
+      SELECT id, status::text AS status, vin, "motorNumber", "batteryNumber", "variantId"
+      FROM "InventoryUnit"
+      WHERE id = ${id} AND "companyId" = ${companyId} AND "deletedAt" IS NULL
+      FOR UPDATE`;
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Whether the unit has entered committed business history: any Sale (soft-deleted included), any
+   * Warranty (cancelled included) or any AMC plan (cancelled included). Completed returns and deliveries
+   * always belong to a Sale; a service job alone does not count. Raw SQL on purpose, so the soft-delete
+   * filter cannot hide a Sale. The caller has already resolved the unit within its company.
+   */
+  async hasCommittedHistory(id: string, db: Db = this.prisma): Promise<boolean> {
+    const [row] = await db.$queryRaw<{ committed: boolean }[]>`
+      SELECT (EXISTS (SELECT 1 FROM "Sale" WHERE "unitId" = ${id})
+           OR EXISTS (SELECT 1 FROM "Warranty" WHERE "unitId" = ${id})
+           OR EXISTS (SELECT 1 FROM "AmcPlan" WHERE "unitId" = ${id})) AS committed`;
+    return row?.committed === true;
+  }
+}
+
+export interface LockedUnit {
+  id: string;
+  status: UnitStatus;
+  vin: string;
+  motorNumber: string;
+  batteryNumber: string;
+  variantId: string;
 }
