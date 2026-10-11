@@ -98,7 +98,9 @@ export function UnitFormDialog({
 
   const modelId = watch('modelId');
   const variantId = watch('variantId');
-  const { data: activeVariants = [] } = useVariants(modelId || undefined, Boolean(modelId));
+  const modelIsActive = activeModels.some((m) => m.id === modelId);
+  // Only an active model's variants can be chosen (the server refuses a variant of an inactive model).
+  const { data: activeVariants = [] } = useVariants(modelId || undefined, Boolean(modelId) && modelIsActive);
 
   // The unit's current model / variant stay selectable on edit even when inactive in the catalogue.
   const models: ModelRef[] = useMemo(() => {
@@ -107,12 +109,16 @@ export function UnitFormDialog({
   }, [activeModels, unit]);
   const variants: VariantOption[] = useMemo(() => {
     const current = unit?.variant;
-    if (!current || current.model.id !== modelId || activeVariants.some((v) => v.id === current.id)) return activeVariants;
-    return [...activeVariants, { id: current.id, name: current.name, colour: current.colour, hexColour: current.hexColour ?? null, exShowroomPrice: '0', model: current.model }];
-  }, [activeVariants, unit, modelId]);
+    const currentOption = current && current.model.id === modelId
+      ? [{ id: current.id, name: current.name, colour: current.colour, hexColour: current.hexColour ?? null, exShowroomPrice: '0', model: current.model }]
+      : [];
+    // An inactive model offers nothing but the unit's current variant: no alternative under that model.
+    if (!modelIsActive) return currentOption;
+    if (currentOption.length === 0 || activeVariants.some((v) => v.id === current!.id)) return activeVariants;
+    return [...activeVariants, ...currentOption];
+  }, [activeVariants, unit, modelId, modelIsActive]);
   const selectedModel = models.find((m) => m.id === modelId);
   const selectedVariant = variants.find((v) => v.id === variantId);
-  const modelIsActive = activeModels.some((m) => m.id === modelId);
 
   const vin = watch('vin');
   useEffect(() => {

@@ -20,6 +20,8 @@ const h = vi.hoisted(() => ({
   perms: new Set<string>(),
   models: [] as unknown[],
   variants: {} as Record<string, unknown[]>,
+  /** Every model whose variants were actually requested (enabled queries). */
+  fetchedVariantsOf: [] as string[],
   create: vi.fn(),
   update: vi.fn(),
   toastError: vi.fn(),
@@ -28,7 +30,10 @@ const h = vi.hoisted(() => ({
 vi.mock('@/features/auth/auth-context', () => ({ useAuth: () => ({ can: (p: string) => h.perms.has(p) }) }));
 vi.mock('../hooks', () => ({
   useModels: () => ({ data: h.models }),
-  useVariants: (modelId: string | undefined, enabled: boolean) => ({ data: enabled && modelId ? h.variants[modelId] ?? [] : [] }),
+  useVariants: (modelId: string | undefined, enabled: boolean) => {
+    if (enabled && modelId) h.fetchedVariantsOf.push(modelId);
+    return { data: enabled && modelId ? h.variants[modelId] ?? [] : [] };
+  },
   useCreateUnit: () => ({ mutateAsync: h.create }),
   useUpdateUnit: () => ({ mutateAsync: h.update }),
 }));
@@ -81,6 +86,7 @@ beforeEach(() => {
   h.perms = new Set(['inventory.create', 'inventory.update']);
   h.models = [vx, mx];
   h.variants = { [M1]: [variant(V1, 'Pro', 'Teal'), variant(V2, 'Max', 'Red')], [M2]: [variant(V3, 'Lite', 'Blue', mx)] };
+  h.fetchedVariantsOf = [];
   h.create.mockReset().mockResolvedValue({});
   h.update.mockReset().mockResolvedValue({});
   h.toastError.mockReset();
@@ -220,6 +226,8 @@ describe('UnitFormDialog — Edit scooter', () => {
     expect(field('Motor number').readOnly).toBe(true);
   });
 
+  const variantOptions = (): string[] => [...selects()[1]!.options].map((o) => o.value).filter(Boolean);
+
   it("the unit's current model / variant stay selected even if inactive in the catalogue", () => {
     h.models = [mx];
     h.variants = { [M1]: [] };
@@ -227,5 +235,34 @@ describe('UnitFormDialog — Edit scooter', () => {
     expect(selects()[0]!.value).toBe(M1);
     expect(selects()[1]!.value).toBe(V1);
     expect(field('Colour').value).toBe('Teal');
+  });
+
+  it('an inactive current model offers only the current variant — not its other active variants, which are not even fetched', async () => {
+    h.models = [mx]; // M1 (the unit's model) is inactive; its variants V1 (current) and V2 are still active
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={unit('AVAILABLE', policy())} />);
+    expect(selects()[1]!.value).toBe(V1);
+    expect(variantOptions()).toEqual([V1]);
+    expect(h.fetchedVariantsOf).not.toContain(M1);
+    // Saving unchanged sends no variant change.
+    fill('Location', 'Bay 4');
+    submit('Save changes');
+    await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
+    expect(h.update.mock.calls[0]![0]).not.toHaveProperty('variantId');
+  });
+
+  it('from an inactive current model, switching to an active model offers its active variants; switching back offers only the current variant', () => {
+    h.models = [mx];
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={unit('AVAILABLE', policy())} />);
+    choose(0, M2);
+    expect(variantOptions()).toEqual([V3]);
+    choose(0, M1);
+    expect(variantOptions()).toEqual([V1]);
+    expect(h.fetchedVariantsOf).not.toContain(M1);
+  });
+
+  it('an active current model keeps offering all its active variants (unchanged)', () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={unit('AVAILABLE', policy())} />);
+    expect(variantOptions()).toEqual([V1, V2]);
+    expect(h.fetchedVariantsOf).toContain(M1);
   });
 });
