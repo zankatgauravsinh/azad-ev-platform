@@ -167,4 +167,109 @@ export class CatalogRepository {
   setVariantActive(companyId: string, id: string, isActive: boolean, updatedById: string, db: Db = this.prisma): Promise<number> {
     return this.updateVariant(companyId, id, { isActive, updatedById }, db);
   }
+
+  transaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    return this.prisma.$transaction(fn);
+  }
+
+  // ── Identity protection (M4B.5) ────────────────────────
+  /*
+   * A variant's identity (name, colour) — and its model's (brand, name) — is LOCKED once any unit of it
+   * is BOOKED, DELIVERED, IN_SERVICE or RETURNED, or has a Sale (soft-deleted included), a Warranty
+   * (cancelled included) or an AMC plan (cancelled included): renaming it would change how invoices,
+   * delivery notes, warranties, AMC and service records of those vehicles read. Soft-deleted units count
+   * too (their records remain). Quotations and service jobs alone do not lock. Every query is scoped to
+   * the company explicitly.
+   */
+
+  /** Of the given variants, those whose identity is locked. */
+  async lockedVariantIds(companyId: string, variantIds: string[], db: Db = this.prisma): Promise<Set<string>> {
+    if (variantIds.length === 0) return new Set();
+    const rows = await db.$queryRaw<{ id: string }[]>`
+      SELECT DISTINCT u."variantId" AS id FROM "InventoryUnit" u
+      WHERE u."companyId" = ${companyId} AND u."variantId" IN (${Prisma.join(variantIds)}) AND ${lockingUnit(companyId)}`;
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /** Models of the company (all, or the given ones) with at least one locked variant. */
+  async lockedModelIds(companyId: string, modelIds?: string[], db: Db = this.prisma): Promise<Set<string>> {
+    if (modelIds && modelIds.length === 0) return new Set();
+    const rows = await db.$queryRaw<{ id: string }[]>`
+      SELECT DISTINCT v."modelId" AS id FROM "InventoryUnit" u
+      JOIN "ScooterVariant" v ON v.id = u."variantId" AND v."companyId" = ${companyId}
+      WHERE u."companyId" = ${companyId} ${modelIds ? Prisma.sql`AND v."modelId" IN (${Prisma.join(modelIds)})` : Prisma.empty} AND ${lockingUnit(companyId)}`;
+    return new Set(rows.map((r) => r.id));
+  }
+
+  async isVariantIdentityLocked(companyId: string, variantId: string, db: Db = this.prisma): Promise<boolean> {
+    return (await this.lockedVariantIds(companyId, [variantId], db)).has(variantId);
+  }
+
+  async isModelIdentityLocked(companyId: string, modelId: string, db: Db = this.prisma): Promise<boolean> {
+    return (await this.lockedModelIds(companyId, [modelId], db)).has(modelId);
+  }
+
+  /*
+   * Lock protocol for an identity change (run first in the renaming transaction; the lock check and the
+   * update follow under these locks). Order: the units, then the catalogue row(s), then the units again.
+   *  1. Units FOR UPDATE, in id order: booking / delivery / status changes UPDATE the unit, and creating a
+   *     Sale, Warranty or AMC plan (or a booking / service job) inserts a row whose foreign key takes KEY
+   *     SHARE on the unit; both conflict with FOR UPDATE, so a unit cannot become locking until we end.
+   *  2. Catalogue rows FOR UPDATE (variant; or model, then its variants in id order): creating a unit in, or
+   *     moving a unit into, a variant takes KEY SHARE on the variant row (creating a variant, on its model
+   *     row), so nothing can join until we end; anything mid-creation is waited for.
+   *  3. Units again, NOWAIT: locks any unit that joined while we waited in step 2. It never waits: those
+   *     units arrived after step 1, so waiting for them could break the id order and deadlock. If one is
+   *     held elsewhere the change stops with 'BUSY' (409, try again) instead.
+   * So a rename only ever WAITS while holding unit locks taken in id order (step 1) or catalogue rows
+   * (step 2, and nothing that holds a catalogue row waits for a unit). Other paths lock a unit first and a
+   * catalogue row (KEY SHARE) second, which this order cannot cycle with.
+   */
+
+  async lockVariantForIdentityChange(companyId: string, variantId: string, tx: Prisma.TransactionClient): Promise<IdentityLock> {
+    await tx.$queryRaw`
+      SELECT id FROM "InventoryUnit" WHERE "companyId" = ${companyId} AND "variantId" = ${variantId} ORDER BY id FOR UPDATE`;
+    const variants = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "ScooterVariant" WHERE id = ${variantId} AND "companyId" = ${companyId} FOR UPDATE`;
+    if (variants.length === 0) return 'NOT_FOUND';
+    return lockNowait(() => tx.$queryRaw`
+      SELECT id FROM "InventoryUnit" WHERE "companyId" = ${companyId} AND "variantId" = ${variantId} ORDER BY id FOR UPDATE NOWAIT`);
+  }
+
+  async lockModelForIdentityChange(companyId: string, modelId: string, tx: Prisma.TransactionClient): Promise<IdentityLock> {
+    const unitsOfModel = (nowait: boolean) => tx.$queryRaw`
+      SELECT u.id FROM "InventoryUnit" u
+      JOIN "ScooterVariant" v ON v.id = u."variantId" AND v."companyId" = ${companyId}
+      WHERE u."companyId" = ${companyId} AND v."modelId" = ${modelId}
+      ORDER BY u.id FOR UPDATE OF u ${nowait ? Prisma.sql`NOWAIT` : Prisma.empty}`;
+    await unitsOfModel(false);
+    const models = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "ScooterModel" WHERE id = ${modelId} AND "companyId" = ${companyId} FOR UPDATE`;
+    if (models.length === 0) return 'NOT_FOUND';
+    await tx.$queryRaw`
+      SELECT id FROM "ScooterVariant" WHERE "modelId" = ${modelId} AND "companyId" = ${companyId} ORDER BY id FOR UPDATE`;
+    return lockNowait(() => unitsOfModel(true));
+  }
 }
+
+/** LOCKED: the protocol holds every lock. NOT_FOUND: not this company's. BUSY: a joining unit is held elsewhere. */
+export type IdentityLock = 'LOCKED' | 'NOT_FOUND' | 'BUSY';
+
+/** Runs a NOWAIT locking query; "lock not available" (55P03) means another transaction holds a row. */
+async function lockNowait(query: () => Promise<unknown>): Promise<IdentityLock> {
+  try {
+    await query();
+    return 'LOCKED';
+  } catch (e) {
+    const code = (e as { meta?: { code?: string } }).meta?.code;
+    if (code === '55P03' || /55P03|could not obtain lock/i.test((e as Error).message ?? '')) return 'BUSY';
+    throw e;
+  }
+}
+
+/** The unit (alias u) makes its variant's identity locked: committed status or committed history. */
+const lockingUnit = (companyId: string): Prisma.Sql => Prisma.sql`(
+  u.status IN ('BOOKED', 'DELIVERED', 'IN_SERVICE', 'RETURNED')
+  OR EXISTS (SELECT 1 FROM "Sale" s WHERE s."unitId" = u.id AND s."companyId" = ${companyId})
+  OR EXISTS (SELECT 1 FROM "Warranty" w WHERE w."unitId" = u.id AND w."companyId" = ${companyId})
+  OR EXISTS (SELECT 1 FROM "AmcPlan" a WHERE a."unitId" = u.id AND a."companyId" = ${companyId}))`;

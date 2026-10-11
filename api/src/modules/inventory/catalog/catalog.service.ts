@@ -15,14 +15,20 @@ import { CatalogRepository, type ListOptions, type ModelRow, type VariantRow } f
  * resolvable by id, so every unit, booking, sale and document that points at it keeps working.
  * Deactivation never cascades (an inactive model's variants keep their own state).
  *
- * LIVE IDENTITY (intentional for now): bookings, sales, service, warranty and documents read model and
- * variant names through the unit at render time, so editing a name here changes how old records
- * display. The GST snapshot is the one frozen copy. A catalogue history/snapshot strategy is a later,
- * separate decision. Pricing: exShowroomPrice is the maintained variant list price only — units,
+ * LIVE IDENTITY: bookings, sales, service, warranty and documents read model and variant names through
+ * the unit at render time; the GST snapshot is the one frozen copy. So once a vehicle of a variant is
+ * committed (booked or later, or with sale / warranty / AMC history — see CatalogRepository), that
+ * variant's name / colour and its model's brand / name are locked (M4B.5): add a new variant or model
+ * instead. Description, list price, specifications, hex colour and active state stay editable.
+ * warrantyMonths stays editable too; note the customer profile still derives past vehicles' warranty
+ * windows from the current catalogue value. Pricing: exShowroomPrice is the maintained variant list price only — units,
  * bookings, quotations and sales are never updated from it. GST classification stays with
  * PUT /tax/scooter-models/:id/classification.
  */
 const MODEL_FIELDS = ['brand', 'name', 'description', 'isActive'] as const;
+const MSG_MODEL_LOCKED = 'Model brand/name cannot be changed: vehicles of this model are booked, delivered or have sale, warranty or AMC history. Add a new model instead.';
+const MSG_VARIANT_LOCKED = 'Variant name/colour cannot be changed: vehicles of this variant are booked, delivered or have sale, warranty or AMC history. Add a new variant instead.';
+const MSG_BUSY = 'This catalogue entry is being changed elsewhere — try again.';
 const VARIANT_FIELDS = ['name', 'colour', 'hexColour', 'exShowroomPrice', 'batteryType', 'batteryCapacity', 'rangeKm', 'topSpeedKmph', 'chargingTimeHrs', 'motorPowerW', 'warrantyMonths', 'isActive'] as const;
 
 @Injectable()
@@ -45,15 +51,20 @@ export class CatalogService {
   /** The list the API serves: filtered rows with their tenant-scoped counts. */
   async listModelDtos(query: { q?: string; status: CatalogStatusFilter }): Promise<CatalogModelDto[]> {
     const companyId = this.tenant.requireCompanyId();
-    const [rows, counts] = await Promise.all([this.repo.listModels(companyId, { q: query.q, status: query.status }), this.repo.countsByModel(companyId)]);
-    return rows.map((m) => CatalogService.toModelDto(m, counts.get(m.id) ?? { variantCount: 0, unitCount: 0 }));
+    const [rows, counts, locked] = await Promise.all([
+      this.repo.listModels(companyId, { q: query.q, status: query.status }),
+      this.repo.countsByModel(companyId),
+      this.repo.lockedModelIds(companyId),
+    ]);
+    return rows.map((m) => CatalogService.toModelDto(m, { ...(counts.get(m.id) ?? { variantCount: 0, unitCount: 0 }), identityLocked: locked.has(m.id) }));
   }
 
   async listVariantDtos(query: { modelId?: string; status: CatalogStatusFilter }): Promise<CatalogVariantDto[]> {
     const companyId = this.tenant.requireCompanyId();
     const rows = await this.repo.listVariants(companyId, { modelId: query.modelId, status: query.status });
-    const counts = await this.repo.unitCountsByVariant(companyId, rows.map((v) => v.id));
-    return rows.map((v) => CatalogService.toVariantDto(v, { unitCount: counts.get(v.id) ?? 0 }));
+    const ids = rows.map((v) => v.id);
+    const [counts, locked] = await Promise.all([this.repo.unitCountsByVariant(companyId, ids), this.repo.lockedVariantIds(companyId, ids)]);
+    return rows.map((v) => CatalogService.toVariantDto(v, { unitCount: counts.get(v.id) ?? 0, identityLocked: locked.has(v.id) }));
   }
 
   /** The company's model, active or inactive. Another company's model is not found. */
@@ -71,13 +82,18 @@ export class CatalogService {
 
   async modelDto(model: ModelRow): Promise<CatalogModelDto> {
     const companyId = this.tenant.requireCompanyId();
-    const [variantCount, unitCount] = await Promise.all([this.repo.countVariants(companyId, model.id), this.repo.countModelUnits(companyId, model.id)]);
-    return CatalogService.toModelDto(model, { variantCount, unitCount });
+    const [variantCount, unitCount, identityLocked] = await Promise.all([
+      this.repo.countVariants(companyId, model.id),
+      this.repo.countModelUnits(companyId, model.id),
+      this.repo.isModelIdentityLocked(companyId, model.id),
+    ]);
+    return CatalogService.toModelDto(model, { variantCount, unitCount, identityLocked });
   }
 
   async variantDto(variant: VariantRow): Promise<CatalogVariantDto> {
-    const unitCount = await this.repo.countVariantUnits(this.tenant.requireCompanyId(), variant.id);
-    return CatalogService.toVariantDto(variant, { unitCount });
+    const companyId = this.tenant.requireCompanyId();
+    const [unitCount, identityLocked] = await Promise.all([this.repo.countVariantUnits(companyId, variant.id), this.repo.isVariantIdentityLocked(companyId, variant.id)]);
+    return CatalogService.toVariantDto(variant, { unitCount, identityLocked });
   }
 
   // ── Validation helpers ─────────────────────────────────
@@ -107,12 +123,27 @@ export class CatalogService {
   async updateModel(id: string, input: UpdateCatalogModelInput, userId: string): Promise<ModelRow> {
     const companyId = this.tenant.requireCompanyId();
     const before = await this.getModel(id);
+    // Identity = brand / name; any difference from the stored value is a change (inputs are only trimmed).
+    const identityChange = (input.brand !== undefined && input.brand !== before.brand) || (input.name !== undefined && input.name !== before.name);
+    if (identityChange && (await this.repo.isModelIdentityLocked(companyId, id))) throw new ConflictException(MSG_MODEL_LOCKED); // fast refusal
     if (input.name !== undefined) await this.assertModelNameAvailable(input.name, id);
     const data: Prisma.ScooterModelUncheckedUpdateManyInput = { updatedById: userId };
     if (input.brand !== undefined) data.brand = input.brand;
     if (input.name !== undefined) data.name = input.name;
     if (input.description !== undefined) data.description = input.description || null;
-    const count = await this.repo.updateModel(companyId, id, data).catch(CatalogService.uniqueRace(`Model "${input.name ?? before.name}" already exists`));
+    const write = (db?: Prisma.TransactionClient) =>
+      (db ? this.repo.updateModel(companyId, id, data, db) : this.repo.updateModel(companyId, id, data)).catch(CatalogService.uniqueRace(`Model "${input.name ?? before.name}" already exists`));
+    // An identity change is decided and written under the lock protocol (see CatalogRepository); the
+    // whole request — description included — is refused if the model is locked.
+    const count = identityChange
+      ? await this.repo.transaction(async (tx) => {
+          const lock = await this.repo.lockModelForIdentityChange(companyId, id, tx);
+          if (lock === 'NOT_FOUND') return 0;
+          if (lock === 'BUSY') throw new ConflictException(MSG_BUSY);
+          if (await this.repo.isModelIdentityLocked(companyId, id, tx)) throw new ConflictException(MSG_MODEL_LOCKED);
+          return write(tx);
+        })
+      : await write();
     if (count !== 1) throw new NotFoundException('Model not found');
     const after = await this.getModel(id);
     const changes = diffFields(before, after, MODEL_FIELDS);
@@ -163,6 +194,9 @@ export class CatalogService {
   async updateVariant(id: string, input: UpdateCatalogVariantInput, userId: string): Promise<VariantRow> {
     const companyId = this.tenant.requireCompanyId();
     const before = await this.getVariant(id);
+    // Identity = name / colour; any difference from the stored value is a change (inputs are only trimmed).
+    const identityChange = (input.name !== undefined && input.name !== before.name) || (input.colour !== undefined && input.colour !== before.colour);
+    if (identityChange && (await this.repo.isVariantIdentityLocked(companyId, id))) throw new ConflictException(MSG_VARIANT_LOCKED); // fast refusal
     const key = { modelId: before.modelId, name: input.name ?? before.name, colour: input.colour ?? before.colour };
     if (input.name !== undefined || input.colour !== undefined) await this.assertVariantKeyAvailable(key, id);
     const data: Prisma.ScooterVariantUncheckedUpdateManyInput = { updatedById: userId };
@@ -177,7 +211,18 @@ export class CatalogService {
     if (input.chargingTimeHrs !== undefined) data.chargingTimeHrs = new Prisma.Decimal(input.chargingTimeHrs);
     if (input.motorPowerW !== undefined) data.motorPowerW = input.motorPowerW;
     if (input.warrantyMonths !== undefined) data.warrantyMonths = input.warrantyMonths;
-    const count = await this.repo.updateVariant(companyId, id, data).catch(CatalogService.uniqueRace(`Variant "${key.name}" in "${key.colour}" already exists for this model`));
+    const write = (db?: Prisma.TransactionClient) =>
+      (db ? this.repo.updateVariant(companyId, id, data, db) : this.repo.updateVariant(companyId, id, data)).catch(CatalogService.uniqueRace(`Variant "${key.name}" in "${key.colour}" already exists for this model`));
+    // As for models: an identity change is decided and written under the lock protocol, all or nothing.
+    const count = identityChange
+      ? await this.repo.transaction(async (tx) => {
+          const lock = await this.repo.lockVariantForIdentityChange(companyId, id, tx);
+          if (lock === 'NOT_FOUND') return 0;
+          if (lock === 'BUSY') throw new ConflictException(MSG_BUSY);
+          if (await this.repo.isVariantIdentityLocked(companyId, id, tx)) throw new ConflictException(MSG_VARIANT_LOCKED);
+          return write(tx);
+        })
+      : await write();
     if (count !== 1) throw new NotFoundException('Variant not found');
     const after = await this.getVariant(id);
     const changes = diffFields(before, after, VARIANT_FIELDS);
@@ -196,11 +241,11 @@ export class CatalogService {
   }
 
   // ── Mapping ────────────────────────────────────────────
-  static toModelDto(m: ModelRow, counts: { variantCount?: number; unitCount?: number } = {}): CatalogModelDto {
+  static toModelDto(m: ModelRow, counts: { variantCount?: number; unitCount?: number; identityLocked?: boolean } = {}): CatalogModelDto {
     return { id: m.id, brand: m.brand, name: m.name, description: m.description, isActive: m.isActive, taxClassificationId: m.taxClassificationId, createdAt: m.createdAt.toISOString(), updatedAt: m.updatedAt.toISOString(), ...counts };
   }
 
-  static toVariantDto(v: VariantRow, counts: { unitCount?: number } = {}): CatalogVariantDto {
+  static toVariantDto(v: VariantRow, counts: { unitCount?: number; identityLocked?: boolean } = {}): CatalogVariantDto {
     return {
       id: v.id, modelId: v.modelId, model: v.model, name: v.name, colour: v.colour, hexColour: v.hexColour,
       exShowroomPrice: v.exShowroomPrice.toString(), batteryType: v.batteryType, batteryCapacity: v.batteryCapacity, rangeKm: v.rangeKm, topSpeedKmph: v.topSpeedKmph,

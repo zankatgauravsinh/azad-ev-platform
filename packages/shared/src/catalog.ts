@@ -65,6 +65,8 @@ export interface CatalogModelDto extends CatalogModelRef {
   /** Present on list/detail reads that count them. */
   variantCount?: number;
   unitCount?: number;
+  /** Read-only: brand / name can no longer change (a vehicle of the model is booked or later, or has sale / warranty / AMC history). */
+  identityLocked?: boolean;
 }
 
 /* ── Variant ── */
@@ -111,4 +113,6 @@ export interface CatalogVariantDto {
   createdAt: string;
   updatedAt: string;
   unitCount?: number;
+  /** Read-only: name / colour can no longer change (a vehicle of the variant is booked or later, or has sale / warranty / AMC history). */
+  identityLocked?: boolean;
 }

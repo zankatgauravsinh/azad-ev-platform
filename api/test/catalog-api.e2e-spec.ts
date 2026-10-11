@@ -90,7 +90,7 @@ describe('Catalog API (e2e)', () => {
       await createModel(A.owner, { brand: '  ', name: `VX ${stamp}` }).expect(400);
       const res = await createModel(A.owner, { brand: '  TESTBRAND ', name: `  VX ${stamp} `, description: '' }).expect(201);
       vx = res.body.id;
-      expect(res.body).toEqual({ id: vx, brand: 'TESTBRAND', name: `VX ${stamp}`, description: null, isActive: true, taxClassificationId: null, variantCount: 0, unitCount: 0, createdAt: expect.any(String), updatedAt: expect.any(String) });
+      expect(res.body).toEqual({ id: vx, brand: 'TESTBRAND', name: `VX ${stamp}`, description: null, isActive: true, taxClassificationId: null, variantCount: 0, unitCount: 0, identityLocked: false, createdAt: expect.any(String), updatedAt: expect.any(String) });
       for (const key of ['companyId', 'createdById', 'updatedById']) expect(res.body).not.toHaveProperty(key);
       // 27. CREATE audit
       const log = await audits('ScooterModel', vx);
@@ -173,7 +173,7 @@ describe('Catalog API (e2e)', () => {
       teal = res.body.id;
       expect(res.body).toEqual({
         id: teal, modelId, model: { id: modelId, brand: 'TESTBRAND', name: `Var ${stamp}` }, name: 'Pro', colour: 'Teal', hexColour: '#00B8A9', exShowroomPrice: '12500000',
-        batteryType: 'Li-ion', batteryCapacity: '3.2 kWh', rangeKm: 120, topSpeedKmph: 80, chargingTimeHrs: '4.50', motorPowerW: 2500, warrantyMonths: 36, isActive: true, unitCount: 0,
+        batteryType: 'Li-ion', batteryCapacity: '3.2 kWh', rangeKm: 120, topSpeedKmph: 80, chargingTimeHrs: '4.50', motorPowerW: 2500, warrantyMonths: 36, isActive: true, unitCount: 0, identityLocked: false,
         createdAt: expect.any(String), updatedAt: expect.any(String),
       });
       expect((await audits('ScooterVariant', teal)).map((l) => l.action)).toEqual(['CREATE']);
