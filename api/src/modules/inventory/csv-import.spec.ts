@@ -38,19 +38,25 @@ describe('readCsvRows — source line numbers', () => {
 describe('parseCsvDate', () => {
   it.each([
     ['2026-06-01', '2026-06-01T00:00:00.000Z'],
-    ['01/06/2026', '2026-06-01T00:00:00.000Z'], // day first
+    ['01/06/2026', '2026-06-01T00:00:00.000Z'], // DD/MM/YYYY, day first
+    ['1/6/2026', '2026-06-01T00:00:00.000Z'], // D/M/YYYY
+    ['1/06/2026', '2026-06-01T00:00:00.000Z'],
+    ['01/6/2026', '2026-06-01T00:00:00.000Z'],
     ['13/06/2026', '2026-06-13T00:00:00.000Z'],
+    ['3/12/2026', '2026-12-03T00:00:00.000Z'], // never month-first
+    ['31/1/2026', '2026-01-31T00:00:00.000Z'],
     ['29/02/2024', '2024-02-29T00:00:00.000Z'],
+    ['29/2/2024', '2024-02-29T00:00:00.000Z'],
     [' 2026-12-31 ', '2026-12-31T00:00:00.000Z'],
   ])('%s → %s (a calendar date at UTC midnight, never shifted)', (raw, iso) => {
     expect(parseCsvDate(raw).toISOString()).toBe(iso);
   });
 
-  it.each(['1/6/2026', '01-06-2026', '2026/06/01', '06/01/26', '2026-6-1', '1 June 2026', 'June 1, 2026', '2026-06-01T10:00', 'garbage', '01.06.2026'])('%s is refused (unsupported format)', (raw) => {
-    expect(() => parseCsvDate(raw)).toThrow(/not in a supported format — use YYYY-MM-DD or DD\/MM\/YYYY/);
+  it.each(['01-06-2026', '1-6-2026', '2026/06/01', '06/01/26', '1/6/26', '001/06/2026', '1/006/2026', '2026-6-1', '1 June 2026', 'June 1, 2026', '2026-06-01T10:00', 'garbage', '01.06.2026', '1/6/2026 10:00'])('%s is refused (unsupported format)', (raw) => {
+    expect(() => parseCsvDate(raw)).toThrow(/not in a supported format — use YYYY-MM-DD or D\/M\/YYYY, day first/);
   });
 
-  it.each(['31/02/2026', '29/02/2025', '2026-13-01', '00/06/2026', '2026-04-31'])('%s is refused (not a real date)', (raw) => {
+  it.each(['31/02/2026', '31/2/2026', '29/02/2025', '29/2/2025', '2026-13-01', '00/06/2026', '0/6/2026', '1/0/2026', '32/1/2026', '1/13/2026', '2026-04-31'])('%s is refused (not a real date)', (raw) => {
     expect(() => parseCsvDate(raw)).toThrow(/is not a real date/);
   });
 });

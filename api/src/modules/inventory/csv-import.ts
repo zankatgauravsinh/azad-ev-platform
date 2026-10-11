@@ -54,17 +54,18 @@ export function csvParseMessage(error: unknown): string {
 /** Catalogue names compare after trimming, collapsing inner whitespace and ignoring case. */
 export const normaliseCatalogueText = (value: string): string => value.trim().replace(/\s+/g, ' ').toLowerCase();
 
-const DATE_FORMATS = 'YYYY-MM-DD or DD/MM/YYYY (e.g. 2026-06-01 or 01/06/2026)';
+const DATE_FORMATS = 'YYYY-MM-DD or D/M/YYYY, day first (e.g. 2026-06-01, 1/6/2026 or 01/06/2026)';
 
 /**
- * A purchase date: YYYY-MM-DD or DD/MM/YYYY (day first), nothing else. It is a calendar date and is
+ * A purchase date: YYYY-MM-DD, or D/M/YYYY / DD/MM/YYYY (always day first; one or two digits for the day
+ * and month, four for the year), nothing else — no general-purpose date parsing. It is a calendar date and is
  * stored as UTC midnight of that day — what the API stores for the unit form's date-only value — so it
  * never shifts with the server's time zone. Impossible dates (31/02/2026) are refused.
  */
 export function parseCsvDate(raw: string): Date {
   const value = raw.trim();
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  const dmy = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
   const parts = iso ? { y: iso[1], m: iso[2], d: iso[3] } : dmy ? { y: dmy[3], m: dmy[2], d: dmy[1] } : null;
   if (!parts) throw new CsvRowError(`Purchase date "${value}" is not in a supported format — use ${DATE_FORMATS}.`);
   const [y, m, d] = [Number(parts.y), Number(parts.m), Number(parts.d)];

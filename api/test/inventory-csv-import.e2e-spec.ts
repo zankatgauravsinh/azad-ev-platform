@@ -7,7 +7,7 @@ import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-
 /**
  * M4D.1 — strict CSV import. Rows must name an existing, active model and variant of the company (brand
  * optional, case / whitespace ignored, ambiguity refused); nothing is created in the catalogue; only
- * AVAILABLE units; blank selling price → the variant's list price; dates YYYY-MM-DD or DD/MM/YYYY; errors
+ * AVAILABLE units; blank selling price → the variant's list price; dates YYYY-MM-DD or D/M/YYYY (day first); errors
  * carry the source line; still one transaction per row (no whole-file atomicity yet).
  *
  * Runs in throwaway companies (see support/e2e-company), hard-deleted afterwards.
@@ -127,14 +127,17 @@ describe('Inventory CSV import (e2e)', () => {
     ]);
   });
 
-  it('dates: YYYY-MM-DD and DD/MM/YYYY only; impossible or other formats are refused', async () => {
-    const good = [row({ date: '2024-02-29' }), row({ date: '29/02/2024' })];
-    const bad = ['1/6/2026', '06-01-2026', '2026/06/01', '31/02/2026', 'June 1 2026'].map((date) => row({ date }));
+  it('dates: YYYY-MM-DD and D/M/YYYY or DD/MM/YYYY (day first) only; impossible or other formats are refused', async () => {
+    const good = [row({ date: '2024-02-29' }), row({ date: '29/02/2024' }), row({ date: '29/2/2024' })];
+    const bad = ['1/6/26', '06-01-2026', '2026/06/01', '31/2/2026', 'June 1 2026'].map((date) => row({ date }));
     const res = await upload([HEAD, ...good.map((r) => r.line), ...bad.map((r) => r.line)].join('\n')).expect(200);
-    expect(res.body.created).toBe(2);
+    expect(res.body.created).toBe(3);
     for (const r of good) expect((await unitByVin(r.vin))!.purchaseDate).toEqual(new Date('2024-02-29T00:00:00.000Z'));
-    expect(res.body.errors.map((e: { row: number }) => e.row)).toEqual([4, 5, 6, 7, 8]);
-    expect(res.body.errors[3].message).toBe('Purchase date "31/02/2026" is not a real date — use YYYY-MM-DD or DD/MM/YYYY (e.g. 2026-06-01 or 01/06/2026).');
+    const dayFirst = row({ date: '3/12/2026' });
+    await upload([HEAD, dayFirst.line].join('\n')).expect(200);
+    expect((await unitByVin(dayFirst.vin))!.purchaseDate).toEqual(new Date('2026-12-03T00:00:00.000Z')); // 3 December, never 12 March
+    expect(res.body.errors.map((e: { row: number }) => e.row)).toEqual([5, 6, 7, 8, 9]);
+    expect(res.body.errors[3].message).toBe('Purchase date "31/2/2026" is not a real date — use YYYY-MM-DD or D/M/YYYY, day first (e.g. 2026-06-01, 1/6/2026 or 01/06/2026).');
     expect(res.body.errors[0].message).toContain('is not in a supported format');
   });
 
