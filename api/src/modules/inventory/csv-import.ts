@@ -1,5 +1,5 @@
 import { parse } from 'csv-parse/sync';
-import { UNIT_STATUSES, UnitStatus } from '@azad/shared';
+import { UNIT_STATUSES, UnitStatus, type CsvImportField, type CsvImportIssueCode } from '@azad/shared';
 import { ZodError, type ZodIssue } from 'zod';
 
 /*
@@ -7,8 +7,12 @@ import { ZodError, type ZodIssue } from 'zod';
  * row must name an existing, active model and variant of the company. See InventoryService.importCsv.
  */
 
-/** A row the user must fix: its message is safe to show as is. */
-export class CsvRowError extends Error {}
+/** A row the user must fix: its message is safe to show as is; code and field say what kind of problem it is. */
+export class CsvRowError extends Error {
+  constructor(message: string, readonly code: CsvImportIssueCode = 'INVALID_VALUE', readonly field: CsvImportField | null = null) {
+    super(message);
+  }
+}
 
 // ── Reading ───────────────────────────────────────────────
 
@@ -67,11 +71,11 @@ export function parseCsvDate(raw: string): Date {
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
   const parts = iso ? { y: iso[1], m: iso[2], d: iso[3] } : dmy ? { y: dmy[3], m: dmy[2], d: dmy[1] } : null;
-  if (!parts) throw new CsvRowError(`Purchase date "${value}" is not in a supported format — use ${DATE_FORMATS}.`);
+  if (!parts) throw new CsvRowError(`Purchase date "${value}" is not in a supported format — use ${DATE_FORMATS}.`, 'INVALID_DATE', 'purchaseDate');
   const [y, m, d] = [Number(parts.y), Number(parts.m), Number(parts.d)];
   const date = new Date(Date.UTC(y, m - 1, d));
   if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) {
-    throw new CsvRowError(`Purchase date "${value}" is not a real date — use ${DATE_FORMATS}.`);
+    throw new CsvRowError(`Purchase date "${value}" is not a real date — use ${DATE_FORMATS}.`, 'INVALID_DATE', 'purchaseDate');
   }
   return date;
 }
@@ -82,9 +86,9 @@ export function csvStatus(raw: string | undefined): UnitStatus {
   const value = raw.trim().toUpperCase().replace(/\s+/g, '_');
   if (value === UnitStatus.AVAILABLE) return UnitStatus.AVAILABLE;
   if ((UNIT_STATUSES as string[]).includes(value)) {
-    throw new CsvRowError(`Status "${raw.trim()}" cannot be imported — only AVAILABLE units can be added by CSV (leave Status blank or use AVAILABLE).`);
+    throw new CsvRowError(`Status "${raw.trim()}" cannot be imported — only AVAILABLE units can be added by CSV (leave Status blank or use AVAILABLE).`, 'STATUS_NOT_ALLOWED', 'status');
   }
-  throw new CsvRowError(`Unknown status "${raw.trim()}" — only AVAILABLE units can be added by CSV (leave Status blank or use AVAILABLE).`);
+  throw new CsvRowError(`Unknown status "${raw.trim()}" — only AVAILABLE units can be added by CSV (leave Status blank or use AVAILABLE).`, 'STATUS_NOT_ALLOWED', 'status');
 }
 
 // ── Catalogue matching ────────────────────────────────────
@@ -109,16 +113,16 @@ export function resolveCsvVariant(catalogue: Catalogue, row: { brand?: string; m
   const shown = brand ? `"${row.brand!.trim()} ${row.model.trim()}"` : `"${row.model.trim()}"`;
   const candidates = catalogue.models.filter((m) => normaliseCatalogueText(m.name) === name && (brand === null || normaliseCatalogueText(m.brand) === brand));
   if (candidates.length === 0) {
-    throw new CsvRowError(`Model ${shown} was not found — check the ${brand ? 'brand and model' : 'model'} name, or add it under Inventory → Models first.`);
+    throw new CsvRowError(`Model ${shown} was not found — check the ${brand ? 'brand and model' : 'model'} name, or add it under Inventory → Models first.`, 'MODEL_NOT_FOUND', 'model');
   }
   const active = candidates.filter((m) => m.isActive);
   if (active.length === 0) {
-    throw new CsvRowError(`Model ${listOf(candidates.map(modelLabel))} is inactive — activate it under Inventory → Models, or use an active model.`);
+    throw new CsvRowError(`Model ${listOf(candidates.map(modelLabel))} is inactive — activate it under Inventory → Models, or use an active model.`, 'MODEL_INACTIVE', 'model');
   }
   if (active.length > 1) {
     throw new CsvRowError(brand
       ? `Model ${shown} matches more than one model (${listOf(active.map(modelLabel))}) — their names differ only in case or spacing; fix them under Inventory → Models.`
-      : `Model ${shown} matches more than one model (${listOf(active.map(modelLabel))}) — add a Brand column to choose one.`);
+      : `Model ${shown} matches more than one model (${listOf(active.map(modelLabel))}) — add a Brand column to choose one.`, 'MODEL_AMBIGUOUS', 'model');
   }
   const model = active[0]!;
 
@@ -128,14 +132,14 @@ export function resolveCsvVariant(catalogue: Catalogue, row: { brand?: string; m
   const shownVariant = `"${row.variant.trim()} / ${row.colour.trim()}"`;
   if (matches.length === 0) {
     const available = ofModel.filter((v) => v.isActive).map(variantLabel);
-    throw new CsvRowError(`Variant ${shownVariant} was not found for ${modelLabel(model)} — ${available.length > 0 ? `available: ${listOf(available)}` : 'it has no active variants'}. Add it under Inventory → Models first.`);
+    throw new CsvRowError(`Variant ${shownVariant} was not found for ${modelLabel(model)} — ${available.length > 0 ? `available: ${listOf(available)}` : 'it has no active variants'}. Add it under Inventory → Models first.`, 'VARIANT_NOT_FOUND', 'variant');
   }
   const activeMatches = matches.filter((v) => v.isActive);
   if (activeMatches.length === 0) {
-    throw new CsvRowError(`Variant ${listOf(matches.map(variantLabel))} of ${modelLabel(model)} is inactive — activate it under Inventory → Models, or use an active variant.`);
+    throw new CsvRowError(`Variant ${listOf(matches.map(variantLabel))} of ${modelLabel(model)} is inactive — activate it under Inventory → Models, or use an active variant.`, 'VARIANT_INACTIVE', 'variant');
   }
   if (activeMatches.length > 1) {
-    throw new CsvRowError(`Variant ${shownVariant} matches more than one variant of ${modelLabel(model)} (${listOf(activeMatches.map(variantLabel))}) — their names differ only in case or spacing; fix them under Inventory → Models.`);
+    throw new CsvRowError(`Variant ${shownVariant} matches more than one variant of ${modelLabel(model)} (${listOf(activeMatches.map(variantLabel))}) — their names differ only in case or spacing; fix them under Inventory → Models.`, 'VARIANT_AMBIGUOUS', 'variant');
   }
   return activeMatches[0]!;
 }
@@ -147,7 +151,15 @@ const FIELD_LABELS: Record<string, string> = {
   purchaseDate: 'Purchase date', purchaseCost: 'Purchase cost', sellingPrice: 'Selling price', supplier: 'Supplier', location: 'Location', status: 'Status',
 };
 
-function issueMessage(issue: ZodIssue): string {
+const FIELDS = new Set(Object.keys(FIELD_LABELS));
+/** The CSV column a validation issue is about (null when it is not one of the columns). */
+export const issueField = (issue: ZodIssue): CsvImportField | null => {
+  const key = String(issue.path[0] ?? '');
+  return FIELDS.has(key) ? (key as CsvImportField) : null;
+};
+
+/** A validation issue in plain words, naming the column. */
+export function issueMessage(issue: ZodIssue): string {
   const label = FIELD_LABELS[String(issue.path[0] ?? '')] ?? String(issue.path.join('.') || 'Value');
   if (issue.code === 'invalid_type' && issue.received === 'undefined') return `${label} is required`;
   if (issue.code === 'invalid_type' && issue.expected === 'number') return `${label} must be a number in rupees (digits only — no commas or ₹)`;
@@ -157,12 +169,22 @@ function issueMessage(issue: ZodIssue): string {
   return `${label}: ${issue.message}`;
 }
 
+export type IdentifierField = 'vin' | 'motorNumber' | 'batteryNumber';
+export const IDENTIFIER_FIELDS: readonly IdentifierField[] = ['vin', 'motorNumber', 'batteryNumber'];
+export const IDENTIFIER_LABELS: Record<IdentifierField, string> = { vin: 'VIN', motorNumber: 'Motor number', batteryNumber: 'Battery number' };
+
+/** "Already used by a scooter" — never says where (identifiers are unique across the whole system). */
+export function alreadyExistsMessage(field: IdentifierField, value?: string): string {
+  const quoted = value ? `"${value}" ` : '';
+  return field === 'vin' ? `A scooter with VIN ${quoted}already exists.` : `${IDENTIFIER_LABELS[field]} ${quoted}already exists on another scooter.`;
+}
+
 /** Which identifier a unique-constraint violation is about (Postgres reports fields or the index name). */
 function duplicateMessage(target: unknown, row: { vin?: string; motorNumber?: string; batteryNumber?: string } | null): string {
   const text = Array.isArray(target) ? target.join(',') : String(target ?? '');
-  if (/battery/i.test(text)) return `Battery number ${row?.batteryNumber ? `"${row.batteryNumber}" ` : ''}already exists on another scooter.`;
-  if (/motor/i.test(text)) return `Motor number ${row?.motorNumber ? `"${row.motorNumber}" ` : ''}already exists on another scooter.`;
-  if (/vin/i.test(text)) return `A scooter with VIN ${row?.vin ? `"${row.vin}" ` : ''}already exists.`;
+  if (/battery/i.test(text)) return alreadyExistsMessage('batteryNumber', row?.batteryNumber);
+  if (/motor/i.test(text)) return alreadyExistsMessage('motorNumber', row?.motorNumber);
+  if (/vin/i.test(text)) return alreadyExistsMessage('vin', row?.vin);
   return 'This scooter duplicates an existing one (VIN, motor or battery number).';
 }
 

@@ -26,6 +26,7 @@ import {
 } from '@nestjs/swagger';
 import type { Response } from 'express';
 import {
+  CSV_IMPORT_MAX_BYTES,
   changeUnitStatusSchema,
   createUnitSchema,
   DOCUMENT_TYPES,
@@ -35,6 +36,7 @@ import {
   updateUnitSchema,
   type AuthUser,
   type ChangeUnitStatusInput,
+  type CsvImportPreview,
   type CreateUnitInput,
   type IdentificationCorrectionInput,
   type ListUnitsQuery,
@@ -155,6 +157,28 @@ export class InventoryController {
     @CurrentUser('id') userId: string,
   ) {
     return this.inventory.create(dto, userId);
+  }
+
+  @Post('units/import/preview')
+  @Permissions('inventory.create')
+  @HttpCode(200)
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Preview a CSV import (dry run): validate every row, write nothing',
+    description:
+      'Checks each row exactly as the import does — company catalogue match (optional Brand), active model and variant, ' +
+      'AVAILABLE status only, dates YYYY-MM-DD or D/M/YYYY (day first), prices — plus VIN / motor / battery numbers repeated ' +
+      'in the file or already in use. Row problems come back as issues on each row (see CsvImportPreview); nothing is written. ' +
+      'The result is advisory: the import re-validates every row when it runs.',
+  })
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiResponse({ status: 200, description: 'CsvImportPreview: { checkedAt, maxRows, summary { total, valid, invalid, duplicate }, rows[{ row, status, vin, issues[{ code, field, message }], unit }] }' })
+  @ApiResponse({ status: 400, description: 'No file, an unreadable CSV (the message names the line), or more rows than CSV_IMPORT_MAX_ROWS' })
+  @ApiResponse({ status: 413, description: 'File larger than CSV_IMPORT_MAX_BYTES' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: CSV_IMPORT_MAX_BYTES } }))
+  previewCsv(@UploadedFile() file: MulterFile | undefined): Promise<CsvImportPreview> {
+    if (!file) throw new BadRequestException('A CSV file is required');
+    return this.inventory.previewCsv(file);
   }
 
   @Post('units/import')

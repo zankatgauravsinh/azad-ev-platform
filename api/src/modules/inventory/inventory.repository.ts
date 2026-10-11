@@ -208,6 +208,25 @@ export class InventoryRepository {
     return this.prisma.$transaction(fn);
   }
 
+  /**
+   * M4D.2 — which of these VIN / motor / battery numbers are already used by ANY scooter, soft-deleted
+   * included. VIN, motor and battery numbers are unique across the whole system (not per company), so a
+   * number used in another company would still make the import fail; only the matching values come back —
+   * never the scooter or its company. Raw SQL on purpose: the tenant and soft-delete filters must not apply.
+   */
+  async findUsedIdentifiers(values: { vin: string[]; motorNumber: string[]; batteryNumber: string[] }): Promise<{ vin: Set<string>; motorNumber: Set<string>; batteryNumber: Set<string> }> {
+    const used = { vin: new Set<string>(), motorNumber: new Set<string>(), batteryNumber: new Set<string>() };
+    if (values.vin.length + values.motorNumber.length + values.batteryNumber.length === 0) return used;
+    const rows = await this.prisma.$queryRaw<{ vin: string; motorNumber: string; batteryNumber: string }[]>`
+      SELECT vin, "motorNumber", "batteryNumber" FROM "InventoryUnit"
+      WHERE vin = ANY(${values.vin}::text[]) OR "motorNumber" = ANY(${values.motorNumber}::text[]) OR "batteryNumber" = ANY(${values.batteryNumber}::text[])`;
+    const wanted = { vin: new Set(values.vin), motorNumber: new Set(values.motorNumber), batteryNumber: new Set(values.batteryNumber) };
+    for (const row of rows) {
+      for (const field of ['vin', 'motorNumber', 'batteryNumber'] as const) if (wanted[field].has(row[field])) used[field].add(row[field]);
+    }
+    return used;
+  }
+
   // ── Identity protection (M4B.4) ────────────────────────
   /**
    * Locks the unit's row (FOR UPDATE) for the rest of the transaction and returns its current status and

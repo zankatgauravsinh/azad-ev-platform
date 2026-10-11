@@ -14,7 +14,9 @@ import {
   UnitStatus,
   buildPageMeta,
   canTransitionUnit,
+  CSV_IMPORT_MAX_ROWS,
   csvUnitRowSchema,
+  type CsvImportPreview,
   type CsvUnitRow,
   type CreateUnitInput,
   type CsvImportResult,
@@ -34,6 +36,7 @@ import { InventoryRepository } from './inventory.repository';
 import { CatalogRepository, type VariantRow } from './catalog/catalog.repository';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { csvParseMessage, CsvRowError, csvRowMessage, csvStatus, parseCsvDate, readCsvRows, resolveCsvVariant, type Catalogue, type CsvSourceRow } from './csv-import';
+import { buildCsvPreview, identifierCandidates } from './csv-preview';
 
 const LOW_STOCK_THRESHOLD = 2;
 // High enough to export a whole dealership's stock in one file; a single
@@ -548,12 +551,7 @@ export class InventoryService {
       throw new BadRequestException(csvParseMessage(error));
     }
 
-    // The company's whole catalogue, active and inactive (inactive is reported as such), read once.
-    const [models, variants] = await Promise.all([
-      this.catalog.listModels(companyId, { status: 'all' }),
-      this.catalog.listVariants(companyId, { status: 'all' }),
-    ]);
-    const catalogue: Catalogue = { models, variants };
+    const catalogue = await this.csvCatalogue(companyId);
 
     const result: CsvImportResult = { created: 0, failed: 0, errors: [] };
     for (const { line, record } of rows) {
@@ -607,6 +605,35 @@ export class InventoryService {
       metadata: { created: result.created, failed: result.failed },
     });
     return result;
+  }
+
+  /**
+   * M4D.2 — import PREVIEW (dry run): validates every row exactly as importCsv does, plus duplicates
+   * within the file and identifiers already in use, and writes nothing (no unit, no catalogue entry, no
+   * event, no activity log). Advisory: the import re-validates every row when it runs.
+   */
+  async previewCsv(file: UploadedFile): Promise<CsvImportPreview> {
+    const companyId = this.tenant.requireCompanyId();
+    let rows: CsvSourceRow[];
+    try {
+      rows = readCsvRows(file.buffer, (h) => this.normalizeHeader(h));
+    } catch (error) {
+      throw new BadRequestException(csvParseMessage(error));
+    }
+    if (rows.length > CSV_IMPORT_MAX_ROWS) {
+      throw new BadRequestException(`The file has ${rows.length} rows; at most ${CSV_IMPORT_MAX_ROWS} can be imported at once — split it into smaller files.`);
+    }
+    const [catalogue, used] = await Promise.all([this.csvCatalogue(companyId), this.repo.findUsedIdentifiers(identifierCandidates(rows))]);
+    return buildCsvPreview(rows, catalogue, used, CSV_IMPORT_MAX_ROWS, new Date());
+  }
+
+  /** The company's whole catalogue, active and inactive (inactive is reported as such), read once. */
+  private async csvCatalogue(companyId: string): Promise<Catalogue> {
+    const [models, variants] = await Promise.all([
+      this.catalog.listModels(companyId, { status: 'all' }),
+      this.catalog.listVariants(companyId, { status: 'all' }),
+    ]);
+    return { models, variants };
   }
 
   // ── Export ─────────────────────────────────────────────

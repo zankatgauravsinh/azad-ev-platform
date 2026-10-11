@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
-import { identificationCorrectionSchema } from '@azad/shared';
+import { CSV_IMPORT_MAX_ROWS, identificationCorrectionSchema } from '@azad/shared';
 import { InventoryService, unitIdentityPolicy } from './inventory.service';
 import type { InventoryRepository } from './inventory.repository';
 import type { ActivityLogService } from '../../activity-log/activity-log.service';
@@ -24,6 +24,7 @@ type RepoMock = jest.Mocked<
     | 'lockUnit'
     | 'hasCommittedHistory'
     | 'findDetail'
+    | 'findUsedIdentifiers'
   >
 >;
 
@@ -68,6 +69,7 @@ describe('InventoryService', () => {
       lockUnit: jest.fn(() => repo.findByIdWithVariant('unit-1')),
       hasCommittedHistory: jest.fn().mockResolvedValue(false),
       findDetail: jest.fn(),
+      findUsedIdentifiers: jest.fn().mockResolvedValue({ vin: new Set(), motorNumber: new Set(), batteryNumber: new Set() }),
     } as never;
     activityLog = { record: jest.fn().mockResolvedValue(undefined), recordInTransaction: jest.fn().mockResolvedValue(undefined) } as never;
     catalog = { findActiveVariantForUnit: jest.fn().mockResolvedValue({ variant: curated }), listModels: jest.fn().mockResolvedValue([]), listVariants: jest.fn().mockResolvedValue([]) };
@@ -691,6 +693,44 @@ describe('InventoryService', () => {
 
     it('an unreadable file is a 400 naming the line', async () => {
       await expect(service.importCsv(file(`${HEAD}Solo,"open,Teal\n`), 'user-1')).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('CSV import preview (M4D.2)', () => {
+    const solo = { id: 'model-solo', brand: 'GAMMA', name: 'Solo', isActive: true };
+    const proTeal = { id: 'variant-pro', modelId: 'model-solo', name: 'Pro', colour: 'Teal', isActive: true, exShowroomPrice: 12_500_000n };
+    const file = (csv: string) => ({ buffer: Buffer.from(csv, 'utf8'), originalname: 'units.csv', mimetype: 'text/csv' });
+    const HEAD = 'Model,Variant,Colour,VIN,Motor Number,Battery Number,Selling Price\n';
+    beforeEach(() => {
+      catalog.listModels.mockResolvedValue([solo]);
+      catalog.listVariants.mockResolvedValue([proTeal]);
+    });
+
+    it('reads the explicitly scoped catalogue and the used identifiers once, and writes nothing at all', async () => {
+      repo.findUsedIdentifiers.mockResolvedValue({ vin: new Set(['VIN2']), motorNumber: new Set(), batteryNumber: new Set() });
+      const preview = await service.previewCsv(file(`${HEAD}Solo,Pro,Teal,vin1,m1,b1,\nSolo,Pro,Teal,vin2,m2,b2,99000\n`));
+      expect(catalog.listModels).toHaveBeenCalledWith('company-1', { status: 'all' });
+      expect(catalog.listVariants).toHaveBeenCalledWith('company-1', { status: 'all' });
+      expect(repo.findUsedIdentifiers).toHaveBeenCalledTimes(1);
+      expect(repo.findUsedIdentifiers).toHaveBeenCalledWith({ vin: ['VIN1', 'VIN2'], motorNumber: ['M1', 'M2'], batteryNumber: ['B1', 'B2'] });
+      expect(preview.summary).toEqual({ total: 2, valid: 1, invalid: 1, duplicate: 1 });
+      expect(preview.rows[0]!.unit).toMatchObject({ sellingPrice: '12500000', sellingPriceSource: 'LIST_PRICE' });
+      for (const write of [repo.createUnit, repo.updateUnit, repo.createVariant, repo.addEvent, repo.transaction, catalog.findActiveVariantForUnit, activityLog.record, activityLog.recordInTransaction]) {
+        expect(write).not.toHaveBeenCalled();
+      }
+    });
+
+    it(`refuses more than ${CSV_IMPORT_MAX_ROWS} rows, and an unreadable file, before reading the catalogue`, async () => {
+      const many = Array.from({ length: CSV_IMPORT_MAX_ROWS + 1 }, (_, i) => `Solo,Pro,Teal,v${i},m${i},b${i},`).join('\n');
+      await expect(service.previewCsv(file(`${HEAD}${many}\n`))).rejects.toMatchObject({ status: 400, message: `The file has ${CSV_IMPORT_MAX_ROWS + 1} rows; at most ${CSV_IMPORT_MAX_ROWS} can be imported at once — split it into smaller files.` });
+      await expect(service.previewCsv(file(`${HEAD}Solo,"open,Teal\n`))).rejects.toBeInstanceOf(BadRequestException);
+      expect(catalog.listModels).not.toHaveBeenCalled();
+      expect(repo.findUsedIdentifiers).not.toHaveBeenCalled();
+    });
+
+    it(`exactly ${CSV_IMPORT_MAX_ROWS} rows are accepted`, async () => {
+      const rows = Array.from({ length: CSV_IMPORT_MAX_ROWS }, (_, i) => `Solo,Pro,Teal,vin${i},m${i},b${i},`).join('\n');
+      expect((await service.previewCsv(file(`${HEAD}${rows}\n`))).summary).toMatchObject({ total: CSV_IMPORT_MAX_ROWS, valid: CSV_IMPORT_MAX_ROWS });
     });
   });
 

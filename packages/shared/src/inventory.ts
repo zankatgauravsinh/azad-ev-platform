@@ -225,6 +225,99 @@ export interface InventoryUnitDocumentDto {
   sizeBytes: number;
   createdAt: string;
 }
+/*
+ * M4D.2 — CSV import PREVIEW (POST /inventory/units/import/preview, multipart field "file"). A dry run:
+ * it validates every row exactly as the import does and reports what would happen, writing nothing. It is
+ * advisory — the catalogue and inventory can change before an import runs, so the import re-validates
+ * every row itself.
+ *
+ * HTTP errors: 400 — no file, an unreadable CSV (the message names the line) or more than
+ * CSV_IMPORT_MAX_ROWS rows; 413 — larger than CSV_IMPORT_MAX_BYTES; 401 / 403 — not signed in, or no
+ * inventory.create permission. Problems in individual rows are never HTTP errors: they are row issues.
+ */
+
+/** Data rows (excluding the header) one preview accepts. */
+export const CSV_IMPORT_MAX_ROWS = 2000;
+/** Largest CSV file one preview accepts (bytes). */
+export const CSV_IMPORT_MAX_BYTES = 2 * 1024 * 1024;
+
+/** The CSV column an issue is about (null: the row as a whole). */
+export type CsvImportField =
+  | 'brand' | 'model' | 'variant' | 'colour' | 'vin' | 'motorNumber' | 'batteryNumber'
+  | 'purchaseDate' | 'purchaseCost' | 'sellingPrice' | 'supplier' | 'location' | 'status';
+
+/**
+ * Why a row cannot be imported. The `message` that comes with it says what to fix.
+ * - INVALID_VALUE: a value is missing, not a number, negative, too short or too long.
+ * - INVALID_DATE: the purchase date is not YYYY-MM-DD or D/M/YYYY (day first), or is not a real date.
+ * - STATUS_NOT_ALLOWED: only AVAILABLE units can be imported (Status blank or AVAILABLE).
+ * - MODEL_NOT_FOUND / VARIANT_NOT_FOUND: no such model (for the brand, if given) / variant and colour of
+ *   that model in the company's catalogue. The import never creates catalogue entries.
+ * - MODEL_INACTIVE / VARIANT_INACTIVE: it exists but is inactive.
+ * - MODEL_AMBIGUOUS / VARIANT_AMBIGUOUS: more than one active entry matches (add a Brand column for a
+ *   model name used by several brands; names that differ only in case need fixing in the catalogue).
+ * - DUPLICATE_IN_FILE: another row of this file has the same VIN, motor or battery number — every row
+ *   involved is invalid, none is chosen.
+ * - ALREADY_EXISTS: that VIN, motor or battery number is already used by a scooter. These numbers are
+ *   unique across the whole system, so the message never says where.
+ */
+export type CsvImportIssueCode =
+  | 'INVALID_VALUE' | 'INVALID_DATE' | 'STATUS_NOT_ALLOWED'
+  | 'MODEL_NOT_FOUND' | 'MODEL_INACTIVE' | 'MODEL_AMBIGUOUS'
+  | 'VARIANT_NOT_FOUND' | 'VARIANT_INACTIVE' | 'VARIANT_AMBIGUOUS'
+  | 'DUPLICATE_IN_FILE' | 'ALREADY_EXISTS';
+
+export interface CsvImportIssue {
+  code: CsvImportIssueCode;
+  field: CsvImportField | null;
+  message: string;
+}
+
+/** What the import would create for a VALID row (money in paise, as strings). */
+export interface CsvImportPreviewUnit {
+  modelId: string;
+  variantId: string;
+  brand: string;
+  model: string;
+  variant: string;
+  colour: string;
+  status: 'AVAILABLE';
+  sellingPrice: string;
+  /** FILE: the row's own price; LIST_PRICE: the row left it blank, so the variant's list price applies. */
+  sellingPriceSource: 'FILE' | 'LIST_PRICE';
+  purchaseCost: string;
+  /** Calendar date, YYYY-MM-DD. */
+  purchaseDate: string | null;
+}
+
+export interface CsvImportPreviewRow {
+  /** The line of the file the row starts on (header = line 1; blank lines and multi-line cells counted). */
+  row: number;
+  status: 'VALID' | 'INVALID';
+  /** The row's VIN as it would be stored (trimmed, upper-case), to identify the row; null when blank. */
+  vin: string | null;
+  /** Empty for a VALID row. */
+  issues: CsvImportIssue[];
+  /** Only for a VALID row. */
+  unit: CsvImportPreviewUnit | null;
+}
+
+export interface CsvImportPreview {
+  /** When the preview was computed (ISO). Advisory: the import re-validates every row when it runs. */
+  checkedAt: string;
+  maxRows: number;
+  summary: {
+    /** Data rows read from the file. */
+    total: number;
+    valid: number;
+    invalid: number;
+    /** Rows with a DUPLICATE_IN_FILE or ALREADY_EXISTS issue (they are also counted as invalid). */
+    duplicate: number;
+  };
+  /** Every row, in file order. */
+  rows: CsvImportPreviewRow[];
+}
+
 export interface CsvImportResult {
   created: number;
   failed: number;
