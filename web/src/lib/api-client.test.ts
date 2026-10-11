@@ -1,6 +1,6 @@
 import { AxiosError, type AxiosResponse } from 'axios';
 import { describe, it, expect } from 'vitest';
-import { apiErrorMessage, apiErrorMessageAsync } from './api-client';
+import { apiErrorMessage, apiErrorMessageAsync, apiFieldErrors } from './api-client';
 
 const axiosError = (data: unknown, status = 403): AxiosError =>
   new AxiosError('Request failed with status code ' + status, 'ERR_BAD_REQUEST', undefined, undefined, { status, data, headers: {}, config: {} } as unknown as AxiosResponse);
@@ -26,5 +26,18 @@ describe('apiErrorMessageAsync', () => {
     await expect(apiErrorMessageAsync(json)).resolves.toBe(apiErrorMessage(json));
     await expect(apiErrorMessageAsync(new Error('boom'))).resolves.toBe('Something went wrong');
     await expect(apiErrorMessageAsync(undefined, 'Fallback')).resolves.toBe('Fallback');
+  });
+});
+
+describe('apiFieldErrors', () => {
+  it('maps a validation response to the first message per field', () => {
+    const e = axiosError({ message: 'Validation failed', details: [{ path: 'vin', message: 'Too short' }, { path: 'vin', message: 'Second' }, { path: 'reason', message: 'A reason is required' }] }, 400);
+    expect(apiFieldErrors(e)).toEqual({ vin: 'Too short', reason: 'A reason is required' });
+  });
+
+  it('is empty for anything else', () => {
+    expect(apiFieldErrors(axiosError({ message: 'Conflict' }, 409))).toEqual({});
+    expect(apiFieldErrors(axiosError({ message: 'x', details: 'not a list' }, 400))).toEqual({});
+    expect(apiFieldErrors(new Error('boom'))).toEqual({});
   });
 });

@@ -24,6 +24,7 @@ import {
   type ListUnitsQuery,
   type Paginated,
   type ReturnDisposition,
+  type UnitIdentityPolicy,
   type UpdateUnitInput,
 } from '@azad/shared';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
@@ -79,6 +80,19 @@ const MSG_VARIANT_AFTER_BOOKING = 'Vehicle model/variant cannot be changed after
 const MSG_VARIANT_HISTORY = 'Vehicle model/variant cannot be changed once the vehicle has a sale, warranty or AMC history.';
 const MSG_CORRECTION_NOT_ELIGIBLE = 'Identification correction applies only to delivered, in-service or returned vehicles, or to vehicles with a sale, warranty or AMC history — edit this vehicle instead.';
 const MSG_CHANGED_CONCURRENTLY = 'This vehicle was changed by someone else — reload and try again.';
+
+/**
+ * The rules above, as the read-only policy the unit's detail carries for the UI (M4C). The same status
+ * sets and the same history check the guards below enforce — the guards remain authoritative.
+ */
+export function unitIdentityPolicy(status: UnitStatus, committed: boolean): UnitIdentityPolicy {
+  return {
+    committed,
+    catalogueEditable: IDENTITY_EDITABLE_STATUSES.has(status) && !committed,
+    identificationEditable: IDENTIFICATION_EDITABLE_STATUSES.has(status) && !committed,
+    correctionEligible: IDENTIFICATION_CORRECTION_STATUSES.has(status) || committed,
+  };
+}
 
 /** A lazily evaluated, memoised "has committed history" check (one query at most). */
 type HistoryCheck = () => Promise<boolean>;
@@ -187,8 +201,10 @@ export class InventoryService {
   async getById(id: string) {
     const unit = await this.repo.findDetail(id);
     if (!unit) throw new NotFoundException('Scooter not found');
+    const committed = await this.repo.hasCommittedHistory(id);
     return {
       ...unit,
+      identity: unitIdentityPolicy(unit.status as UnitStatus, committed),
       photos: unit.photos.map((p) => ({
         id: p.id,
         fileKey: p.fileKey,

@@ -20,6 +20,8 @@ const empty: FormValues = { brand: '', name: '', description: '' };
 /** Create or edit a model: brand, name, description. GST classification and activation have their own places. */
 export function ModelFormDialog({ open, onOpenChange, model }: { open: boolean; onOpenChange: (o: boolean) => void; model?: CatalogModelDto }): JSX.Element {
   const isEdit = Boolean(model);
+  // Once a vehicle of this model is committed, its brand and name are locked by the server (M4B.5).
+  const identityLocked = Boolean(model?.identityLocked);
   const { createModel, updateModel } = useCatalogMutations();
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormValues>({ resolver: zodResolver(formSchema), defaultValues: empty });
   useEffect(() => { if (open) reset(model ? { brand: model.brand, name: model.name, description: model.description ?? '' } : empty); }, [open, model, reset]);
@@ -28,7 +30,8 @@ export function ModelFormDialog({ open, onOpenChange, model }: { open: boolean; 
     const payload = { brand: v.brand, name: v.name, description: v.description || undefined };
     try {
       if (isEdit && model) {
-        await updateModel.mutateAsync({ id: model.id, input: payload });
+        // A locked model never sends its brand / name (they cannot change).
+        await updateModel.mutateAsync({ id: model.id, input: identityLocked ? { description: payload.description } : payload });
         toast.success('Model updated');
       } else {
         await createModel.mutateAsync(payload);
@@ -45,11 +48,22 @@ export function ModelFormDialog({ open, onOpenChange, model }: { open: boolean; 
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Edit model' : 'Add model'}</DialogTitle>
-          <DialogDescription>{isEdit ? 'Changes the name shown everywhere this model appears, including past records.' : 'A model groups the variants (trim and colour) you stock.'}</DialogDescription>
+          <DialogDescription>
+            {!isEdit
+              ? 'A model groups the variants (trim and colour) you stock.'
+              : identityLocked
+                ? 'Only the description can change.'
+                : 'No vehicle of this model is booked or sold yet, so its brand and name can still change.'}
+          </DialogDescription>
         </DialogHeader>
+        {identityLocked && (
+          <p role="note" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            Vehicles of this model are booked, delivered or have sale, warranty or AMC history, so its brand and name can't change. Add a new model for future stock instead.
+          </p>
+        )}
         <form onSubmit={onSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-2" noValidate>
-          <div className="space-y-1.5"><Label htmlFor="model-brand">Brand</Label><Input id="model-brand" autoComplete="off" placeholder="e.g. Comptech" {...register('brand')} />{errors.brand && <p className="text-xs text-destructive">{errors.brand.message}</p>}</div>
-          <div className="space-y-1.5"><Label htmlFor="model-name">Model name</Label><Input id="model-name" autoComplete="off" placeholder="e.g. VX1" {...register('name')} />{errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}</div>
+          <div className="space-y-1.5"><Label htmlFor="model-brand">Brand</Label><Input id="model-brand" autoComplete="off" placeholder="e.g. Comptech" readOnly={identityLocked} aria-readonly={identityLocked} className={identityLocked ? 'bg-muted' : undefined} {...register('brand')} />{errors.brand && <p className="text-xs text-destructive">{errors.brand.message}</p>}</div>
+          <div className="space-y-1.5"><Label htmlFor="model-name">Model name</Label><Input id="model-name" autoComplete="off" placeholder="e.g. VX1" readOnly={identityLocked} aria-readonly={identityLocked} className={identityLocked ? 'bg-muted' : undefined} {...register('name')} />{errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}</div>
           <div className="space-y-1.5 sm:col-span-2"><Label htmlFor="model-description">Description</Label><Textarea id="model-description" rows={2} placeholder="Optional" {...register('description')} />{errors.description && <p className="text-xs text-destructive">{errors.description.message}</p>}</div>
           <DialogFooter className="sm:col-span-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

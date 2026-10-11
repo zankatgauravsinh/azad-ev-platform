@@ -68,6 +68,21 @@ export function apiErrorMessage(error: unknown, fallback = 'Something went wrong
   return fallback;
 }
 
+/**
+ * Field-level messages from a 400 "Validation failed" response ({ details: [{ path, message }] }), keyed
+ * by field path (first message per field). Empty for any other error.
+ */
+export function apiFieldErrors(error: unknown): Record<string, string> {
+  if (!axios.isAxiosError(error)) return {};
+  const details = (error.response?.data as ApiError | undefined)?.details;
+  if (!Array.isArray(details)) return {};
+  const out: Record<string, string> = {};
+  for (const d of details as { path?: unknown; message?: unknown }[]) {
+    if (typeof d?.path === 'string' && typeof d.message === 'string' && !(d.path in out)) out[d.path] = d.message;
+  }
+  return out;
+}
+
 /** Reads a Blob as text (FileReader keeps this working where Blob.text() is unavailable). */
 function blobText(blob: Blob): Promise<string> {
   if (typeof blob.text === 'function') return blob.text();

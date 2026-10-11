@@ -46,8 +46,18 @@ export function toVariantPayload(v: FormValues): CreateCatalogVariantInput {
   };
 }
 
-export function VariantFormDialog({ open, onOpenChange, modelId, modelLabel, variant }: { open: boolean; onOpenChange: (o: boolean) => void; modelId: string; modelLabel: string; variant?: CatalogVariantDto }): JSX.Element {
+export function VariantFormDialog({ open, onOpenChange, modelId, modelLabel, variant, onSaved }: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  modelId: string;
+  modelLabel: string;
+  variant?: CatalogVariantDto;
+  /** Called with the saved variant (e.g. so the Add Scooter form can select a variant it just created). */
+  onSaved?: (saved: CatalogVariantDto) => void;
+}): JSX.Element {
   const isEdit = Boolean(variant);
+  // Once a vehicle of this variant is committed, its name and colour are locked by the server (M4B.5).
+  const identityLocked = Boolean(variant?.identityLocked);
   const { createVariant, updateVariant } = useCatalogMutations();
   const { register, handleSubmit, reset, watch, formState: { errors, isSubmitting } } = useForm<FormValues>({ resolver: zodResolver(formSchema), defaultValues: empty });
   useEffect(() => { if (open) reset(variant ? fromDto(variant) : empty); }, [open, variant, reset]);
@@ -57,10 +67,14 @@ export function VariantFormDialog({ open, onOpenChange, modelId, modelLabel, var
     const payload = toVariantPayload(v);
     try {
       if (isEdit && variant) {
-        await updateVariant.mutateAsync({ id: variant.id, input: payload });
+        // A locked variant never sends its name / colour (they cannot change).
+        const input = identityLocked ? { ...payload, name: undefined, colour: undefined } : payload;
+        const saved = await updateVariant.mutateAsync({ id: variant.id, input });
+        onSaved?.(saved);
         toast.success('Variant updated');
       } else {
-        await createVariant.mutateAsync({ modelId, input: payload });
+        const saved = await createVariant.mutateAsync({ modelId, input: payload });
+        onSaved?.(saved);
         toast.success('Variant added');
       }
       onOpenChange(false);
@@ -78,9 +92,14 @@ export function VariantFormDialog({ open, onOpenChange, modelId, modelLabel, var
           <DialogTitle>{isEdit ? 'Edit variant' : 'Add variant'} · <span className="font-normal text-muted-foreground">{modelLabel}</span></DialogTitle>
           <DialogDescription>The list price is the catalogue price only — scooters already in stock, bookings and quotations keep their own prices.</DialogDescription>
         </DialogHeader>
+        {identityLocked && (
+          <p role="note" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            Vehicles of this variant are booked, delivered or have sale, warranty or AMC history, so its name and colour can't change. Add a new variant for future stock instead. Price, specifications, hex colour and status can still be edited.
+          </p>
+        )}
         <form onSubmit={onSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-3" noValidate>
-          <div className="space-y-1.5"><Label htmlFor="v-name">Variant name</Label><Input id="v-name" autoComplete="off" placeholder="e.g. Pro" {...register('name')} />{err('name')}</div>
-          <div className="space-y-1.5"><Label htmlFor="v-colour">Colour</Label><Input id="v-colour" autoComplete="off" placeholder="e.g. Teal" {...register('colour')} />{err('colour')}</div>
+          <div className="space-y-1.5"><Label htmlFor="v-name">Variant name</Label><Input id="v-name" autoComplete="off" placeholder="e.g. Pro" readOnly={identityLocked} aria-readonly={identityLocked} className={identityLocked ? 'bg-muted' : undefined} {...register('name')} />{err('name')}</div>
+          <div className="space-y-1.5"><Label htmlFor="v-colour">Colour</Label><Input id="v-colour" autoComplete="off" placeholder="e.g. Teal" readOnly={identityLocked} aria-readonly={identityLocked} className={identityLocked ? 'bg-muted' : undefined} {...register('colour')} />{err('colour')}</div>
           <div className="space-y-1.5">
             <Label htmlFor="v-hex">Hex colour</Label>
             <div className="flex items-center gap-2">

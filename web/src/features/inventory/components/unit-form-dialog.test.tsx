@@ -1,0 +1,231 @@
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { ChangeEvent, ReactNode } from 'react';
+import { AxiosError, type AxiosResponse } from 'axios';
+import type { UnitIdentityPolicy } from '@azad/shared';
+import type { UnitDetail, VariantOption } from '../api';
+import { UnitFormDialog } from './unit-form-dialog';
+
+const M1 = '11111111-1111-4111-8111-111111111111';
+const M2 = '22222222-2222-4222-8222-222222222222';
+const V1 = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const V2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const V3 = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const NEW = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const vx = { id: M1, brand: 'Azad', name: 'VX' };
+const mx = { id: M2, brand: 'Azad', name: 'MX' };
+const variant = (id: string, name: string, colour: string, model = vx, price = '12500000'): VariantOption => ({ id, name, colour, hexColour: '#00B8A9', exShowroomPrice: price, model });
+
+const h = vi.hoisted(() => ({
+  perms: new Set<string>(),
+  models: [] as unknown[],
+  variants: {} as Record<string, unknown[]>,
+  create: vi.fn(),
+  update: vi.fn(),
+  toastError: vi.fn(),
+  toastSuccess: vi.fn(),
+}));
+vi.mock('@/features/auth/auth-context', () => ({ useAuth: () => ({ can: (p: string) => h.perms.has(p) }) }));
+vi.mock('../hooks', () => ({
+  useModels: () => ({ data: h.models }),
+  useVariants: (modelId: string | undefined, enabled: boolean) => ({ data: enabled && modelId ? h.variants[modelId] ?? [] : [] }),
+  useCreateUnit: () => ({ mutateAsync: h.create }),
+  useUpdateUnit: () => ({ mutateAsync: h.update }),
+}));
+vi.mock('../api', () => ({ inventoryApi: { checkVin: vi.fn().mockResolvedValue({ exists: false }) } }));
+vi.mock('./vin-scanner', () => ({ VinScanner: () => null }));
+vi.mock('sonner', () => ({ toast: { success: (m: string) => h.toastSuccess(m), error: (m: string) => h.toastError(m) } }));
+// The existing catalogue dialog, stubbed: "creating" a variant adds it to the model's list and reports it back.
+vi.mock('@/features/catalog/components/variant-form-dialog', async () => {
+  const React = await import('react');
+  return {
+    VariantFormDialog: ({ modelId, onSaved }: { modelId: string; onSaved?: (v: unknown) => void }) =>
+      React.createElement('button', {
+        type: 'button',
+        onClick: () => {
+          const created = { id: NEW, name: 'Max', colour: 'Lime', hexColour: null, exShowroomPrice: '13000000', model: { id: modelId, brand: 'Azad', name: 'VX' } };
+          h.variants[modelId] = [...(h.variants[modelId] ?? []), created];
+          onSaved?.(created);
+        },
+      }, 'Create variant (stub)'),
+  };
+});
+vi.mock('@/components/ui/select', async () => {
+  const React = await import('react');
+  type P = { value?: string; onValueChange?: (v: string) => void; disabled?: boolean; children?: ReactNode };
+  return {
+    Select: ({ value, onValueChange, disabled, children }: P) =>
+      React.createElement('select', { value, disabled, onChange: (e: ChangeEvent<HTMLSelectElement>) => onValueChange?.(e.target.value) }, React.createElement('option', { value: '' }, '—'), children),
+    SelectTrigger: () => null,
+    SelectValue: () => null,
+    SelectContent: ({ children }: P) => React.createElement(React.Fragment, null, children),
+    SelectItem: ({ value, children }: P) => React.createElement('option', { value }, children),
+  };
+});
+
+const selects = (): HTMLSelectElement[] => screen.getAllByRole('combobox') as HTMLSelectElement[];
+const choose = (index: number, value: string): void => { fireEvent.change(selects()[index]!, { target: { value } }); };
+const fill = (label: string, value: string): void => { fireEvent.change(screen.getByLabelText(label), { target: { value } }); };
+const field = (label: string): HTMLInputElement => screen.getByLabelText(label) as HTMLInputElement;
+const submit = (name: string): void => { fireEvent.click(screen.getByRole('button', { name })); };
+
+const policy = (over: Partial<UnitIdentityPolicy> = {}): UnitIdentityPolicy => ({ committed: false, catalogueEditable: true, identificationEditable: true, correctionEligible: false, ...over });
+const unit = (status: string, identity: UnitIdentityPolicy): UnitDetail => ({
+  id: 'u1', vin: 'VIN0001', motorNumber: 'MOT0001', batteryNumber: 'BAT0001', status, purchaseDate: null, purchaseCost: '5000000', sellingPrice: '12000000',
+  supplier: 'Acme', location: 'Bay 1', notes: null, createdAt: '', updatedAt: '',
+  variant: { id: V1, name: 'Pro', colour: 'Teal', hexColour: '#00B8A9', model: vx },
+  identity, events: [], photos: [], documents: [], bookings: [], sales: [], serviceJobs: [],
+} as unknown as UnitDetail);
+
+beforeEach(() => {
+  h.perms = new Set(['inventory.create', 'inventory.update']);
+  h.models = [vx, mx];
+  h.variants = { [M1]: [variant(V1, 'Pro', 'Teal'), variant(V2, 'Max', 'Red')], [M2]: [variant(V3, 'Lite', 'Blue', mx)] };
+  h.create.mockReset().mockResolvedValue({});
+  h.update.mockReset().mockResolvedValue({});
+  h.toastError.mockReset();
+  h.toastSuccess.mockReset();
+});
+afterEach(cleanup);
+
+describe('UnitFormDialog — Add scooter', () => {
+  const fillIdentifiers = (): void => { fill('VIN', ' md9abc123 '); fill('Motor number', 'm-1'); fill('Battery number', 'b-1'); };
+
+  it('selects model → variant and submits only the variantId; the colour comes from the variant; a blank price is left out', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    expect(screen.queryByRole('textbox', { name: 'Variant' })).toBeNull(); // no free-text variant
+    expect(field('Colour').readOnly).toBe(true);
+    choose(0, M1);
+    choose(1, V2);
+    expect(field('Colour').value).toBe('Red');
+    expect(field('Selling price (₹)').placeholder).toContain('List price');
+    fillIdentifiers();
+    submit('Add scooter');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
+    const input = h.create.mock.calls[0]![0];
+    expect(input).toMatchObject({ variantId: V2, vin: 'MD9ABC123', motorNumber: 'M-1', batteryNumber: 'B-1', status: 'AVAILABLE', purchaseCost: 0 });
+    for (const key of ['sellingPrice', 'modelId', 'variant', 'colour', 'hexColour']) expect(input).not.toHaveProperty(key);
+  });
+
+  it('keeps an explicit selling price, independent of the list price', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    choose(0, M1);
+    choose(1, V1);
+    fillIdentifiers();
+    fill('Selling price (₹)', '99000');
+    submit('Add scooter');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
+    expect(h.create.mock.calls[0]![0].sellingPrice).toBe(9_900_000);
+  });
+
+  it('changing the model clears the variant (a variant belongs to one model); a variant is required', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    choose(0, M1);
+    choose(1, V1);
+    choose(0, M2);
+    expect(selects()[1]!.value).toBe('');
+    fillIdentifiers();
+    submit('Add scooter');
+    expect(await screen.findByText('Select a variant')).toBeTruthy();
+    expect(h.create).not.toHaveBeenCalled();
+  });
+
+  it('Add variant shortcut: creates under the chosen model, the list refreshes and the new variant is selected', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    expect(screen.queryByRole('button', { name: 'Add variant' })).toBeNull(); // no model yet
+    choose(0, M1);
+    fireEvent.click(screen.getByRole('button', { name: 'Add variant' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create variant (stub)' }));
+    await waitFor(() => expect(selects()[1]!.value).toBe(NEW));
+    expect(field('Colour').value).toBe('Lime');
+    fillIdentifiers();
+    submit('Add scooter');
+    await waitFor(() => expect(h.create.mock.calls[0]![0].variantId).toBe(NEW));
+  });
+
+  it('no Add variant shortcut without inventory.create, or for an inactive model', () => {
+    h.perms = new Set(['inventory.update']);
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    choose(0, M1);
+    expect(screen.queryByRole('button', { name: 'Add variant' })).toBeNull();
+    cleanup();
+    // The unit's own model is inactive (not in the active list): it stays selected, but no variants are added to it.
+    h.perms = new Set(['inventory.create', 'inventory.update']);
+    h.models = [mx];
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={unit('AVAILABLE', policy())} />);
+    expect(selects()[0]!.value).toBe(M1);
+    expect(screen.queryByRole('button', { name: 'Add variant' })).toBeNull();
+  });
+
+  it('shows a server error safely', async () => {
+    h.create.mockRejectedValue(new AxiosError('x', '409', undefined, undefined, { status: 409, data: { message: 'A scooter with VIN MD9ABC123 already exists' } } as AxiosResponse));
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    choose(0, M1);
+    choose(1, V1);
+    fillIdentifiers();
+    submit('Add scooter');
+    await waitFor(() => expect(h.toastError).toHaveBeenCalledWith('A scooter with VIN MD9ABC123 already exists'));
+  });
+});
+
+describe('UnitFormDialog — Edit scooter', () => {
+  it('never committed (AVAILABLE): variant and identifiers editable; only what changed is sent', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={unit('AVAILABLE', policy())} />);
+    expect(screen.queryByRole('note')).toBeNull();
+    expect(selects()[1]!.disabled).toBe(false);
+    choose(1, V2);
+    fill('VIN', 'vin0002');
+    submit('Save changes');
+    await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
+    const input = h.update.mock.calls[0]![0];
+    expect(input).toMatchObject({ variantId: V2, vin: 'VIN0002', sellingPrice: 12_000_000, location: 'Bay 1' });
+    expect(input).not.toHaveProperty('motorNumber');
+    expect(input).not.toHaveProperty('batteryNumber');
+  });
+
+  it('BOOKED without history: model / variant locked, identifiers still editable', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={unit('BOOKED', policy({ catalogueEditable: false }))} />);
+    expect(selects()[0]!.disabled).toBe(true);
+    expect(selects()[1]!.disabled).toBe(true);
+    expect(field('VIN').readOnly).toBe(false);
+    expect(screen.getByRole('note').textContent).toContain('booked');
+    expect(screen.queryByRole('button', { name: 'Add variant' })).toBeNull();
+    fill('Battery number', 'bat0009');
+    submit('Save changes');
+    await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
+    expect(h.update.mock.calls[0]![0]).toMatchObject({ batteryNumber: 'BAT0009' });
+    expect(h.update.mock.calls[0]![0]).not.toHaveProperty('variantId');
+  });
+
+  it('committed history (e.g. restocked after a return): all identity controls locked; points to the owner correction', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={unit('AVAILABLE', policy({ committed: true, catalogueEditable: false, identificationEditable: false, correctionEligible: true }))} />);
+    expect(selects()[0]!.disabled).toBe(true);
+    expect(selects()[1]!.disabled).toBe(true);
+    for (const label of ['VIN', 'Motor number', 'Battery number']) expect(field(label).readOnly).toBe(true);
+    expect((screen.getByRole('button', { name: 'Scan VIN' }) as HTMLButtonElement).disabled).toBe(true);
+    const note = screen.getByRole('note').textContent ?? '';
+    expect(note).toContain('sale, warranty or AMC history');
+    expect(note).toContain('Correct identification');
+    fill('Location', 'Bay 9');
+    submit('Save changes');
+    await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
+    const input = h.update.mock.calls[0]![0];
+    expect(input).toMatchObject({ location: 'Bay 9', supplier: 'Acme' });
+    for (const key of ['variantId', 'vin', 'motorNumber', 'batteryNumber']) expect(input).not.toHaveProperty(key);
+  });
+
+  it('DELIVERED without history: locked by status, with the matching explanation', () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={unit('DELIVERED', policy({ catalogueEditable: false, identificationEditable: false, correctionEligible: true }))} />);
+    expect(screen.getByRole('note').textContent).toContain('has been delivered');
+    expect(field('Motor number').readOnly).toBe(true);
+  });
+
+  it("the unit's current model / variant stay selected even if inactive in the catalogue", () => {
+    h.models = [mx];
+    h.variants = { [M1]: [] };
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={unit('AVAILABLE', policy())} />);
+    expect(selects()[0]!.value).toBe(M1);
+    expect(selects()[1]!.value).toBe(V1);
+    expect(field('Colour').value).toBe('Teal');
+  });
+});

@@ -175,4 +175,11 @@ describe('ModelDetailDialog — GST (read-only)', () => {
     renderWith(['inventory.view'], model({ taxClassificationId: null }));
     expect(screen.getByText(/Not configured — this model cannot be invoiced/)).toBeInTheDocument();
   });
+
+  it('M4B.5: marks a model and a variant in use (identity locked); unlocked ones carry no marker', () => {
+    renderWith(['inventory.view'], model({ identityLocked: true }), [variant({ id: 'v1', identityLocked: true }), variant({ id: 'v2', name: 'Lite', identityLocked: false })]);
+    expect(screen.getAllByText('In use')).toHaveLength(2); // the model's badge + the locked variant's
+    renderWith(['inventory.view'], model({ identityLocked: false }), [variant({ identityLocked: false })]);
+    expect(screen.queryByText('In use')).toBeNull();
+  });
 });

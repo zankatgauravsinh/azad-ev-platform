@@ -56,4 +56,20 @@ describe('ModelFormDialog', () => {
     await waitFor(() => expect(h.toastError).toHaveBeenCalledWith('Model "VX1" already exists'));
     expect(onOpenChange).not.toHaveBeenCalled();
   });
+
+  it('M4B.5: a model in use keeps brand and name read-only, explains why, and sends only the description', async () => {
+    render(<ModelFormDialog open onOpenChange={() => {}} model={{ ...model, identityLocked: true }} />);
+    expect(field('Brand').readOnly).toBe(true);
+    expect(field('Model name').readOnly).toBe(true);
+    expect(screen.getByRole('note').textContent).toContain('Add a new model for future stock');
+    fill('Description', 'Updated');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(h.update).toHaveBeenCalledWith({ id: 'm1', input: { description: 'Updated' } }));
+  });
+
+  it('M4B.5: a model not in use keeps brand and name editable', () => {
+    render(<ModelFormDialog open onOpenChange={() => {}} model={{ ...model, identityLocked: false }} />);
+    expect(field('Brand').readOnly).toBe(false);
+    expect(screen.queryByRole('note')).toBeNull();
+  });
 });

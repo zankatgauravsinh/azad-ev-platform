@@ -79,4 +79,33 @@ describe('VariantFormDialog', () => {
     expect(toVariantPayload({ name: 'Pro', colour: 'Red', hexColour: '', priceRupees: 1000.5, batteryType: '', batteryCapacity: 'x', rangeKm: '', topSpeedKmph: 80, chargingTimeHrs: '', motorPowerW: 0, warrantyMonths: 12 }))
       .toEqual({ name: 'Pro', colour: 'Red', hexColour: undefined, exShowroomPrice: 100050, batteryType: undefined, batteryCapacity: 'x', rangeKm: undefined, topSpeedKmph: 80, chargingTimeHrs: undefined, motorPowerW: 0, warrantyMonths: 12 });
   });
+
+  it('M4B.5: a variant in use keeps name and colour read-only, explains why, and still saves price, specs and hex colour', async () => {
+    const onSaved = vi.fn();
+    h.update.mockResolvedValue({ ...variant, exShowroomPrice: '13000000' });
+    render(<VariantFormDialog open onOpenChange={() => {}} modelId="m1" modelLabel="TESTBRAND VX1" variant={{ ...variant, identityLocked: true }} onSaved={onSaved} />);
+    expect(field('Variant name').readOnly).toBe(true);
+    expect(field('Colour').readOnly).toBe(true);
+    expect(field('Hex colour').readOnly).toBe(false);
+    expect(screen.getByRole('note').textContent).toContain('Add a new variant for future stock');
+    fill(/list price/, '130000');
+    fill('Hex colour', '#112233');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
+    const { input } = h.update.mock.calls[0]![0];
+    expect(input).toMatchObject({ exShowroomPrice: 13_000_000, hexColour: '#112233', rangeKm: 120 });
+    expect(input.name).toBeUndefined();
+    expect(input.colour).toBeUndefined();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ exShowroomPrice: '13000000' })));
+  });
+
+  it('reports the created variant to the caller (the Add Scooter shortcut selects it)', async () => {
+    const onSaved = vi.fn();
+    h.create.mockResolvedValue({ ...variant, id: 'v-new' });
+    render(<VariantFormDialog open onOpenChange={() => {}} modelId="m1" modelLabel="TESTBRAND VX1" onSaved={onSaved} />);
+    fill('Variant name', 'Max');
+    fill('Colour', 'Lime');
+    fireEvent.click(screen.getByRole('button', { name: 'Add variant' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ id: 'v-new' })));
+  });
 });

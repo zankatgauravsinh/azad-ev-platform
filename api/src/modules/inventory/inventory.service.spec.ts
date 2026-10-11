@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { identificationCorrectionSchema } from '@azad/shared';
-import { InventoryService } from './inventory.service';
+import { InventoryService, unitIdentityPolicy } from './inventory.service';
 import type { InventoryRepository } from './inventory.repository';
 import type { ActivityLogService } from '../../activity-log/activity-log.service';
 import type { ExportService } from '../../export/export.service';
@@ -23,6 +23,7 @@ type RepoMock = jest.Mocked<
     | 'transaction'
     | 'lockUnit'
     | 'hasCommittedHistory'
+    | 'findDetail'
   >
 >;
 
@@ -66,6 +67,7 @@ describe('InventoryService', () => {
       // By default the locked row is the unit as read, and the vehicle has no committed history.
       lockUnit: jest.fn(() => repo.findByIdWithVariant('unit-1')),
       hasCommittedHistory: jest.fn().mockResolvedValue(false),
+      findDetail: jest.fn(),
     } as never;
     activityLog = { record: jest.fn().mockResolvedValue(undefined), recordInTransaction: jest.fn().mockResolvedValue(undefined) } as never;
     catalog = { findActiveVariantForUnit: jest.fn().mockResolvedValue({ variant: curated }) };
@@ -574,6 +576,55 @@ describe('InventoryService', () => {
     it('strips anything else — the tenant and the actor never come from the request', () => {
       const r = parse({ vin: 'MD9ABC123', reason: 'Typo at entry', companyId: 'c', userId: 'u', status: 'AVAILABLE', notes: 'x' });
       expect(r.success && r.data).toEqual({ vin: 'MD9ABC123', reason: 'Typo at entry' });
+    });
+  });
+
+  describe('identity policy for the UI (M4C)', () => {
+    // [status, committed] → [catalogueEditable, identificationEditable, correctionEligible]
+    it.each([
+      ['AVAILABLE', false, [true, true, false]],
+      ['RESERVED', false, [true, true, false]],
+      ['BOOKED', false, [false, true, false]],
+      ['DELIVERED', false, [false, false, true]],
+      ['IN_SERVICE', false, [false, false, true]],
+      ['RETURNED', false, [false, false, true]],
+      ['AVAILABLE', true, [false, false, true]],
+      ['RESERVED', true, [false, false, true]],
+      ['BOOKED', true, [false, false, true]],
+      ['DELIVERED', true, [false, false, true]],
+      ['IN_SERVICE', true, [false, false, true]],
+      ['RETURNED', true, [false, false, true]],
+    ] as const)('%s, committed=%s', (status, committed, [catalogueEditable, identificationEditable, correctionEligible]) => {
+      expect(unitIdentityPolicy(status, committed)).toEqual({ committed, catalogueEditable, identificationEditable, correctionEligible });
+    });
+
+    it('agrees with the guards: whatever the policy allows the ordinary edit passes, and what it forbids is refused', async () => {
+      for (const status of ['AVAILABLE', 'RESERVED', 'BOOKED', 'DELIVERED', 'IN_SERVICE', 'RETURNED'] as const) {
+        for (const committed of [false, true]) {
+          const policy = unitIdentityPolicy(status, committed);
+          repo.findByIdWithVariant.mockResolvedValue({ ...unit, status, motorNumber: 'M1', batteryNumber: 'B1' } as never);
+          repo.hasCommittedHistory.mockResolvedValue(committed);
+          repo.findByVin.mockResolvedValue(null);
+          const identification = service.update('unit-1', { motorNumber: 'M2' }, 'user-1');
+          if (policy.identificationEditable) await expect(identification).resolves.toBeDefined();
+          else await expect(identification).rejects.toMatchObject({ status: 409 });
+          catalog.findActiveVariantForUnit.mockResolvedValue({ variant: { ...variant, id: 'variant-2', colour: 'Red' } });
+          const catalogue = service.update('unit-1', { variantId: 'variant-2' }, 'user-1');
+          if (policy.catalogueEditable) await expect(catalogue).resolves.toBeDefined();
+          else await expect(catalogue).rejects.toMatchObject({ status: 409 });
+          const correction = service.correctIdentification('unit-1', { batteryNumber: 'B9', reason: 'Typo at stock entry' } as never, { id: 'o', role: 'OWNER' });
+          if (policy.correctionEligible) await expect(correction).resolves.toBeDefined();
+          else await expect(correction).rejects.toMatchObject({ status: 409 });
+        }
+      }
+    });
+
+    it("the unit's detail carries the policy, from one history check", async () => {
+      repo.findDetail.mockResolvedValue({ ...unit, status: 'AVAILABLE', photos: [], documents: [] } as never);
+      repo.hasCommittedHistory.mockResolvedValue(true);
+      const detail = await service.getById('unit-1');
+      expect(detail.identity).toEqual({ committed: true, catalogueEditable: false, identificationEditable: false, correctionEligible: true });
+      expect(repo.hasCommittedHistory).toHaveBeenCalledWith('unit-1');
     });
   });
 

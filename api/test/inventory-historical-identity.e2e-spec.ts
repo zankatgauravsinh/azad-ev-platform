@@ -78,6 +78,10 @@ describe('Historical vehicle identity protection (e2e)', () => {
     const r = await row(id);
     return { vin: r.vin, motorNumber: r.motorNumber, batteryNumber: r.batteryNumber, variantId: r.variantId };
   };
+  /** The read-only identity policy on the unit's detail (M4C). */
+  const policy = async (id: string, co: TestCompany = A) =>
+    (await http().get(`/api/v1/inventory/units/${id}`).set('Authorization', co.auth()).expect(200)).body.identity;
+  const COMMITTED = { committed: true, catalogueEditable: false, identificationEditable: false, correctionEligible: true };
   const original = (u: Unit) => ({ vin: u.vin, motorNumber: u.motorNumber, batteryNumber: u.batteryNumber, variantId: u.variantId });
   const updateAudits = (unitId: string) => prisma.activityLog.count({ where: { entityType: 'InventoryUnit', entityId: unitId, action: 'UPDATE' } });
 
@@ -127,6 +131,10 @@ describe('Historical vehicle identity protection (e2e)', () => {
       u = await prepare();
       expect((await row(u.id)).status).toBe(status);
     }, E2E_HOOK_TIMEOUT);
+
+    it('M4C: the detail reports the vehicle as committed — no ordinary identity edit, correction eligible', async () => {
+      expect(await policy(u.id)).toEqual(COMMITTED);
+    });
 
     it('11. the ordinary edit refuses VIN / motor / battery changes atomically: nothing else in the request is applied, nothing audited', async () => {
       const before = await row(u.id);
@@ -186,6 +194,10 @@ describe('Historical vehicle identity protection (e2e)', () => {
     let u: Unit;
     beforeAll(async () => { u = await prepare(); expect((await row(u.id)).status).toBe(status); }, E2E_HOOK_TIMEOUT);
 
+    it('M4C: the detail reports the committed policy', async () => {
+      expect(await policy(u.id)).toEqual(COMMITTED);
+    });
+
     it('the ordinary edit keeps refusing identity changes with the status messages', async () => {
       expect((await edit(u.id, { vin: `SV${stamp}${serial++}` }).expect(409)).body.message).toBe(AFTER_DELIVERY);
       expect((await edit(u.id, { variantId: redVariantId }).expect(409)).body.message).toBe(VARIANT_AFTER_BOOKING);
@@ -205,6 +217,7 @@ describe('Historical vehicle identity protection (e2e)', () => {
     it.each(['AVAILABLE', 'RESERVED'])('1. %s: the ordinary edit changes identifiers and variant; the correction refuses (409)', async (status) => {
       const u = await newUnit();
       if (status === 'RESERVED') await setStatus(u.id, 'RESERVED');
+      expect(await policy(u.id)).toEqual({ committed: false, catalogueEditable: true, identificationEditable: true, correctionEligible: false });
       const to = { vin: `NV${stamp}${serial++}`, motorNumber: `NM${stamp}${serial++}`, batteryNumber: `NB${stamp}${serial++}` };
       await edit(u.id, to).expect(200);
       await edit(u.id, { variantId: redVariantId }).expect(200);
@@ -215,6 +228,7 @@ describe('Historical vehicle identity protection (e2e)', () => {
     it('2. BOOKED without an invoice: identifiers editable (M4B.2), variant locked (M4B), correction refused', async () => {
       const u = await newUnit();
       await book(u.id);
+      expect(await policy(u.id)).toEqual({ committed: false, catalogueEditable: false, identificationEditable: true, correctionEligible: false });
       const vin = `BV${stamp}${serial++}`;
       await edit(u.id, { vin }).expect(200);
       expect((await edit(u.id, { variantId: redVariantId }).expect(409)).body.message).toBe(VARIANT_AFTER_BOOKING);
@@ -226,6 +240,7 @@ describe('Historical vehicle identity protection (e2e)', () => {
       const u = await newUnit();
       await http().post('/api/v1/service/jobs').set('Authorization', A.auth()).send({ customerId: customerA, unitId: u.id, type: 'PAID', complaints: [{ description: 'PDI' }] }).expect(201);
       expect((await row(u.id)).status).toBe('AVAILABLE');
+      expect(await policy(u.id)).toEqual({ committed: false, catalogueEditable: true, identificationEditable: true, correctionEligible: false });
       const vin = `SJ${stamp}${serial++}`;
       await edit(u.id, { vin, variantId: redVariantId }).expect(200);
       expect(await identity(u.id)).toMatchObject({ vin, variantId: redVariantId });
@@ -235,6 +250,7 @@ describe('Historical vehicle identity protection (e2e)', () => {
     it('10b. a never-sold vehicle put IN_SERVICE keeps the M4B.2 status rule (ordinary edit 409, correction allowed)', async () => {
       const u = await newUnit();
       await setStatus(u.id, 'IN_SERVICE');
+      expect(await policy(u.id)).toEqual({ committed: false, catalogueEditable: false, identificationEditable: false, correctionEligible: true });
       expect((await edit(u.id, { vin: `IS${stamp}${serial++}` }).expect(409)).body.message).toBe(AFTER_DELIVERY);
       await correct(u.id, { vin: `IC${stamp}${serial++}`, reason }).expect(200);
     });
@@ -245,6 +261,7 @@ describe('Historical vehicle identity protection (e2e)', () => {
     it("another company can neither edit nor correct this company's committed vehicle (404); its own vehicles follow their own history", async () => {
       const mine = await newUnit();
       await warranty(mine.id);
+      await http().get(`/api/v1/inventory/units/${mine.id}`).set('Authorization', B.auth()).expect(404); // no policy for another company's unit
       await edit(mine.id, { notes: 'x' }, B).expect(404);
       await edit(mine.id, { vin: `TV${stamp}${serial++}` }, B).expect(404);
       await correct(mine.id, { vin: `TC${stamp}${serial++}`, reason }, B).expect(404);

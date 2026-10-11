@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bike, Pencil, RefreshCw, Trash2, User, Wrench } from 'lucide-react';
+import { ArrowLeft, Bike, FileCheck2, Pencil, RefreshCw, Trash2, User, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
@@ -17,11 +17,12 @@ import { UnitTimeline } from '../components/unit-timeline';
 import { UnitMedia } from '../components/unit-media';
 import { UnitFormDialog } from '../components/unit-form-dialog';
 import { ChangeStatusDialog } from '../components/change-status-dialog';
+import { IdentificationCorrectionDialog } from '../components/identification-correction-dialog';
 
 export function InventoryDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const canUpdate = can('inventory.update');
   const canStatus = can('inventory.status');
   const canDelete = can('inventory.delete');
@@ -30,6 +31,7 @@ export function InventoryDetailPage(): JSX.Element {
   const [editOpen, setEditOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [correctOpen, setCorrectOpen] = useState(false);
 
   if (isLoading || !unit) {
     return (
@@ -39,6 +41,9 @@ export function InventoryDetailPage(): JSX.Element {
       </div>
     );
   }
+
+  // The server decides eligibility (unit.identity) and re-checks OWNER + inventory.update on submit.
+  const canCorrect = canUpdate && user?.role === 'OWNER' && Boolean(unit.identity?.correctionEligible);
 
   const customer =
     unit.sales[0]?.customer ?? unit.bookings[0]?.customer ?? unit.serviceJobs[0]?.customer ?? null;
@@ -90,6 +95,11 @@ export function InventoryDetailPage(): JSX.Element {
             {canUpdate && (
               <Button variant="outline" onClick={() => setEditOpen(true)}>
                 <Pencil className="h-4 w-4" /> Edit
+              </Button>
+            )}
+            {canCorrect && (
+              <Button variant="outline" onClick={() => setCorrectOpen(true)}>
+                <FileCheck2 className="h-4 w-4" /> Correct identification
               </Button>
             )}
             {canDelete && (
@@ -220,6 +230,7 @@ export function InventoryDetailPage(): JSX.Element {
       </Tabs>
 
       <UnitFormDialog open={editOpen} onOpenChange={setEditOpen} unit={unit} />
+      {canCorrect && <IdentificationCorrectionDialog open={correctOpen} onOpenChange={setCorrectOpen} unit={unit} />}
       <ChangeStatusDialog open={statusOpen} onOpenChange={setStatusOpen} unitId={unit.id} current={unit.status} />
       <ConfirmDialog
         open={deleteOpen}

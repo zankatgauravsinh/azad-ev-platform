@@ -60,7 +60,15 @@ export function ModelDetailDialog({ id, onOpenChange }: { id: string | null; onO
     { key: 'range', header: 'Range', align: 'right', render: (v) => (v.rangeKm != null ? `${v.rangeKm} km` : '—') },
     { key: 'motor', header: 'Motor', align: 'right', render: (v) => (v.motorPowerW != null ? `${v.motorPowerW} W` : '—') },
     { key: 'units', header: 'Units', align: 'right', render: (v) => <span className="tabular-nums">{v.unitCount ?? 0}</span> },
-    { key: 'status', header: 'Status', render: (v) => <Badge variant={v.isActive ? 'success' : 'muted'}>{v.isActive ? 'Active' : 'Inactive'}</Badge> },
+    {
+      key: 'status', header: 'Status',
+      render: (v) => (
+        <span className="inline-flex flex-wrap gap-1">
+          <Badge variant={v.isActive ? 'success' : 'muted'}>{v.isActive ? 'Active' : 'Inactive'}</Badge>
+          {v.identityLocked && <Badge variant="warning" title="Name and colour are locked: vehicles of this variant are booked, delivered or have history">In use</Badge>}
+        </span>
+      ),
+    },
     {
       key: 'actions', header: '', align: 'right',
       render: (v) =>
@@ -87,6 +95,7 @@ export function ModelDetailDialog({ id, onOpenChange }: { id: string | null; onO
               <DialogTitle className="flex flex-wrap items-center gap-2">
                 <span>{label}</span>
                 <Badge variant={model.isActive ? 'success' : 'muted'}>{model.isActive ? 'Active' : 'Inactive'}</Badge>
+                {model.identityLocked && <Badge variant="warning" title="Brand and name are locked: vehicles of this model are booked, delivered or have history">In use</Badge>}
                 {canUpdate && (
                   <span className="ml-auto flex gap-2">
                     <Button size="sm" variant="outline" onClick={() => setEditModel(true)}><Pencil className="h-4 w-4" /> Edit</Button>

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   ChangeUnitStatusInput,
   CreateUnitInput,
+  IdentificationCorrectionInput,
   ListUnitsQuery,
   UpdateUnitInput,
 } from '@azad/shared';
@@ -39,8 +40,9 @@ export function useModels() {
   return useQuery({ queryKey: keys.models(), queryFn: inventoryApi.models });
 }
 
-export function useVariants(modelId?: string) {
-  return useQuery({ queryKey: ['inventory', 'variants', modelId ?? 'all'], queryFn: () => inventoryApi.variants(modelId) });
+/** Active variants (of one model, or all). `enabled` lets a form wait until a model is chosen. */
+export function useVariants(modelId?: string, enabled = true) {
+  return useQuery({ queryKey: ['inventory', 'variants', modelId ?? 'all'], queryFn: () => inventoryApi.variants(modelId), enabled });
 }
 
 export function useAvailableUnits() {
@@ -67,6 +69,14 @@ export function useUpdateUnit(id: string) {
   const invalidate = useInvalidate();
   return useMutation({
     mutationFn: (input: UpdateUnitInput) => inventoryApi.update(id, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useCorrectIdentification(id: string) {
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (input: IdentificationCorrectionInput) => inventoryApi.correctIdentification(id, input),
     onSuccess: invalidate,
   });
 }

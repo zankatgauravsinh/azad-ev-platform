@@ -167,6 +167,22 @@ export interface InventoryUnitDto {
   updatedAt: string;
   variant: InventoryVariantRef;
 }
+/**
+ * How a unit's identity may change right now, computed by the server from its status and committed
+ * history (M4B.4) and returned with the unit's detail. For presentation only: the server re-checks
+ * every change and stays authoritative.
+ */
+export interface UnitIdentityPolicy {
+  /** The vehicle has a Sale (soft-deleted included), a Warranty or an AMC plan (cancelled included). */
+  committed: boolean;
+  /** The ordinary edit may change its model / variant / colour. */
+  catalogueEditable: boolean;
+  /** The ordinary edit may change its VIN / motor / battery number. */
+  identificationEditable: boolean;
+  /** The owner identification correction applies (the user must still be an OWNER with inventory.update). */
+  correctionEligible: boolean;
+}
+
 export interface InventoryEventDto {
   id: string;
   fromStatus: UnitStatus | null;

@@ -2,6 +2,7 @@ import type {
   ChangeUnitStatusInput,
   CreateUnitInput,
   CsvImportResult,
+  IdentificationCorrectionInput,
   InventoryEventDto,
   InventoryStats,
   InventoryUnitDocumentDto,
@@ -9,6 +10,7 @@ import type {
   InventoryUnitPhotoDto,
   ListUnitsQuery,
   Paginated,
+  UnitIdentityPolicy,
   UpdateUnitInput,
 } from '@azad/shared';
 import { apiClient } from '@/lib/api-client';
@@ -27,6 +29,7 @@ export interface VariantOption {
   hexColour: string | null;
   exShowroomPrice: string;
   model: ModelRef;
+  isActive?: boolean;
 }
 
 export interface InventoryDashboard {
@@ -38,6 +41,8 @@ export interface InventoryDashboard {
 }
 
 export interface UnitDetail extends InventoryUnitDto {
+  /** How its identity may change — computed by the server, for presentation only (the server re-checks). */
+  identity: UnitIdentityPolicy;
   events: InventoryEventDto[];
   photos: InventoryUnitPhotoDto[];
   documents: InventoryUnitDocumentDto[];
@@ -120,6 +125,11 @@ export const inventoryApi = {
   },
   async variants(modelId?: string): Promise<VariantOption[]> {
     const { data } = await apiClient.get('/inventory/variants', { params: modelId ? { modelId } : {} });
+    return data;
+  },
+  /** Owner-only correction of VIN / motor / battery number (M4B.3) — only the changed fields plus the reason. */
+  async correctIdentification(id: string, input: IdentificationCorrectionInput): Promise<InventoryUnitDto> {
+    const { data } = await apiClient.patch(`/inventory/units/${id}/identification-correction`, input);
     return data;
   },
   async createModel(name: string, brand: string): Promise<ModelRef> {
