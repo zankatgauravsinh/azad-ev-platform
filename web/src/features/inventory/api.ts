@@ -16,6 +16,15 @@ import type {
 } from '@azad/shared';
 import { apiClient } from '@/lib/api-client';
 
+/*
+ * Browser timeouts for the CSV requests (they include uploading the file, up to 2 MB). Each is longer than
+ * the server's own budget (preview ≈ 16 s, import ≈ 51 s — see inventory.service.ts) and the import's is
+ * longer than the reverse proxy's 120 s, so the API's answer, or else the proxy's 504, normally arrives
+ * first. A browser timeout on the import means the outcome is UNKNOWN (see describeCsvFailure).
+ */
+export const CSV_PREVIEW_TIMEOUT_MS = 60_000;
+export const CSV_IMPORT_TIMEOUT_MS = 150_000;
+
 export interface ModelRef {
   id: string;
   name: string;
@@ -141,7 +150,7 @@ export const inventoryApi = {
   async previewCsv(file: File): Promise<CsvImportPreview> {
     const form = new FormData();
     form.append('file', file);
-    const { data } = await apiClient.post('/inventory/units/import/preview', form);
+    const { data } = await apiClient.post('/inventory/units/import/preview', form, { timeout: CSV_PREVIEW_TIMEOUT_MS });
     return data;
   },
   /** M4D.3 all-or-nothing import. `expectedSha256` (the preview's fileSha256) is sent only when given — never empty. */
@@ -149,7 +158,7 @@ export const inventoryApi = {
     const form = new FormData();
     form.append('file', file);
     if (expectedSha256) form.append('expectedSha256', expectedSha256);
-    const { data } = await apiClient.post('/inventory/units/import', form);
+    const { data } = await apiClient.post('/inventory/units/import', form, { timeout: CSV_IMPORT_TIMEOUT_MS });
     return data;
   },
   async addPhoto(id: string, file: File, label?: string): Promise<InventoryUnitPhotoDto> {

@@ -660,7 +660,7 @@ describe('InventoryService', () => {
       const res = await service.importCsv(file(VALID), 'user-1', sha(VALID));
       expect(res).toEqual({ status: 'IMPORTED', created: 2, failed: 0, errors: [], fileSha256: sha(VALID), preview: null });
       expect(repo.transaction).toHaveBeenCalledTimes(1);
-      expect(repo.transaction.mock.calls[0]![1]).toEqual({ timeout: 60_000, maxWait: 10_000 });
+      expect(repo.transaction.mock.calls[0]![1]).toEqual({ timeout: 30_000, maxWait: 5_000 });
       expect(catalog.listModels).toHaveBeenCalledWith('company-1', { status: 'all' }, TX);
       expect(repo.findUsedIdentifiers).toHaveBeenCalledWith({ vin: ['VIN1', 'VIN2'], motorNumber: ['M1', 'M2'], batteryNumber: ['B1', 'B2'] }, 'company-1', TX);
       expect(repo.lockCatalogueRows).toHaveBeenCalledWith('company-1', ['model-solo'], ['variant-pro'], TX);
@@ -732,7 +732,7 @@ describe('InventoryService', () => {
       });
     });
 
-    it('a number taken concurrently (unique violation at insert) → the transaction fails, re-validated outside it → REJECTED with the row', async () => {
+    it('a number taken concurrently (unique violation at insert) → the transaction fails, re-validated in a NEW bounded transaction → REJECTED with the row', async () => {
       const clash = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'x', meta: { target: ['vin'] } });
       repo.createUnits.mockRejectedValueOnce(clash);
       repo.findUsedIdentifiers
@@ -741,7 +741,28 @@ describe('InventoryService', () => {
         .mockResolvedValueOnce({ vin: new Map([['VIN2', { own: true, deleted: false }]]), motorNumber: new Map(), batteryNumber: new Map() });
       const res = await service.importCsv(file(VALID), 'user-1');
       expect(res).toMatchObject({ status: 'REJECTED', created: 0, failed: 1, errors: [{ row: 3, message: 'VIN "VIN2" is already used by a scooter in your inventory.' }] });
-      expect(repo.findUsedIdentifiers).toHaveBeenLastCalledWith(expect.anything(), 'company-1', undefined); // outside the failed transaction
+      expect(repo.transaction).toHaveBeenCalledTimes(2); // the failed import, then the re-check
+      expect(repo.transaction.mock.calls[1]![1]).toEqual({ timeout: 10_000, maxWait: 5_000 });
+      expect(repo.findUsedIdentifiers).toHaveBeenLastCalledWith(expect.anything(), 'company-1', TX); // inside the re-check transaction
+    });
+
+    it('the re-check itself failing (e.g. its transaction times out) → still a certain 409: the import rolled back', async () => {
+      repo.createUnits.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'x' }));
+      repo.transaction
+        .mockImplementationOnce(((fn: (tx: unknown) => unknown) => fn(TX)) as never)
+        .mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Transaction already closed', { code: 'P2028', clientVersion: 'x' }));
+      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: 'Inventory changed while importing — nothing was imported. Try again.' });
+      repo.createUnits.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'x' }));
+      repo.findUsedIdentifiers
+        .mockResolvedValueOnce({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() })
+        .mockResolvedValueOnce({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() })
+        .mockRejectedValueOnce(new Error('connection lost'));
+      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409 });
+    });
+
+    it('a pool timeout (P2024) is a 503 like a transaction timeout — never a raw database error', async () => {
+      repo.transaction.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Timed out fetching a new connection from the connection pool', { code: 'P2024', clientVersion: 'x' }));
+      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 503 });
     });
 
     it('a unique violation that the re-check cannot attribute → 409 retry, nothing reported as imported', async () => {
@@ -801,17 +822,26 @@ describe('InventoryService', () => {
       catalog.listVariants.mockResolvedValue([proTeal]);
     });
 
+    it('a preview that cannot get the database in time → 503 "busy", never a raw database error', async () => {
+      for (const code of ['P2028', 'P2024']) {
+        repo.transaction.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('timeout', { code, clientVersion: 'x' }));
+        await expect(service.previewCsv(file(`${HEAD}Solo,Pro,Teal,vin1,m1,b1,\n`))).rejects.toMatchObject({ status: 503, message: 'The server is busy — the preview could not run in time. Try again in a moment.' });
+      }
+    });
+
     it('reads the explicitly scoped catalogue and the used identifiers once, and writes nothing at all', async () => {
       repo.findUsedIdentifiers.mockResolvedValue({ vin: new Map([['VIN2', { own: true, deleted: false }]]), motorNumber: new Map(), batteryNumber: new Map() });
       const preview = await service.previewCsv(file(`${HEAD}Solo,Pro,Teal,vin1,m1,b1,\nSolo,Pro,Teal,vin2,m2,b2,99000\n`));
-      expect(catalog.listModels).toHaveBeenCalledWith('company-1', { status: 'all' });
-      expect(catalog.listVariants).toHaveBeenCalledWith('company-1', { status: 'all' });
+      expect(catalog.listModels).toHaveBeenCalledWith('company-1', { status: 'all' }, expect.anything()); // inside the bounded read transaction
+      expect(catalog.listVariants).toHaveBeenCalledWith('company-1', { status: 'all' }, expect.anything());
       expect(repo.findUsedIdentifiers).toHaveBeenCalledTimes(1);
-      expect(repo.findUsedIdentifiers).toHaveBeenCalledWith({ vin: ['VIN1', 'VIN2'], motorNumber: ['M1', 'M2'], batteryNumber: ['B1', 'B2'] }, 'company-1');
+      expect(repo.findUsedIdentifiers).toHaveBeenCalledWith({ vin: ['VIN1', 'VIN2'], motorNumber: ['M1', 'M2'], batteryNumber: ['B1', 'B2'] }, 'company-1', expect.anything());
+      expect(repo.transaction).toHaveBeenCalledTimes(1); // read-only, only to bound its time
+      expect(repo.transaction.mock.calls[0]![1]).toEqual({ timeout: 10_000, maxWait: 5_000 });
       expect(preview.fileSha256).toMatch(/^[0-9a-f]{64}$/);
       expect(preview.summary).toEqual({ total: 2, valid: 1, invalid: 1, duplicate: 1 });
       expect(preview.rows[0]!.unit).toMatchObject({ sellingPrice: '12500000', sellingPriceSource: 'LIST_PRICE' });
-      for (const write of [repo.createUnit, repo.createUnits, repo.updateUnit, repo.createVariant, repo.addEvent, repo.addEvents, repo.lockCatalogueRows, repo.transaction, catalog.findActiveVariantForUnit, activityLog.record, activityLog.recordInTransaction]) {
+      for (const write of [repo.createUnit, repo.createUnits, repo.updateUnit, repo.createVariant, repo.addEvent, repo.addEvents, repo.lockCatalogueRows, catalog.findActiveVariantForUnit, activityLog.record, activityLog.recordInTransaction]) {
         expect(write).not.toHaveBeenCalled();
       }
     });

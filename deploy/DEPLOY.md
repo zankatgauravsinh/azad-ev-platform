@@ -134,6 +134,24 @@ Check on the server when this changes, or when deploying release 3.2:
   trust is not enough: every client would share that proxy's address for the per-IP limit. Change
   `TRUSTED_PROXY_HOPS` to exactly those hops; never `true`.
 
+## Request timeouts
+
+Each layer waits longer than the one behind it, so the innermost answer normally reaches the user:
+
+| Layer | Setting | Value |
+| --- | --- | --- |
+| Database, CSV import | transaction wait-to-start / timeout | 5 s / 30 s → 503 "could not finish in time" |
+| Database, CSV re-check after a failed import, and CSV preview | transaction wait-to-start / timeout | 5 s / 10 s |
+| API, CSV import worst case | parse + import transaction + re-check | ≈ 51 s (preview ≈ 16 s) |
+| nginx `location /api/` (if nginx proxies the API) | `proxy_read_timeout`, `proxy_send_timeout` | **120 s** (nginx default is 60 s) |
+| Node HTTP server | `requestTimeout` / `headersTimeout` | Node defaults, 300 s / 60 s (unchanged) |
+| Browser | CSV preview / CSV import request | 60 s / 150 s (other requests: none) |
+
+A 2,000-row import measured 0.7 s, so these are ceilings, not expectations. On the server, check the live
+nginx site config (`grep -R proxy_read_timeout /etc/nginx/`) and set 120 s on the location that proxies the
+API — but only if nginx proxies the API at all (see "Client IP and proxy trust"). Reload with
+`sudo nginx -t && sudo systemctl reload nginx`.
+
 ## Rollback
 
 1. Note the previous commit (`git log --oneline` shows it just under the current one).

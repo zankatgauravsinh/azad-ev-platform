@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { AxiosError, type AxiosResponse } from 'axios';
+import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import type { CsvImportPreview, CsvImportPreviewRow, CsvImportResult } from '@azad/shared';
 import { readFileBytes } from '../csv-import';
 import { ImportDialog } from './import-dialog';
@@ -224,8 +224,36 @@ describe('ImportDialog — confirmation', () => {
     expect(h.commit).toHaveBeenCalledTimes(1);
   });
 
+  it('a browser timeout on the import is UNKNOWN (never success, never "nothing was imported"); a timed-out preview just asks to retry', async () => {
+    const timeout = (ms: number) => new AxiosError(`timeout of ${ms}ms exceeded`, 'ECONNABORTED', { timeout: ms } as InternalAxiosRequestConfig);
+    h.commit.mockRejectedValue(timeout(150_000));
+    render(<ImportDialog open onOpenChange={() => {}} />);
+    choose('csv');
+    fireEvent.click(await screen.findByText('Import 2 scooters'));
+    await screen.findByText('The result of the import is unknown.');
+    expect(screen.getByText(/The server did not answer within 150 seconds\. The scooters may or may not have been imported/)).toBeTruthy();
+    expect(screen.queryByText(/Nothing was imported/)).toBeNull();
+    expect(h.toastSuccess).not.toHaveBeenCalled();
+    expect(h.toastError).not.toHaveBeenCalled();
+    expect(h.commit).toHaveBeenCalledTimes(1);
+    h.preview.mockRejectedValueOnce(timeout(60_000));
+    choose('another');
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('The server did not answer within 60 seconds. Nothing was imported — choose the file again to retry the preview.'));
+    expect(h.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a gateway's 503 page on the import is UNKNOWN, not the API's deadline answer", async () => {
+    h.commit.mockRejectedValue(new AxiosError('x', '503', undefined, undefined, { status: 503, data: '<html>503</html>' } as AxiosResponse));
+    render(<ImportDialog open onOpenChange={() => {}} />);
+    choose('csv');
+    fireEvent.click(await screen.findByText('Import 2 scooters'));
+    await screen.findByText('The result of the import is unknown.');
+    expect(screen.queryByText(/processing deadline/)).toBeNull();
+    expect(h.commit).toHaveBeenCalledTimes(1);
+  });
+
   it('503: the server could not confirm completion within its deadline', async () => {
-    h.commit.mockRejectedValue(axiosError(503, { message: 'The import could not finish in time — nothing was imported. Try again, or split the file into smaller files.' }));
+    h.commit.mockRejectedValue(axiosError(503, { statusCode: 503, message: 'The import could not finish in time — nothing was imported. Try again, or split the file into smaller files.' }));
     render(<ImportDialog open onOpenChange={() => {}} />);
     choose('csv');
     fireEvent.click(await screen.findByText('Import 2 scooters'));

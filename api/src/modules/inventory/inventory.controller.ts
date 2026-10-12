@@ -179,6 +179,7 @@ export class InventoryController {
   @ApiResponse({ status: 400, description: 'No file, an unreadable CSV (the message names the line), or more rows than CSV_IMPORT_MAX_ROWS' })
   @ApiResponse({ status: 413, description: 'File larger than CSV_IMPORT_MAX_BYTES' })
   @ApiResponse({ status: 429, description: 'More than 10 requests to this route in a minute by this user (nothing was processed)' })
+  @ApiResponse({ status: 503, description: 'The database could not serve the preview in time — try again (nothing was written)' })
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: CSV_IMPORT_MAX_BYTES } }))
   previewCsv(@UploadedFile() file: MulterFile | undefined): Promise<CsvImportPreview> {
     if (!file) throw new BadRequestException('A CSV file is required');

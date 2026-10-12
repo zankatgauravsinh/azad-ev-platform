@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { INestApplication } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { CSV_IMPORT_MAX_BYTES, CSV_IMPORT_MAX_ROWS, type CsvImportPreview, type CsvImportResult } from '@azad/shared';
 import request from 'supertest';
 import { ActivityLogService } from '../src/activity-log/activity-log.service';
@@ -204,6 +205,69 @@ describe('Inventory CSV import — all or nothing (e2e)', () => {
     expect(JSON.stringify(res)).not.toMatch(/prisma|constraint|P2002|unique/i);
     expect(await unitsWithVins(earlier.map((r) => r.vin))).toBe(0);
     expect(await snapshot()).toEqual(before);
+  });
+
+  describe('time budget: a transaction that runs out of time (controlled — no sleeps)', () => {
+    /**
+     * Wraps the n-th repo.transaction call (1-based): it gets a 1 ms timeout, and instead of the real work
+     * its callback polls the transaction with `select 1` until Prisma reports it expired — the expiry is
+     * observed, not guessed. That genuine P2028 leaves the transaction exactly as it would when the real
+     * work runs past the deadline, and the service's own handling decides the response.
+     */
+    const expireTransaction = (which: number) => {
+      const repo = app.get(InventoryRepository);
+      const real = repo.transaction.bind(repo);
+      let calls = 0;
+      const seen: unknown[] = [];
+      jest.spyOn(repo, 'transaction').mockImplementation(((fn: (tx: Prisma.TransactionClient) => Promise<unknown>, options?: { timeout?: number; maxWait?: number }) => {
+        calls += 1; seen.push(options);
+        if (calls !== which) return real(fn, options);
+        return real(async (tx) => {
+          for (let i = 0; i < 100_000; i += 1) await tx.$queryRaw`select 1`; // throws once the transaction has expired
+          throw new Error('the transaction never expired');
+        }, { ...options, timeout: 1 });
+      }) as never);
+      return { seen, calls: () => calls };
+    };
+
+    it('the import transaction runs past its deadline → 503, nothing written; the configured budget is 30 s / 5 s', async () => {
+      const t = expireTransaction(1);
+      const before = await snapshot();
+      const rows = [row(), row()];
+      const res = await importCsv(csvOf(...rows)).expect(503);
+      expect(res.body.message).toBe('The import could not finish in time — nothing was imported. Try again, or split the file into smaller files.');
+      expect(t.seen[0]).toEqual({ timeout: 30_000, maxWait: 5_000 });
+      expect(await unitsWithVins(rows.map((r) => r.vin))).toBe(0);
+      expect(await snapshot()).toEqual(before);
+    });
+
+    it('after a lost race, the re-check runs out of time too → still a certain 409, nothing written; the re-check budget is 10 s / 5 s', async () => {
+      const repo = app.get(InventoryRepository);
+      const realFind = repo.findUsedIdentifiers.bind(repo);
+      const taken = (await http().post('/api/v1/inventory/units').set('Authorization', A.auth()).send({ variantId: cat.pro, vin: `TOV${stamp}`, motorNumber: `TOM${stamp}`, batteryNumber: `TOB${stamp}` }).expect(201)).body;
+      let finds = 0; // the import's two checks miss the taken VIN, so its insert hits the unique constraint
+      jest.spyOn(repo, 'findUsedIdentifiers').mockImplementation(async (values, companyId, db) => {
+        finds += 1;
+        return finds <= 2 ? { vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() } : realFind(values, companyId, db);
+      });
+      const t = expireTransaction(2); // the re-check transaction
+      const before = await snapshot();
+      const earlier = [row(), row()];
+      const res = await importCsv(csvOf(...earlier, row({ vin: taken.vin }))).expect(409);
+      expect(res.body.message).toBe('Inventory changed while importing — nothing was imported. Try again.');
+      expect(t.calls()).toBe(2);
+      expect(t.seen[1]).toEqual({ timeout: 10_000, maxWait: 5_000 });
+      expect(await unitsWithVins(earlier.map((r) => r.vin))).toBe(0);
+      expect(await snapshot()).toEqual(before);
+    });
+
+    it('a preview that runs out of time → 503 "busy", never a raw database error; the preview budget is 10 s / 5 s', async () => {
+      const t = expireTransaction(1);
+      const res = await preview(csvOf(row())).expect(503);
+      expect(res.body.message).toBe('The server is busy — the preview could not run in time. Try again in a moment.');
+      expect(JSON.stringify(res.body)).not.toMatch(/P20\d\d|prisma|transaction/i);
+      expect(t.seen[0]).toEqual({ timeout: 10_000, maxWait: 5_000 });
+    });
   });
 
   it('a failing history-event write, or a failing audit write, rolls back every unit (500, nothing survives, no internals)', async () => {

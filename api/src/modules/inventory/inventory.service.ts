@@ -131,9 +131,21 @@ const identityRef = (v: { id: string; name: string; colour: string; model: { id:
   label: `${v.model.brand} ${v.model.name} ${v.name} (${v.colour})`,
 });
 
-/** M4D.3 — an import (up to CSV_IMPORT_MAX_ROWS rows) runs in one transaction; give it room. */
-const CSV_IMPORT_TX_TIMEOUT_MS = 60_000;
-const CSV_IMPORT_TX_MAX_WAIT_MS = 10_000;
+/*
+ * CSV time budget (Stage 3). Every database phase runs in an interactive transaction with an explicit
+ * wait-to-start (maxWait) and timeout, so the server always answers within a known bound:
+ *   import  = parse/hash (< 1 s) + import transaction (≤ 5 s + 30 s) + re-check after a failed commit
+ *             (≤ 5 s + 10 s)                                          → worst case ≈ 51 s
+ *   preview = parse/hash (< 1 s) + check transaction (≤ 5 s + 10 s)  → worst case ≈ 16 s
+ * A 2,000-row import measured 0.7 s and its preview 0.3 s, so 30 s / 10 s leave a wide margin. The
+ * reverse proxy and the browser wait longer than these (deploy/DEPLOY.md, web inventory api.ts), so the
+ * API's own answer — not a gateway timeout — is what normally reaches the user.
+ */
+export const CSV_IMPORT_TX_TIMEOUT_MS = 30_000;
+export const CSV_IMPORT_TX_MAX_WAIT_MS = 5_000;
+/** The read-only check: the preview itself, and the re-check that names rows after a failed import. */
+export const CSV_CHECK_TX = { timeout: 10_000, maxWait: 5_000 } as const;
+const MSG_INVENTORY_CHANGED = 'Inventory changed while importing — nothing was imported. Try again.';
 
 /** Thrown inside the import transaction to roll it back and answer REJECTED with the validation. */
 class CsvImportRejected extends Error {
@@ -180,9 +192,12 @@ const isConcurrencyAbort = (error: unknown): boolean => {
   return error instanceof Prisma.PrismaClientUnknownRequestError && /\bcode: "(40P01|40001)"/.test(error.message);
 };
 
-/** The interactive transaction could not start in time (maxWait) or ran past its timeout. */
+/**
+ * The database did not serve us in time: an interactive transaction could not start (maxWait) or ran past
+ * its timeout (P2028), or no pooled connection became free (P2024). Either way nothing was committed.
+ */
 const isTransactionTimeout = (error: unknown): boolean =>
-  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028';
+  error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2028' || error.code === 'P2024');
 
 @Injectable()
 export class InventoryService {
@@ -654,10 +669,16 @@ export class InventoryService {
       }
       if (isUniqueViolation(error) || isConcurrencyAbort(error)) {
         // A number was taken by a concurrent import or edit after validation (or Postgres aborted us in favour
-        // of one); the whole import rolled back. Validate again (outside the failed transaction) to name the rows.
-        const { preview } = await validate();
-        if (preview.summary.invalid > 0) return rejectedImport(preview);
-        throw new ConflictException('Inventory changed while importing — nothing was imported. Try again.');
+        // of one); the whole import rolled back. Validate again — in a new, bounded transaction — to name the
+        // rows. If even that cannot run, the answer is still certain: nothing was imported.
+        let recheck: CsvImportPreview;
+        try {
+          recheck = (await this.repo.transaction((tx) => validate(tx), CSV_CHECK_TX)).preview;
+        } catch {
+          throw new ConflictException(MSG_INVENTORY_CHANGED);
+        }
+        if (recheck.summary.invalid > 0) return rejectedImport(recheck);
+        throw new ConflictException(MSG_INVENTORY_CHANGED);
       }
       if (isTransactionTimeout(error)) {
         throw new ServiceUnavailableException('The import could not finish in time — nothing was imported. Try again, or split the file into smaller files.');
@@ -673,8 +694,17 @@ export class InventoryService {
   async previewCsv(file: UploadedFile): Promise<CsvImportPreview> {
     const companyId = this.tenant.requireCompanyId();
     const { rows, fileSha256 } = this.readCsvFile(file);
-    const [catalogue, used] = await Promise.all([this.csvCatalogue(companyId), this.repo.findUsedIdentifiers(identifierCandidates(rows), companyId)]);
-    return buildCsvPreview(rows, catalogue, used, CSV_IMPORT_MAX_ROWS, new Date(), fileSha256);
+    try {
+      // A read-only transaction only to bound the time the preview may take (CSV_CHECK_TX).
+      return await this.repo.transaction(async (tx) => {
+        const catalogue = await this.csvCatalogue(companyId, tx);
+        const used = await this.repo.findUsedIdentifiers(identifierCandidates(rows), companyId, tx);
+        return buildCsvPreview(rows, catalogue, used, CSV_IMPORT_MAX_ROWS, new Date(), fileSha256);
+      }, CSV_CHECK_TX);
+    } catch (error) {
+      if (isTransactionTimeout(error)) throw new ServiceUnavailableException('The server is busy — the preview could not run in time. Try again in a moment.');
+      throw error;
+    }
   }
 
   /** Parses the file (400 when unreadable or over the row limit) and hashes its bytes. */

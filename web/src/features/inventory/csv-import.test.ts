@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AxiosError, type AxiosResponse } from 'axios';
+import { AxiosError, CanceledError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import type { ModelRef, VariantOption } from './api';
 import { buildCsvTemplate, CSV_COLUMNS, csvCell, describeCsvFailure, isSha256, readFileBytes } from './csv-import';
 
@@ -72,7 +72,24 @@ describe('describeCsvFailure', () => {
   it('import: 409 → conflict with the server message; 503 → deadline', () => {
     expect(describeCsvFailure(axiosError(409, { message: 'Inventory changed while importing — nothing was imported. Try again.' }), true))
       .toEqual({ kind: 'conflict', message: 'Inventory changed while importing — nothing was imported. Try again.' });
-    expect(describeCsvFailure(axiosError(503, { message: 'The import could not finish in time' }), true).kind).toBe('deadline');
+    expect(describeCsvFailure(axiosError(503, { statusCode: 503, message: 'The import could not finish in time' }), true).kind).toBe('deadline');
+  });
+
+  it("503: only the API's own JSON answer is a deadline; a gateway's 503 page proves nothing → unknown", () => {
+    const page = new AxiosError('x', '503', undefined, undefined, { status: 503, data: '<html>503 Service Temporarily Unavailable</html>' } as AxiosResponse);
+    expect(describeCsvFailure(page, true)).toEqual({ kind: 'unknown', message: 'A gateway reported the service unavailable (HTTP 503).' });
+    expect(describeCsvFailure(axiosError(503, { message: 'no statusCode' }), true).kind).toBe('unknown');
+    expect(describeCsvFailure(page, false).kind).toBe('failed'); // a preview writes nothing
+  });
+
+  it('a browser (Axios) timeout: import → UNKNOWN naming the limit; preview → failed, retry', () => {
+    const timeout = (ms: number, code = 'ECONNABORTED') => new AxiosError(`timeout of ${ms}ms exceeded`, code, { timeout: ms } as InternalAxiosRequestConfig);
+    expect(describeCsvFailure(timeout(150_000), true)).toEqual({ kind: 'unknown', message: 'The server did not answer within 150 seconds.' });
+    expect(describeCsvFailure(timeout(150_000, 'ETIMEDOUT'), true).kind).toBe('unknown');
+    expect(describeCsvFailure(timeout(60_000), false)).toEqual({
+      kind: 'failed', message: 'The server did not answer within 60 seconds. Nothing was imported — choose the file again to retry the preview.',
+    });
+    expect(describeCsvFailure(new CanceledError(), true)).toEqual({ kind: 'unknown', message: 'The request was cancelled before the server answered.' });
   });
 
   it('definite failures: authentication, permission, size, row count / malformed file', () => {
@@ -113,7 +130,7 @@ describe('inventoryApi CSV calls', () => {
     const { inventoryApi } = await import('./api');
     const file = new File(['x'], 'a.csv');
     await inventoryApi.previewCsv(file);
-    expect(h.post).toHaveBeenCalledWith('/inventory/units/import/preview', expect.any(FormData));
+    expect(h.post).toHaveBeenCalledWith('/inventory/units/import/preview', expect.any(FormData), { timeout: 60_000 });
     expect(sent().get('file')).toBeInstanceOf(File);
     expect(sent().has('expectedSha256')).toBe(false);
   });
@@ -121,7 +138,7 @@ describe('inventoryApi CSV calls', () => {
   it('import sends expectedSha256 when given — and never an empty value', async () => {
     const { inventoryApi } = await import('./api');
     await inventoryApi.importCsv(new File(['x'], 'a.csv'), 'f'.repeat(64));
-    expect(h.post).toHaveBeenCalledWith('/inventory/units/import', expect.any(FormData));
+    expect(h.post).toHaveBeenCalledWith('/inventory/units/import', expect.any(FormData), { timeout: 150_000 });
     expect(sent().get('expectedSha256')).toBe('f'.repeat(64));
     for (const missing of ['', undefined]) {
       h.post.mockClear();

@@ -232,8 +232,10 @@ export interface InventoryUnitDocumentDto {
  * every row itself.
  *
  * HTTP errors: 400 — no file, an unreadable CSV (the message names the line) or more than
- * CSV_IMPORT_MAX_ROWS rows; 413 — larger than CSV_IMPORT_MAX_BYTES; 401 / 403 — not signed in, or no
- * inventory.create permission. Problems in individual rows are never HTTP errors: they are row issues.
+ * CSV_IMPORT_MAX_ROWS rows; 413 — larger than CSV_IMPORT_MAX_BYTES; 429 — more than 10 previews by this
+ * user in a minute; 503 — the database could not serve the check in time (try again); 401 / 403 — not
+ * signed in, or no inventory.create permission. Problems in individual rows are never HTTP errors: they
+ * are row issues.
  */
 
 /** Data rows (excluding the header) one preview accepts. */

@@ -91,22 +91,35 @@ const serverMessage = (data: unknown): string | null => {
   return typeof message === 'string' && message ? message : null;
 };
 
+/** The body is the API's own JSON error (not, say, a gateway's HTML page) for this status. */
+const isApiError = (data: unknown, status: number): boolean =>
+  typeof data === 'object' && data !== null && (data as Partial<ApiError>).statusCode === status && serverMessage(data) !== null;
+
 /** How a failed preview or import request is presented. `importing`: a commit was attempted. */
 export function describeCsvFailure(error: unknown, importing: boolean): CsvRequestFailure {
   const unknown = (why: string): CsvRequestFailure => importing
     ? { kind: 'unknown', message: why }
     : { kind: 'failed', message: `${why} Nothing was imported — choose the file again to retry the preview.` };
+  if (axios.isCancel(error)) return unknown('The request was cancelled before the server answered.');
   if (!axios.isAxiosError(error)) return unknown('The request did not complete.');
   const status = error.response?.status;
-  if (!error.response || status === undefined) return unknown('The connection failed before the server answered.');
+  if (!error.response || status === undefined) {
+    if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+      const ms = Number(error.config?.timeout);
+      return unknown(`The server did not answer within ${ms > 0 ? `${Math.round(ms / 1000)} seconds` : 'the time allowed'}.`);
+    }
+    return unknown('The connection failed before the server answered.');
+  }
   const message = serverMessage(error.response.data);
   if (status === 401) return { kind: 'failed', message: 'Your session has expired — sign in again, then choose the file again.' };
   if (status === 403) return { kind: 'failed', message: 'You do not have permission to import scooters.' };
   if (status === 413) return { kind: 'failed', message: `The file is larger than ${CSV_IMPORT_MAX_BYTES / (1024 * 1024)} MB — split it into smaller files.` };
   if (status === 409) return { kind: 'conflict', message: message ?? 'The file or the inventory changed.' };
-  if (status === 503) return importing
+  // Only the API's own 503 is its "could not finish in time" answer; a 503 from anything in between proves nothing.
+  if (status === 503 && isApiError(error.response.data, 503)) return importing
     ? { kind: 'deadline', message: message ?? 'The server could not finish in time.' }
     : { kind: 'failed', message: 'The server is busy — choose the file again to retry the preview.' };
+  if (status === 503) return unknown('A gateway reported the service unavailable (HTTP 503).');
   if (status >= 500) return unknown(status === 502 || status === 504 ? `The server did not answer in time (HTTP ${status}).` : `The server reported an error (HTTP ${status}).`);
   return { kind: 'failed', message: message ?? `The request was refused (HTTP ${status}).` };
 }

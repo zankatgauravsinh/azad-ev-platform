@@ -79,6 +79,8 @@ Inventory → **Import** opens a two-step dialog.
 
 Headers are matched ignoring case and spaces (`Make` = Brand, `Color` = Colour, `Motor No` = Motor Number…); names are matched ignoring case and extra spaces. A number already used in your own inventory is reported as such (deleted scooters included); one registered by another company is only reported as *not available*. Limits: 2,000 rows and 2 MB per file.
 
+**Time limits** — the import's transaction has 30 s (5 s to start); the preview, and the re-check after a failed import, 10 s (5 s to start). The browser waits 60 s for a preview and 150 s for an import; a browser timeout, a 502 / 504, a gateway's 503 or a 500 on an import is reported as *result unknown* (preview again to see whether the rows exist). See `deploy/DEPLOY.md` → Request timeouts.
+
 **Rate limits** — preview and import each allow 10 requests per minute **per signed-in user** (a 429 says to wait a minute; nothing is processed). The app-wide limit of 120 requests per minute per route per client IP applies as well. See `api/src/common/throttle/throttle.config.ts`.
 
 ## Tests
