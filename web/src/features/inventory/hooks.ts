@@ -7,6 +7,7 @@ import type {
   UpdateUnitInput,
 } from '@azad/shared';
 import { inventoryApi } from './api';
+import { buildCsvTemplate } from './csv-import';
 
 const keys = {
   all: ['inventory'] as const,
@@ -97,10 +98,31 @@ export function useChangeStatus(id: string) {
   });
 }
 
+/** CSV preview (dry run) — writes nothing, so nothing to invalidate. */
+export function usePreviewCsv() {
+  return useMutation({ mutationFn: (file: File) => inventoryApi.previewCsv(file) });
+}
+
+/** Confirmed CSV import. Inventory is refreshed after ANY outcome — an uncertain one included. */
 export function useImportCsv() {
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: (file: File) => inventoryApi.importCsv(file),
-    onSuccess: invalidate,
+    mutationFn: ({ file, expectedSha256 }: { file: File; expectedSha256: string }) => inventoryApi.importCsv(file, expectedSha256),
+    onSettled: invalidate,
+  });
+}
+
+/** Refetches every inventory query (used before re-checking a file after an uncertain import). */
+export function useRefreshInventory() {
+  return useInvalidate();
+}
+
+/** The CSV template, built from the company's active catalogue at download time. */
+export function useCsvTemplate() {
+  return useMutation({
+    mutationFn: async () => {
+      const [models, variants] = await Promise.all([inventoryApi.models(), inventoryApi.variants()]);
+      return buildCsvTemplate(models, variants);
+    },
   });
 }

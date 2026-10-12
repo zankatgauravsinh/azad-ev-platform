@@ -1,6 +1,7 @@
 import type {
   ChangeUnitStatusInput,
   CreateUnitInput,
+  CsvImportPreview,
   CsvImportResult,
   IdentificationCorrectionInput,
   InventoryEventDto,
@@ -136,9 +137,18 @@ export const inventoryApi = {
     const { data } = await apiClient.post('/inventory/models', { name, brand });
     return data;
   },
-  async importCsv(file: File): Promise<CsvImportResult> {
+  /** M4D.2 dry run: validates every row, writes nothing. */
+  async previewCsv(file: File): Promise<CsvImportPreview> {
     const form = new FormData();
     form.append('file', file);
+    const { data } = await apiClient.post('/inventory/units/import/preview', form);
+    return data;
+  },
+  /** M4D.3 all-or-nothing import. `expectedSha256` (the preview's fileSha256) is sent only when given — never empty. */
+  async importCsv(file: File, expectedSha256?: string): Promise<CsvImportResult> {
+    const form = new FormData();
+    form.append('file', file);
+    if (expectedSha256) form.append('expectedSha256', expectedSha256);
     const { data } = await apiClient.post('/inventory/units/import', form);
     return data;
   },
