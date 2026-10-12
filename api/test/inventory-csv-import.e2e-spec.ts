@@ -257,6 +257,42 @@ describe('Inventory CSV import — all or nothing (e2e)', () => {
     }
   }, 60_000); // Postgres takes ~1 s (deadlock_timeout) to break each deadlock
 
+  it('lock-set gap: renames committed between the first check and the lock re-point a row to an UNLOCKED variant → 409, nothing written', async () => {
+    const send = (url: string, body: object) => http().post(url).set('Authorization', A.auth()).send(body).expect(201).then((r) => r.body);
+    const gap = await send('/api/v1/inventory/models', { brand: 'GAMMA', name: 'Gap' });
+    const locked = await send(`/api/v1/inventory/models/${gap.id}/variants`, { name: 'Pro', colour: 'Teal', exShowroomPrice: 1_000_000 });
+    const other = await send(`/api/v1/inventory/models/${gap.id}/variants`, { name: 'Spare', colour: 'Teal', exShowroomPrice: 2_000_000 });
+    const rename = (variantId: string, body: object) => http().patch(`/api/v1/inventory/variants/${variantId}`).set('Authorization', A.auth()).send(body).expect(200);
+    const repo = app.get(InventoryRepository);
+    const realLock = repo.lockCatalogueRows.bind(repo);
+    // Between the import's first check (row → "Gap Pro / Teal" = `locked`) and its lock, another user commits two renames:
+    // `locked` becomes Pro / Grey and `other` becomes Pro / Teal. The lock still takes `locked` (the ids from the first check).
+    jest.spyOn(repo, 'lockCatalogueRows').mockImplementationOnce(async (companyId, modelIds, variantIds, tx) => {
+      expect(variantIds).toEqual([locked.id]);
+      await rename(locked.id, { colour: 'Grey' });
+      await rename(other.id, { name: 'Pro' });
+      return realLock(companyId, modelIds, variantIds, tx);
+    });
+    const unitActivity = () => prisma.activityLog.count({ where: { companyId: A.id, entityType: 'InventoryUnit' } });
+    const before = { ...(await snapshot()), unitActivity: await unitActivity() };
+    const rows = [row({ model: 'Gap', variant: 'Pro', colour: 'Teal' }), row({ model: 'gap', variant: 'pro', colour: 'teal' })];
+    const csv = csvOf(...rows);
+    const res = await importCsv(csv, A, { expectedSha256: sha(csv) }).expect(409);
+    expect(res.body.message).toBe('The catalogue changed while importing — nothing was imported. Preview the file again.');
+    // The re-check resolved the rows to `other`, which this transaction never locked: nothing may be written into it.
+    expect(await unitsWithVins(rows.map((r) => r.vin))).toBe(0);
+    expect(await prisma.inventoryUnit.count({ where: { variantId: { in: [locked.id, other.id] } } })).toBe(0);
+    const after = await snapshot();
+    expect([after.units, after.events]).toEqual([before.units, before.events]);
+    expect(await unitActivity()).toBe(before.unitActivity); // no import audit entry (the two renames are audited as catalogue changes)
+    expect((await prisma.scooterVariant.findUniqueOrThrow({ where: { id: other.id } })).name).toBe('Pro'); // the renames themselves stand
+    // Actionable: a fresh preview shows the new match, and the import then goes through — into `other`.
+    const p = (await preview(csv).expect(200)).body as CsvImportPreview;
+    expect(p.rows.map((r) => r.unit?.variantId)).toEqual([other.id, other.id]);
+    expect(result(await importCsv(csv, A, { expectedSha256: p.fileSha256 }).expect(200))).toMatchObject({ status: 'IMPORTED', created: 2 });
+    expect(await prisma.inventoryUnit.count({ where: { variantId: other.id } })).toBe(2);
+  });
+
   it('stale preview: re-validated at import (catalogue changed → REJECTED); a different file than the one previewed → 409; nothing imported', async () => {
     const rows = [row({ variant: 'Max X', colour: 'Red' }), row()];
     const csv = csvOf(...rows);

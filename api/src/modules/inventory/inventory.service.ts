@@ -142,6 +142,16 @@ class CsvImportRejected extends Error {
   }
 }
 
+/**
+ * Thrown inside the import transaction when the re-check after locking resolves a row to a catalogue
+ * entry this transaction does not hold (it was renamed between the first check and the lock). Rolls back.
+ */
+class CsvImportCatalogueChanged extends Error {
+  constructor() {
+    super('CSV import: catalogue changed under the import');
+  }
+}
+
 const rejectedImport = (preview: CsvImportPreview): CsvImportResult => {
   const invalid = preview.rows.filter((r) => r.status === 'INVALID');
   return {
@@ -601,9 +611,15 @@ export class InventoryService {
         // Hold the catalogue rows this file uses (no deactivation / rename until we commit), then re-check.
         const variantIds = [...new Set(first.units.map((u) => u.variantId))];
         const modelIds = [...new Set(first.preview.rows.map((r) => r.unit!.modelId))];
-        await this.repo.lockCatalogueRows(companyId, modelIds, variantIds, tx);
+        const locked = await this.repo.lockCatalogueRows(companyId, modelIds, variantIds, tx);
         const { preview, units } = await validate(tx);
         if (preview.summary.invalid > 0) throw new CsvImportRejected(preview);
+        // The re-check must resolve every row to a row we hold: a rename committed between the first check
+        // and the lock can make a name match a different (unlocked) model or variant — never import into it.
+        const unlocked =
+          units.some((u) => !locked.variantIds.has(u.variantId)) ||
+          preview.rows.some((r) => r.unit !== null && (!locked.modelIds.has(r.unit.modelId) || !locked.variantIds.has(r.unit.variantId)));
+        if (unlocked) throw new CsvImportCatalogueChanged();
 
         const created = units.map((u) => ({ ...u, id: randomUUID() }));
         await this.repo.createUnits(created.map((u) => ({
@@ -633,6 +649,9 @@ export class InventoryService {
       }, { timeout: CSV_IMPORT_TX_TIMEOUT_MS, maxWait: CSV_IMPORT_TX_MAX_WAIT_MS });
     } catch (error) {
       if (error instanceof CsvImportRejected) return rejectedImport(error.preview);
+      if (error instanceof CsvImportCatalogueChanged) {
+        throw new ConflictException('The catalogue changed while importing — nothing was imported. Preview the file again.');
+      }
       if (isUniqueViolation(error) || isConcurrencyAbort(error)) {
         // A number was taken by a concurrent import or edit after validation (or Postgres aborted us in favour
         // of one); the whole import rolled back. Validate again (outside the failed transaction) to name the rows.

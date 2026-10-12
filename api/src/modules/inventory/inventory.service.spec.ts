@@ -77,7 +77,8 @@ describe('InventoryService', () => {
       findUsedIdentifiers: jest.fn().mockResolvedValue({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() }),
       createUnits: jest.fn(async (rows: unknown[]) => rows.length),
       addEvents: jest.fn(async (rows: unknown[]) => rows.length),
-      lockCatalogueRows: jest.fn().mockResolvedValue(undefined),
+      // Locks (and returns) exactly the rows it was asked for, like the real repository when nothing changed.
+      lockCatalogueRows: jest.fn(async (_companyId: string, modelIds: string[], variantIds: string[]) => ({ modelIds: new Set(modelIds), variantIds: new Set(variantIds) })),
     } as never;
     activityLog = { record: jest.fn().mockResolvedValue(undefined), recordInTransaction: jest.fn().mockResolvedValue(undefined) } as never;
     catalog = { findActiveVariantForUnit: jest.fn().mockResolvedValue({ variant: curated }), listModels: jest.fn().mockResolvedValue([]), listVariants: jest.fn().mockResolvedValue([]) };
@@ -693,6 +694,42 @@ describe('InventoryService', () => {
       expect(res.status).toBe('REJECTED');
       expect(res.preview!.rows[0]!.issues[0]!.code).toBe('VARIANT_INACTIVE');
       nothingWritten();
+    });
+
+    describe('the re-check after locking may only resolve to catalogue rows this transaction holds (lock-set gap)', () => {
+      const CHANGED = 'The catalogue changed while importing — nothing was imported. Preview the file again.';
+
+      it('a variant rename between the first check and the lock makes "Pro / Teal" match ANOTHER, unlocked variant → 409, nothing written', async () => {
+        const other = { id: 'variant-other', modelId: 'model-solo', name: 'Pro', colour: 'Teal', isActive: true, exShowroomPrice: 9_000_000n };
+        catalog.listVariants
+          .mockResolvedValueOnce([proTeal]) // first check: resolves variant-pro, which is then locked
+          .mockResolvedValueOnce([{ ...proTeal, colour: 'Grey' }, other]); // after the lock: variant-pro renamed away, variant-other renamed in
+        await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: CHANGED });
+        expect(repo.lockCatalogueRows).toHaveBeenCalledWith('company-1', ['model-solo'], ['variant-pro'], TX);
+        nothingWritten();
+      });
+
+      it('a model rename making "Solo" match another, unlocked model → 409, nothing written', async () => {
+        const newSolo = { id: 'model-new', brand: 'GAMMA', name: 'Solo', isActive: true };
+        const itsPro = { id: 'variant-new', modelId: 'model-new', name: 'Pro', colour: 'Teal', isActive: true, exShowroomPrice: 1n };
+        catalog.listModels.mockResolvedValueOnce([solo]).mockResolvedValueOnce([{ ...solo, name: 'Solo Old' }, newSolo]);
+        catalog.listVariants.mockResolvedValueOnce([proTeal]).mockResolvedValueOnce([proTeal, itsPro]);
+        await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: CHANGED });
+        nothingWritten();
+      });
+
+      it('a row the lock did not actually take (gone, or not this company\'s) is never imported into', async () => {
+        repo.lockCatalogueRows.mockResolvedValueOnce({ modelIds: new Set(['model-solo']), variantIds: new Set() });
+        await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: CHANGED });
+        repo.lockCatalogueRows.mockResolvedValueOnce({ modelIds: new Set(), variantIds: new Set(['variant-pro']) });
+        await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: CHANGED });
+        nothingWritten();
+      });
+
+      it('a re-check resolving to the same locked rows imports normally', async () => {
+        catalog.listVariants.mockResolvedValueOnce([proTeal]).mockResolvedValueOnce([{ ...proTeal, exShowroomPrice: 1n }]); // a price change is not a catalogue-identity change
+        expect(await service.importCsv(file(VALID), 'user-1')).toMatchObject({ status: 'IMPORTED', created: 2 });
+      });
     });
 
     it('a number taken concurrently (unique violation at insert) → the transaction fails, re-validated outside it → REJECTED with the row', async () => {

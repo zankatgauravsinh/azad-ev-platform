@@ -223,15 +223,17 @@ export class InventoryRepository {
   /**
    * Share-locks the company's catalogue rows an import uses — models first, then variants, each in id
    * order (the M4B.5 rename takes model then variants too, so the two cannot deadlock). Deactivating or
-   * renaming them now waits until the import commits; creating units in them is unaffected.
+   * renaming them now waits until the import commits; creating units in them is unaffected. Returns the
+   * ids actually locked (a row that is not this company's, or no longer exists, is not among them).
    */
-  async lockCatalogueRows(companyId: string, modelIds: string[], variantIds: string[], tx: Prisma.TransactionClient): Promise<void> {
-    if (modelIds.length > 0) {
-      await tx.$queryRaw`SELECT id FROM "ScooterModel" WHERE "companyId" = ${companyId} AND id IN (${Prisma.join(modelIds)}) ORDER BY id FOR SHARE`;
-    }
-    if (variantIds.length > 0) {
-      await tx.$queryRaw`SELECT id FROM "ScooterVariant" WHERE "companyId" = ${companyId} AND id IN (${Prisma.join(variantIds)}) ORDER BY id FOR SHARE`;
-    }
+  async lockCatalogueRows(companyId: string, modelIds: string[], variantIds: string[], tx: Prisma.TransactionClient): Promise<{ modelIds: Set<string>; variantIds: Set<string> }> {
+    const models = modelIds.length > 0
+      ? await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "ScooterModel" WHERE "companyId" = ${companyId} AND id IN (${Prisma.join(modelIds)}) ORDER BY id FOR SHARE`
+      : [];
+    const variants = variantIds.length > 0
+      ? await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "ScooterVariant" WHERE "companyId" = ${companyId} AND id IN (${Prisma.join(variantIds)}) ORDER BY id FOR SHARE`
+      : [];
+    return { modelIds: new Set(models.map((m) => m.id)), variantIds: new Set(variants.map((v) => v.id)) };
   }
 
   /**
