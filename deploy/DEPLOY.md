@@ -20,6 +20,10 @@ server topology changes.
 
 ## 0. Before you deploy (on the dev machine)
 
+> **Release 3.2 and later:** follow `docs/RELEASE-PREPARATION.md` first. It orders the deployment-branch
+> decision, the verified backup, the production compatibility checks, the topology review and the release
+> approval. This runbook still names `release/2.0` as the deploy branch; that changes only with that approval.
+
 1. All work is committed and pushed to `origin/release/2.0`.
 2. Decide what the release contains — this changes the steps:
    - **Prisma schema / migration change?** → a migration runs on deploy (see §3a). Take a DB backup first (§2).
@@ -37,16 +41,55 @@ git pull origin release/2.0
 git log -1 --oneline             # confirm the expected commit is checked out
 ```
 
-## 2. Back up the database (only when the release has migrations, or any time you want safety)
+## 2. Back up the database and prove the backup restores (mandatory for migration releases)
 
-The API talks to the `azad_ev_postgres` Docker container, so run `pg_dump` **inside** the
-container (the host has no `pg_dump`):
+The database runs in a Docker container and the host has no PostgreSQL tools, so the script uses the
+container's own `pg_dump` / `pg_restore` (their version always matches the server). Name the container and
+the database explicitly — check them first, do not assume them:
 
+```bash
+cd /var/www/html/azad-ev-platform
+docker ps --format '{{.Names}}  {{.Image}}'      # the Postgres container and its image
+CONTAINER="${CONTAINER:?set CONTAINER to the Postgres container name shown by docker ps}"
+DB="${DB:?set DB to the application database name (POSTGRES_DB of that container)}"
+BACKUP_DIR="$HOME/azad-backups" ./scripts/backup-docker.sh "$CONTAINER" "$DB"
 ```
-docker exec -t azad_ev_postgres pg_dump -U <db-user> <db-name> > ~/azad-backup-$(date +%F-%H%M).sql
+
+It writes `<db>-<UTC time>.dump` (custom format) plus `.dump.sha256`, `.toc`, `.counts` (exact row count per
+table) and `.meta` (container, image, server version) into `$BACKUP_DIR`: files mode 600, folder mode 700,
+and it **refuses to overwrite** an existing file. No password is read or passed — the dump connects over
+the container's local socket as its `POSTGRES_USER`. It stops on any error and removes the partial file.
+
+Two different results — only the second proves the backup is usable:
+
+- **`BACKUP_ARCHIVE_VALID`** (from `backup-docker.sh`): the archive's table of contents is readable and
+  every data block decodes (`pg_restore --list` and `pg_restore -f /dev/null`). It does **not** prove a
+  restore succeeds.
+- **`RESTORE_TEST_PASSED`** (from `restore-test.sh`): the archive was restored into a throwaway database
+  and the restored tables, exact row counts and Prisma migration history match.
+
+```bash
+ARCHIVE="${ARCHIVE:?absolute path of the .dump printed by backup-docker.sh}"
+IMAGE="${IMAGE:?the image= line of the matching .meta file, e.g. postgres:16-alpine}"
+./scripts/restore-test.sh "$ARCHIVE" "$IMAGE"
 ```
 
-(`<db-user>` / `<db-name>` are the `POSTGRES_USER` / `POSTGRES_DB` from the compose file / `DATABASE_URL`.)
+`restore-test.sh` touches nothing real: the scratch server is a new container with **no network**
+(`--network none`), its data on tmpfs (RAM — roughly the database's size must be free), no password, and
+it is removed on exit. If the server lacks the memory, copy the archive with its `.sha256`, `.counts` and
+`.meta` to another machine with Docker and run it there. Then copy those files **off the server**, check
+the checksum at the destination (`sha256sum -c <file>.dump.sha256`), and back up `uploads/` with them.
+
+Never use `docker exec -t` for a dump: a pseudo-terminal can rewrite line endings and corrupt the output.
+If the script cannot be used, the equivalent by hand (no TTY, refuses to overwrite):
+
+```bash
+set -o noclobber
+OUT="$HOME/azad-backups/$DB-$(date -u +%Y%m%dT%H%M%SZ).dump"
+docker exec "$CONTAINER" sh -c 'exec pg_dump --format=custom --no-password -U "$POSTGRES_USER" -d "$1"' sh "$DB" > "$OUT"
+docker exec -i "$CONTAINER" pg_restore --list < "$OUT" > "$OUT.toc"     # readable — still not a restore test
+sha256sum "$OUT" > "$OUT.sha256"
+```
 
 ## 3. Build
 
@@ -154,16 +197,45 @@ API — but only if nginx proxies the API at all (see "Client IP and proxy trust
 
 ## Rollback
 
+**Prefer a code-only rollback.** Roll the code back and keep the database: data written since the deploy
+is kept. For release 3.2 this is possible because its three migrations only add tables, nullable columns
+and a narrower unique index, and the `release/2.0` code does not depend on what they removed (see
+`docs/RELEASE-PREPARATION.md`, step 6):
+
 1. Note the previous commit (`git log --oneline` shows it just under the current one).
 2. `git checkout <previous-commit>` → `npm run build` → `pm2 restart <api-app-name>`.
 3. Restore the UI from the backup: `sudo rsync -a --delete <web-root>.bak-<date>/ <web-root>/`.
-4. If a migration ran and must be undone, restore the DB dump from §2 (migrations are not
-   auto-reversed) — this is why the backup is mandatory for migration releases.
+
+**Restore the database only if a migration failed part-way or the data itself must go back.** Everything
+written after the backup is lost. Restore into a **new, empty database** and swap names — restoring an
+older archive over the migrated database with `--clean` fails, because newer tables reference the old
+ones. The previous database is kept, renamed, for inspection. Prove the archive first (§2,
+`restore-test.sh`), then:
+
+```bash
+pm2 stop "${API_APP:?set API_APP to the pm2 app name}"     # nothing may stay connected
+CONTAINER="${CONTAINER:?Postgres container}"; DB="${DB:?database name}"; ARCHIVE="${ARCHIVE:?verified .dump}"
+NEWDB="${DB}_restore_$(date -u +%Y%m%d%H%M%S)"
+docker exec "$CONTAINER" sh -c 'exec createdb --no-password -U "$POSTGRES_USER" "$1"' sh "$NEWDB"
+docker exec -i "$CONTAINER" sh -c 'exec pg_restore --exit-on-error --single-transaction --no-owner --no-password -U "$POSTGRES_USER" -d "$1"' sh "$NEWDB" < "$ARCHIVE"
+docker exec -i "$CONTAINER" sh -c 'exec psql -X -v ON_ERROR_STOP=1 --no-password -U "$POSTGRES_USER" -d postgres -v db="$1" -v newdb="$2" -v failed="$1_failed_$3"' sh "$DB" "$NEWDB" "$(date -u +%Y%m%d%H%M%S)" <<'SQL'
+SELECT count(*) > 0 AS busy FROM pg_stat_activity WHERE datname IN (:'db', :'newdb') AND pid <> pg_backend_pid() \gset
+\if :busy
+  DO $$ BEGIN RAISE EXCEPTION 'STOP: something is still connected to the database; stop the API first'; END $$;
+\endif
+ALTER DATABASE :"db" RENAME TO :"failed";
+ALTER DATABASE :"newdb" RENAME TO :"db";
+SQL
+```
+
+Then check out and build the matching older code, `pm2 start` it, and verify (§6). Drop the
+`<db>_failed_<time>` database only once you no longer need it. (`scripts/restore.sh` restores over an
+existing database with `--clean`; use it only for an archive of the **same** schema version.)
 
 ## Troubleshooting
 
-- **`pg_dump: command not found`** — the host doesn't have Postgres tools; run `pg_dump`
-  *inside* the container: `docker exec -t azad_ev_postgres pg_dump ...` (see §2).
+- **`pg_dump: command not found`** — the host doesn't have Postgres tools; use
+  `scripts/backup-docker.sh`, which runs the container's own tools (§2). Never `docker exec -t` for a dump.
 - **`No such container` / `service 'db' is not running`** — check the real name with
   `docker ps`; it is `azad_ev_postgres` (not `azad-postgres`, and not a compose `db` service
   unless you're in the directory with that `docker-compose.yml`).

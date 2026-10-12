@@ -47,15 +47,19 @@ daemon, so the image is not runtime-verified in this repo. Pair with the existin
 - Liveness + DB check: `GET /api/v1/health` → `{ status, db, timestamp }` (public, unauthenticated). Wire to your uptime monitor and the load balancer.
 - App logs go to stdout (systemd journal: `journalctl -u azad-api -f`). 5xx responses log with stack traces; 4xx log as warnings (`AllExceptionsFilter`).
 
-## 6. Backups & restore (verified)
-Nightly via the systemd timer, or manually:
+## 6. Backups & restore
+Nightly via the systemd timer (host PostgreSQL client tools, version ≥ the server's), or manually:
 ```bash
-DATABASE_URL=… ./scripts/backup.sh /opt/azad-ev/backups      # compressed pg_dump, prunes >14 days
-DATABASE_URL=… ./scripts/restore.sh /opt/azad-ev/backups/azad_ev-YYYYmmdd-HHMMSS.dump
+DATABASE_URL="…" BACKUP_DIR=/opt/azad-ev/backups ./scripts/backup.sh     # validated custom-format dump, prunes >14 days
+./scripts/restore-test.sh /opt/azad-ev/backups/azad_ev-<UTC time>.dump postgres:16-alpine   # proves it restores (needs Docker)
 ```
-The scripts strip Prisma's `?schema=` param that libpq rejects. **Test a restore into a
-scratch database quarterly** — an untested backup is not a backup. Also back up the
-`uploads/` directory (KYC docs, photos) with the DB.
+`DATABASE_URL` is read from the environment only; the password goes to a temporary mode-600 password file,
+never a command-line argument. `backup.sh` prints `BACKUP_ARCHIVE_VALID` when the archive is readable;
+only `restore-test.sh` (`RESTORE_TEST_PASSED`) shows that it restores — run it for every release and at
+least quarterly. When PostgreSQL runs in Docker with no client tools on the host, use
+`scripts/backup-docker.sh` instead (see `deploy/DEPLOY.md` §2). `scripts/restore.sh` overwrites a database
+and is only for an archive of the same schema version; rollbacks across migrations are in `deploy/DEPLOY.md`
+→ Rollback. Also back up the `uploads/` directory (KYC docs, photos) with the database.
 
 ## 7. Security checklist before go-live
 - [ ] Real, unique JWT secrets and owner password (enforced by the boot guard).
