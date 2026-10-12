@@ -1,5 +1,6 @@
+import { createHash } from 'crypto';
 import { INestApplication } from '@nestjs/common';
-import { CSV_IMPORT_MAX_BYTES, CSV_IMPORT_MAX_ROWS, type CsvImportPreview } from '@azad/shared';
+import { CSV_IMPORT_MAX_BYTES, CSV_IMPORT_MAX_ROWS, type CsvImportPreview, type CsvImportResult } from '@azad/shared';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
@@ -7,8 +8,8 @@ import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-
 
 /**
  * M4D.2 — CSV import preview (dry run). Every row is validated exactly as the import does, plus
- * identifiers repeated in the file or already in use; nothing is written. The import itself is
- * unchanged until the M4D.3 confirm workflow.
+ * identifiers repeated in the file or already in use; nothing is written. The preview carries the file's
+ * SHA-256, which the M4D.3 import accepts as `expectedSha256` (the import always re-validates).
  *
  * Runs in throwaway companies (see support/e2e-company), hard-deleted afterwards.
  */
@@ -27,8 +28,9 @@ describe('Inventory CSV import preview (e2e)', () => {
 
   const preview = (csv: string, co: TestCompany = A) =>
     http().post('/api/v1/inventory/units/import/preview').set('Authorization', co.auth()).attach('file', Buffer.from(csv, 'utf8'), { filename: 'units.csv', contentType: 'text/csv' });
-  const importCsv = (csv: string, co: TestCompany = A) =>
-    http().post('/api/v1/inventory/units/import').set('Authorization', co.auth()).attach('file', Buffer.from(csv, 'utf8'), { filename: 'units.csv', contentType: 'text/csv' });
+  const importCsv = (csv: string, expectedSha256: string, co: TestCompany = A) =>
+    http().post('/api/v1/inventory/units/import').set('Authorization', co.auth()).attach('file', Buffer.from(csv, 'utf8'), { filename: 'units.csv', contentType: 'text/csv' }).field('expectedSha256', expectedSha256);
+  const sha = (csv: string): string => createHash('sha256').update(Buffer.from(csv, 'utf8')).digest('hex');
   type Over = Partial<Record<'brand' | 'model' | 'variant' | 'colour' | 'vin' | 'motor' | 'battery' | 'date' | 'cost' | 'price' | 'status', string>>;
   const row = (over: Over = {}) => {
     const n = id();
@@ -85,10 +87,11 @@ describe('Inventory CSV import preview (e2e)', () => {
       row({ brand: 'beta', model: 'vx', variant: 'pro', colour: 'red' }), // valid with Brand
       row({ status: 'DELIVERED', date: '31/2/2026', price: '"1,25,000"' }), // quoted, as a spreadsheet writes it
     ];
-    const res = await preview([HEAD, ...rows.map((r) => r.line)].join('\n')).expect(200);
-    const p = body(res);
+    const csv = [HEAD, ...rows.map((r) => r.line)].join('\n');
+    const p = body(await preview(csv).expect(200));
     expect(p.summary).toEqual({ total: 8, valid: 3, invalid: 5, duplicate: 0 });
     expect(p.maxRows).toBe(CSV_IMPORT_MAX_ROWS);
+    expect(p.fileSha256).toBe(sha(csv));
     expect(p.rows.map((r) => r.status)).toEqual(['VALID', 'VALID', 'INVALID', 'INVALID', 'INVALID', 'INVALID', 'VALID', 'INVALID']);
     expect(p.rows[0]).toEqual({
       row: 2, status: 'VALID', vin: rows[0]!.vin.toUpperCase(), issues: [],
@@ -103,7 +106,7 @@ describe('Inventory CSV import preview (e2e)', () => {
     expect(await snapshot()).toEqual(before);
   });
 
-  it('identifiers repeated in the file invalidate every row involved; ones already in use (here, another company or soft-deleted included) are flagged without saying where', async () => {
+  it("identifiers repeated in the file invalidate every row involved; ones already in use are flagged — own inventory (deleted included) as such, another company's only as unavailable", async () => {
     const mine = (await http().post('/api/v1/inventory/units').set('Authorization', A.auth()).send({ variantId: cat.pro, vin: `MINEV${stamp}`, motorNumber: `MINEM${stamp}`, batteryNumber: `MINEB${stamp}` }).expect(201)).body;
     const gone = (await http().post('/api/v1/inventory/units').set('Authorization', A.auth()).send({ variantId: cat.pro, vin: `GONEV${stamp}`, motorNumber: `GONEM${stamp}`, batteryNumber: `GONEB${stamp}` }).expect(201)).body;
     await http().delete(`/api/v1/inventory/units/${gone.id}`).set('Authorization', A.auth()).expect(204);
@@ -117,11 +120,11 @@ describe('Inventory CSV import preview (e2e)', () => {
     expect(p.summary).toEqual({ total: 6, valid: 1, invalid: 5, duplicate: 5 });
     expect(p.rows[0]!.issues).toEqual([{ code: 'DUPLICATE_IN_FILE', field: 'vin', message: `VIN "TWIN${stamp}" also appears on line 3 of this file — each scooter must be listed once.` }]);
     expect(p.rows[1]!.issues).toEqual([{ code: 'DUPLICATE_IN_FILE', field: 'vin', message: `VIN "TWIN${stamp}" also appears on line 2 of this file — each scooter must be listed once.` }]);
-    expect(p.rows[2]!.issues).toEqual([{ code: 'ALREADY_EXISTS', field: 'vin', message: `A scooter with VIN "${mine.vin}" already exists.` }]);
-    expect(p.rows[3]!.issues).toEqual([{ code: 'ALREADY_EXISTS', field: 'motorNumber', message: `Motor number "GONEM${stamp}" already exists on another scooter.` }]);
-    expect(p.rows[4]!.issues).toEqual([{ code: 'ALREADY_EXISTS', field: 'batteryNumber', message: `Battery number "THEIRB${stamp}" already exists on another scooter.` }]);
+    expect(p.rows[2]!.issues).toEqual([{ code: 'ALREADY_EXISTS', field: 'vin', message: `VIN "${mine.vin}" is already used by a scooter in your inventory.` }]);
+    expect(p.rows[3]!.issues).toEqual([{ code: 'ALREADY_EXISTS', field: 'motorNumber', message: `Motor number "GONEM${stamp}" is already used by a deleted scooter in your inventory.` }]);
+    expect(p.rows[4]!.issues).toEqual([{ code: 'IDENTIFIER_UNAVAILABLE', field: 'batteryNumber', message: `Battery number "THEIRB${stamp}" is not available — it is already registered and cannot be used.` }]);
     const text = JSON.stringify(p);
-    for (const secret of [B.id, 'OMEGA', 'Exclusive', mine.id, gone.id]) expect(text).not.toContain(secret);
+    for (const secret of [B.id, B.tag, bVariant, 'OMEGA', 'Exclusive', `THEIRV${stamp}`, `THEIRM${stamp}`, mine.id, gone.id]) expect(text).not.toContain(secret);
     expect(await snapshot()).toEqual(before);
   });
 
@@ -156,13 +159,20 @@ describe('Inventory CSV import preview (e2e)', () => {
     await http().post('/api/v1/inventory/units/import/preview').attach('file', Buffer.from(HEAD), 'units.csv').expect(401);
   });
 
-  it('the import itself is unchanged until the confirm workflow: a previewed file is not imported, and /import still behaves as before', async () => {
+  it('a preview never imports; the import of a previewed file agrees with it — refused as a whole, or created in full', async () => {
     const twin = `KEEP${stamp}`;
-    const csv = [HEAD, row({ vin: twin }).line, row({ vin: twin }).line].join('\n');
-    const p = body(await preview(csv).expect(200));
-    expect(p.rows.map((r) => r.status)).toEqual(['INVALID', 'INVALID']); // the preview refuses both
-    expect(await prisma.inventoryUnit.count({ where: { vin: twin } })).toBe(0);
-    const res = await importCsv(csv).expect(200); // M4D.1 import: row by row, first one wins
-    expect(res.body).toEqual({ created: 1, failed: 1, errors: [{ row: 3, message: `A scooter with VIN "${twin}" already exists.` }] });
+    const other = row();
+    const refused = [HEAD, row({ vin: twin }).line, other.line, row({ vin: twin }).line].join('\n');
+    const p = body(await preview(refused).expect(200));
+    expect(p.rows.map((r) => r.status)).toEqual(['INVALID', 'VALID', 'INVALID']); // the preview refuses both twins
+    expect(await prisma.inventoryUnit.count({ where: { vin: { in: [twin, other.vin.toUpperCase()] } } })).toBe(0);
+    const res = (await importCsv(refused, p.fileSha256).expect(200)).body as CsvImportResult;
+    expect(res).toMatchObject({ status: 'REJECTED', created: 0, failed: 2, errors: [{ row: 2 }, { row: 4 }] });
+    expect(res.preview!.rows.map((r) => r.issues)).toEqual(p.rows.map((r) => r.issues));
+    expect(await prisma.inventoryUnit.count({ where: { vin: { in: [twin, other.vin.toUpperCase()] } } })).toBe(0); // all or nothing
+    const fixed = [HEAD, row({ vin: twin }).line, other.line].join('\n');
+    const q = body(await preview(fixed).expect(200));
+    expect(q.summary.valid).toBe(2);
+    expect((await importCsv(fixed, q.fileSha256).expect(200)).body).toMatchObject({ status: 'IMPORTED', created: 2 });
   });
 });

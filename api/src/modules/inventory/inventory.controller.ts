@@ -37,6 +37,7 @@ import {
   type AuthUser,
   type ChangeUnitStatusInput,
   type CsvImportPreview,
+  type CsvImportResult,
   type CreateUnitInput,
   type IdentificationCorrectionInput,
   type ListUnitsQuery,
@@ -185,15 +186,34 @@ export class InventoryController {
   @Permissions('inventory.create')
   @HttpCode(200)
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Bulk import scooters from a CSV file' })
-  @ApiBody({
-    schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } },
+  @ApiOperation({
+    summary: 'Import scooters from a CSV file — all or nothing',
+    description:
+      'Re-validates the whole file with the preview rules inside one transaction and creates every row, or none. ' +
+      'Send the preview\'s fileSha256 as expectedSha256 to confirm the previewed file (a different file → 409). See CsvImportResult.',
   })
-  @ApiResponse({ status: 200, description: '{ created, failed, errors[{ row, message }] }' })
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_FILE_BYTES } }))
-  importCsv(@UploadedFile() file: MulterFile | undefined, @CurrentUser('id') userId: string) {
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' }, expectedSha256: { type: 'string', description: 'fileSha256 from the preview (optional)' } },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'CsvImportResult: { status IMPORTED | REJECTED, created, failed, errors[{ row, message }], fileSha256, preview }' })
+  @ApiResponse({ status: 400, description: 'No file, an unreadable CSV, no data rows, more than CSV_IMPORT_MAX_ROWS rows, or a malformed expectedSha256' })
+  @ApiResponse({ status: 409, description: 'Not the previewed file, or inventory changed concurrently (retry)' })
+  @ApiResponse({ status: 413, description: 'File larger than CSV_IMPORT_MAX_BYTES' })
+  @ApiResponse({ status: 503, description: 'The import could not finish in time — nothing was imported (retry or split the file)' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: CSV_IMPORT_MAX_BYTES } }))
+  importCsv(
+    @UploadedFile() file: MulterFile | undefined,
+    @Body('expectedSha256') expectedSha256: unknown,
+    @CurrentUser('id') userId: string,
+  ): Promise<CsvImportResult> {
     if (!file) throw new BadRequestException('A CSV file is required');
-    return this.inventory.importCsv(file, userId);
+    if (expectedSha256 !== undefined && (typeof expectedSha256 !== 'string' || !/^[0-9a-fA-F]{64}$/.test(expectedSha256))) {
+      throw new BadRequestException('expectedSha256 must be the fileSha256 returned by the preview');
+    }
+    return this.inventory.importCsv(file, userId, expectedSha256);
   }
 
   // ── Units: item ────────────────────────────────────────

@@ -204,25 +204,59 @@ export class InventoryRepository {
     return this.prisma.inventoryUnitDocument.delete({ where: { id } });
   }
 
-  transaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(fn);
+  transaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>, options?: { timeout?: number; maxWait?: number }): Promise<T> {
+    return options ? this.prisma.$transaction(fn, options) : this.prisma.$transaction(fn);
+  }
+
+  // ── CSV import (M4D.3) ─────────────────────────────────
+  /** Bulk insert (ids supplied by the caller so their history events can reference them). */
+  async createUnits(data: Prisma.InventoryUnitCreateManyInput[], tx: Prisma.TransactionClient): Promise<number> {
+    const { count } = await tx.inventoryUnit.createMany({ data });
+    return count;
+  }
+
+  async addEvents(data: Prisma.InventoryEventCreateManyInput[], tx: Prisma.TransactionClient): Promise<number> {
+    const { count } = await tx.inventoryEvent.createMany({ data });
+    return count;
   }
 
   /**
-   * M4D.2 — which of these VIN / motor / battery numbers are already used by ANY scooter, soft-deleted
-   * included. VIN, motor and battery numbers are unique across the whole system (not per company), so a
-   * number used in another company would still make the import fail; only the matching values come back —
-   * never the scooter or its company. Raw SQL on purpose: the tenant and soft-delete filters must not apply.
+   * Share-locks the company's catalogue rows an import uses — models first, then variants, each in id
+   * order (the M4B.5 rename takes model then variants too, so the two cannot deadlock). Deactivating or
+   * renaming them now waits until the import commits; creating units in them is unaffected.
    */
-  async findUsedIdentifiers(values: { vin: string[]; motorNumber: string[]; batteryNumber: string[] }): Promise<{ vin: Set<string>; motorNumber: Set<string>; batteryNumber: Set<string> }> {
-    const used = { vin: new Set<string>(), motorNumber: new Set<string>(), batteryNumber: new Set<string>() };
+  async lockCatalogueRows(companyId: string, modelIds: string[], variantIds: string[], tx: Prisma.TransactionClient): Promise<void> {
+    if (modelIds.length > 0) {
+      await tx.$queryRaw`SELECT id FROM "ScooterModel" WHERE "companyId" = ${companyId} AND id IN (${Prisma.join(modelIds)}) ORDER BY id FOR SHARE`;
+    }
+    if (variantIds.length > 0) {
+      await tx.$queryRaw`SELECT id FROM "ScooterVariant" WHERE "companyId" = ${companyId} AND id IN (${Prisma.join(variantIds)}) ORDER BY id FOR SHARE`;
+    }
+  }
+
+  /**
+   * M4D.2 / M4D.3 — which of these VIN / motor / battery numbers are already used by ANY scooter,
+   * soft-deleted included. The numbers are unique across the whole system (not per company), so one used
+   * elsewhere would still make the import fail. Per value only two facts come back: whether the user's own
+   * company holds it (and whether that scooter is deleted) — never the scooter or another company. Raw SQL
+   * on purpose: the tenant and soft-delete filters must not apply.
+   */
+  async findUsedIdentifiers(
+    values: { vin: string[]; motorNumber: string[]; batteryNumber: string[] },
+    companyId: string,
+    db: Db = this.prisma,
+  ): Promise<Record<'vin' | 'motorNumber' | 'batteryNumber', Map<string, { own: boolean; deleted: boolean }>>> {
+    const used = { vin: new Map<string, { own: boolean; deleted: boolean }>(), motorNumber: new Map<string, { own: boolean; deleted: boolean }>(), batteryNumber: new Map<string, { own: boolean; deleted: boolean }>() };
     if (values.vin.length + values.motorNumber.length + values.batteryNumber.length === 0) return used;
-    const rows = await this.prisma.$queryRaw<{ vin: string; motorNumber: string; batteryNumber: string }[]>`
-      SELECT vin, "motorNumber", "batteryNumber" FROM "InventoryUnit"
+    const rows = await db.$queryRaw<{ vin: string; motorNumber: string; batteryNumber: string; own: boolean; deleted: boolean }[]>`
+      SELECT vin, "motorNumber", "batteryNumber", ("companyId" = ${companyId}) AS own, ("deletedAt" IS NOT NULL) AS deleted
+      FROM "InventoryUnit"
       WHERE vin = ANY(${values.vin}::text[]) OR "motorNumber" = ANY(${values.motorNumber}::text[]) OR "batteryNumber" = ANY(${values.batteryNumber}::text[])`;
     const wanted = { vin: new Set(values.vin), motorNumber: new Set(values.motorNumber), batteryNumber: new Set(values.batteryNumber) };
     for (const row of rows) {
-      for (const field of ['vin', 'motorNumber', 'batteryNumber'] as const) if (wanted[field].has(row[field])) used[field].add(row[field]);
+      for (const field of ['vin', 'motorNumber', 'batteryNumber'] as const) {
+        if (wanted[field].has(row[field])) used[field].set(row[field], { own: row.own === true, deleted: row.deleted === true });
+      }
     }
     return used;
   }

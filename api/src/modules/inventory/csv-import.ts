@@ -1,6 +1,6 @@
 import { parse } from 'csv-parse/sync';
 import { UNIT_STATUSES, UnitStatus, type CsvImportField, type CsvImportIssueCode } from '@azad/shared';
-import { ZodError, type ZodIssue } from 'zod';
+import type { ZodIssue } from 'zod';
 
 /*
  * M4D.1 — strict CSV import helpers (pure, unit-tested). The import never creates catalogue entries: each
@@ -173,30 +173,16 @@ export type IdentifierField = 'vin' | 'motorNumber' | 'batteryNumber';
 export const IDENTIFIER_FIELDS: readonly IdentifierField[] = ['vin', 'motorNumber', 'batteryNumber'];
 export const IDENTIFIER_LABELS: Record<IdentifierField, string> = { vin: 'VIN', motorNumber: 'Motor number', batteryNumber: 'Battery number' };
 
-/** "Already used by a scooter" — never says where (identifiers are unique across the whole system). */
-export function alreadyExistsMessage(field: IdentifierField, value?: string): string {
-  const quoted = value ? `"${value}" ` : '';
-  return field === 'vin' ? `A scooter with VIN ${quoted}already exists.` : `${IDENTIFIER_LABELS[field]} ${quoted}already exists on another scooter.`;
-}
-
-/** Which identifier a unique-constraint violation is about (Postgres reports fields or the index name). */
-function duplicateMessage(target: unknown, row: { vin?: string; motorNumber?: string; batteryNumber?: string } | null): string {
-  const text = Array.isArray(target) ? target.join(',') : String(target ?? '');
-  if (/battery/i.test(text)) return alreadyExistsMessage('batteryNumber', row?.batteryNumber);
-  if (/motor/i.test(text)) return alreadyExistsMessage('motorNumber', row?.motorNumber);
-  if (/vin/i.test(text)) return alreadyExistsMessage('vin', row?.vin);
-  return 'This scooter duplicates an existing one (VIN, motor or battery number).';
+/** Already used by a scooter of the company's own inventory (deleted scooters included). */
+export function alreadyExistsMessage(field: IdentifierField, value: string, deleted = false): string {
+  const where = deleted ? 'by a deleted scooter in your inventory' : 'by a scooter in your inventory';
+  return `${IDENTIFIER_LABELS[field]} "${value}" is already used ${where}.`;
 }
 
 /**
- * The message shown for a failed row. Validation and catalogue problems are explained; a duplicate
- * identifier names the field; anything unexpected gets a generic message (`unexpected` is true so the
- * caller logs the detail server-side) — raw database errors never reach the user.
+ * Registered outside the company. VIN, motor and battery numbers are unique across the whole system, so
+ * the number cannot be used — and nothing else about it (company, record) is disclosed.
  */
-export function csvRowMessage(error: unknown, row: { vin?: string; motorNumber?: string; batteryNumber?: string } | null): { message: string; unexpected: boolean } {
-  if (error instanceof CsvRowError) return { message: error.message, unexpected: false };
-  if (error instanceof ZodError) return { message: [...new Set(error.issues.map(issueMessage))].join('; '), unexpected: false };
-  const prismaCode = (error as { code?: unknown })?.code;
-  if (prismaCode === 'P2002') return { message: duplicateMessage((error as { meta?: { target?: unknown } }).meta?.target, row), unexpected: false };
-  return { message: 'This row could not be imported because of an unexpected error. Try again; if it persists, contact support.', unexpected: true };
+export function unavailableMessage(field: IdentifierField, value: string): string {
+  return `${IDENTIFIER_LABELS[field]} "${value}" is not available — it is already registered and cannot be used.`;
 }

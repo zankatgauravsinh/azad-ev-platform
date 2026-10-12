@@ -1,14 +1,14 @@
 import { csvUnitRowSchema } from '@azad/shared';
-import { ZodError } from 'zod';
 import {
-  CsvRowError,
+  alreadyExistsMessage,
   csvParseMessage,
-  csvRowMessage,
   csvStatus,
+  issueMessage,
   normaliseCatalogueText,
   parseCsvDate,
   readCsvRows,
   resolveCsvVariant,
+  unavailableMessage,
   type Catalogue,
 } from './csv-import';
 
@@ -124,33 +124,27 @@ describe('resolveCsvVariant', () => {
   });
 });
 
-describe('csvRowMessage — safe messages', () => {
-  const row = { vin: 'VIN1', motorNumber: 'MOT1', batteryNumber: 'BAT1' };
-  const zod = (record: object): ZodError => {
+describe('identifier messages', () => {
+  it('own inventory: says so (and whether that scooter is deleted)', () => {
+    expect(alreadyExistsMessage('vin', 'VIN1')).toBe('VIN "VIN1" is already used by a scooter in your inventory.');
+    expect(alreadyExistsMessage('batteryNumber', 'B1', true)).toBe('Battery number "B1" is already used by a deleted scooter in your inventory.');
+  });
+
+  it('registered outside the company: generic — no company, no record', () => {
+    expect(unavailableMessage('motorNumber', 'M1')).toBe('Motor number "M1" is not available — it is already registered and cannot be used.');
+  });
+});
+
+describe('issueMessage — plain words for schema problems', () => {
+  const issues = (record: object) => {
     const r = csvUnitRowSchema.safeParse(record);
     if (r.success) throw new Error('expected a validation error');
-    return r.error;
+    return r.error.issues.map(issueMessage);
   };
-
-  it('row errors pass through; validation issues are named in plain words', () => {
-    expect(csvRowMessage(new CsvRowError('Fix this'), row)).toEqual({ message: 'Fix this', unexpected: false });
-    expect(csvRowMessage(zod({ model: 'VX', variant: 'Pro', colour: 'Red', vin: 'V1234', motorNumber: 'M', batteryNumber: 'B', sellingPrice: '1,25,000' }), row).message)
-      .toBe('Selling price must be a number in rupees (digits only — no commas or ₹)');
-    expect(csvRowMessage(zod({ variant: 'Pro', colour: 'Red', vin: 'V1', motorNumber: 'M', batteryNumber: 'B', purchaseCost: '-5' }), row).message)
-      .toBe('Model is required; VIN is too short; Purchase cost cannot be negative');
-  });
-
-  it('a duplicate identifier names the field and value (Postgres reports fields or the index name)', () => {
-    const p2002 = (target: unknown) => Object.assign(new Error('Unique constraint failed'), { code: 'P2002', meta: { target } });
-    expect(csvRowMessage(p2002(['vin']), row).message).toBe('A scooter with VIN "VIN1" already exists.');
-    expect(csvRowMessage(p2002('InventoryUnit_motorNumber_key'), row).message).toBe('Motor number "MOT1" already exists on another scooter.');
-    expect(csvRowMessage(p2002(['batteryNumber']), row).message).toBe('Battery number "BAT1" already exists on another scooter.');
-  });
-
-  it('anything unexpected gets a generic message and is flagged for the server log — no raw database text', () => {
-    const result = csvRowMessage(new Error('Invalid `prisma.inventoryUnit.create()` invocation: secret detail'), row);
-    expect(result.unexpected).toBe(true);
-    expect(result.message).not.toContain('prisma');
-    expect(result.message).toContain('unexpected error');
+  it('names the column and says what to fix', () => {
+    expect(issues({ model: 'VX', variant: 'Pro', colour: 'Red', vin: 'V1234', motorNumber: 'M', batteryNumber: 'B', sellingPrice: '1,25,000' }))
+      .toEqual(['Selling price must be a number in rupees (digits only — no commas or ₹)']);
+    expect(issues({ variant: 'Pro', colour: 'Red', vin: 'V1', motorNumber: 'M', batteryNumber: 'B', purchaseCost: '-5' }))
+      .toEqual(['Model is required', 'VIN is too short', 'Purchase cost cannot be negative']);
   });
 });

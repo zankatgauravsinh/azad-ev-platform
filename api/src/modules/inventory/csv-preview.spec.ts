@@ -1,5 +1,5 @@
 import { readCsvRows, type Catalogue } from './csv-import';
-import { buildCsvPreview, identifierCandidates, type ExistingIdentifiers } from './csv-preview';
+import { buildCsvPreview, identifierCandidates, validateCsvFile, type ExistingIdentifiers } from './csv-preview';
 
 const header = (h: string): string => {
   const key = h.toLowerCase().replace(/[\s_-]+/g, '');
@@ -13,9 +13,10 @@ const catalogue: Catalogue = {
   models: [m('solo', 'GAMMA', 'Solo'), m('vx-a', 'ALPHA', 'VX'), m('vx-b', 'BETA', 'VX'), m('old', 'GAMMA', 'Old', false)],
   variants: [v('pro', 'solo', 'Pro', 'Teal'), v('lite', 'solo', 'Lite', 'Blue', false), v('vxa', 'vx-a', 'Pro', 'Red'), v('vxb', 'vx-b', 'Pro', 'Red'), v('oldv', 'old', 'Pro', 'Red')],
 };
-const none = (): ExistingIdentifiers => ({ vin: new Set(), motorNumber: new Set(), batteryNumber: new Set() });
+const none = (): ExistingIdentifiers => ({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() });
+const SHA = 'a'.repeat(64);
 const preview = (lines: string[], existing = none()) =>
-  buildCsvPreview(readCsvRows(Buffer.from([HEAD, ...lines].join('\n')), header), catalogue, existing, 2000, new Date('2026-10-11T00:00:00.000Z'));
+  buildCsvPreview(readCsvRows(Buffer.from([HEAD, ...lines].join('\n')), header), catalogue, existing, 2000, new Date('2026-10-11T00:00:00.000Z'), SHA);
 
 describe('buildCsvPreview', () => {
   it('a valid row: what the import would create, with the price source', () => {
@@ -26,7 +27,7 @@ describe('buildCsvPreview', () => {
       unit: { modelId: 'solo', variantId: 'pro', brand: 'GAMMA', model: 'Solo', variant: 'Pro', colour: 'Teal', status: 'AVAILABLE', sellingPrice: '12500000', sellingPriceSource: 'LIST_PRICE', purchaseCost: '100000', purchaseDate: '2026-06-01' },
     });
     expect(p.rows[1]!.unit).toMatchObject({ sellingPrice: '0', sellingPriceSource: 'FILE', purchaseCost: '0', purchaseDate: null });
-    expect(p).toMatchObject({ checkedAt: '2026-10-11T00:00:00.000Z', maxRows: 2000 });
+    expect(p).toMatchObject({ checkedAt: '2026-10-11T00:00:00.000Z', maxRows: 2000, fileSha256: SHA });
   });
 
   it('lists every problem of a row, each with a code and a field', () => {
@@ -72,18 +73,29 @@ describe('buildCsvPreview', () => {
     expect(p.summary).toEqual({ total: 5, valid: 0, invalid: 5, duplicate: 5 });
   });
 
-  it('identifiers already in use are reported without saying where', () => {
+  it('identifiers already in use: own inventory (deleted included) named as such; registered elsewhere → generic "not available"', () => {
     const existing = none();
-    existing.vin.add('VIN1');
-    existing.batteryNumber.add('B2');
-    const p = preview([',Solo,Pro,Teal,vin1,m1,b1,,,,', ',Solo,Pro,Teal,vin2,m2,b2,,,,', ',Solo,Pro,Teal,vin3,m3,b3,,,,'], existing);
-    expect(p.rows[0]!.issues).toEqual([{ code: 'ALREADY_EXISTS', field: 'vin', message: 'A scooter with VIN "VIN1" already exists.' }]);
-    expect(p.rows[1]!.issues).toEqual([{ code: 'ALREADY_EXISTS', field: 'batteryNumber', message: 'Battery number "B2" already exists on another scooter.' }]);
-    expect(p.summary).toEqual({ total: 3, valid: 1, invalid: 2, duplicate: 2 });
+    existing.vin.set('VIN1', { own: true, deleted: false });
+    existing.motorNumber.set('M3', { own: true, deleted: true });
+    existing.batteryNumber.set('B2', { own: false, deleted: false });
+    const p = preview([',Solo,Pro,Teal,vin1,m1,b1,,,,', ',Solo,Pro,Teal,vin2,m2,b2,,,,', ',Solo,Pro,Teal,vin3,m3,b3,,,,', ',Solo,Pro,Teal,vin4,m4,b4,,,,'], existing);
+    expect(p.rows[0]!.issues).toEqual([{ code: 'ALREADY_EXISTS', field: 'vin', message: 'VIN "VIN1" is already used by a scooter in your inventory.' }]);
+    expect(p.rows[1]!.issues).toEqual([{ code: 'IDENTIFIER_UNAVAILABLE', field: 'batteryNumber', message: 'Battery number "B2" is not available — it is already registered and cannot be used.' }]);
+    expect(p.rows[2]!.issues).toEqual([{ code: 'ALREADY_EXISTS', field: 'motorNumber', message: 'Motor number "M3" is already used by a deleted scooter in your inventory.' }]);
+    expect(p.summary).toEqual({ total: 4, valid: 1, invalid: 3, duplicate: 3 });
+  });
+
+  it('validateCsvFile returns exactly what the import writes for each valid row', () => {
+    const { preview: p, units } = validateCsvFile(readCsvRows(Buffer.from([HEAD, ',Solo,Pro,Teal, vin1 ,m1,b1,1/6/2026,1000,,', 'beta,VX,Pro,Red,vin2,m2,b2,,,500,'].join('\n')), header), catalogue, none(), 2000, new Date(), SHA);
+    expect(p.summary.invalid).toBe(0);
+    expect(units).toEqual([
+      { line: 2, variantId: 'pro', vin: 'VIN1', motorNumber: 'M1', batteryNumber: 'B1', sellingPrice: 12_500_000n, purchaseCost: 100_000n, purchaseDate: new Date('2026-06-01T00:00:00.000Z'), supplier: null, location: null },
+      { line: 3, variantId: 'vxb', vin: 'VIN2', motorNumber: 'M2', batteryNumber: 'B2', sellingPrice: 50_000n, purchaseCost: 0n, purchaseDate: null, supplier: null, location: null },
+    ]);
   });
 
   it('rows carry their source line (blank lines and multi-line cells counted)', () => {
-    const p = buildCsvPreview(readCsvRows(Buffer.from(`${HEAD}\r\n,Solo,Pro,Teal,v100,m100,b100,,,,\r\n\r\n,"Nope\r\nX",Pro,Teal,v200,m200,b200,,,,\r\n,Solo,Pro,Teal,v300,m300,b300,,,,\r\n`), header), catalogue, none(), 2000, new Date());
+    const p = buildCsvPreview(readCsvRows(Buffer.from(`${HEAD}\r\n,Solo,Pro,Teal,v100,m100,b100,,,,\r\n\r\n,"Nope\r\nX",Pro,Teal,v200,m200,b200,,,,\r\n,Solo,Pro,Teal,v300,m300,b300,,,,\r\n`), header), catalogue, none(), 2000, new Date(), SHA);
     expect(p.rows.map((r) => [r.row, r.status])).toEqual([[2, 'VALID'], [4, 'INVALID'], [6, 'VALID']]);
   });
 

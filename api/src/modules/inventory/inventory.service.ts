@@ -4,9 +4,10 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { createHash, randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import {
   ActivityAction,
@@ -15,9 +16,7 @@ import {
   buildPageMeta,
   canTransitionUnit,
   CSV_IMPORT_MAX_ROWS,
-  csvUnitRowSchema,
   type CsvImportPreview,
-  type CsvUnitRow,
   type CreateUnitInput,
   type CsvImportResult,
   type ChangeUnitStatusInput,
@@ -31,12 +30,12 @@ import {
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { ExportService, type ExportData } from '../../export/export.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.service';
-import { rupeesToPaise, formatInr } from '../../common/utils/money';
+import { formatInr } from '../../common/utils/money';
 import { InventoryRepository } from './inventory.repository';
 import { CatalogRepository, type VariantRow } from './catalog/catalog.repository';
 import { TenantContext } from '../../tenant/tenant-context.service';
-import { csvParseMessage, CsvRowError, csvRowMessage, csvStatus, parseCsvDate, readCsvRows, resolveCsvVariant, type Catalogue, type CsvSourceRow } from './csv-import';
-import { buildCsvPreview, identifierCandidates } from './csv-preview';
+import { csvParseMessage, readCsvRows, type Catalogue, type CsvSourceRow } from './csv-import';
+import { buildCsvPreview, identifierCandidates, validateCsvFile } from './csv-preview';
 
 const LOW_STOCK_THRESHOLD = 2;
 // High enough to export a whole dealership's stock in one file; a single
@@ -132,10 +131,51 @@ const identityRef = (v: { id: string; name: string; colour: string; model: { id:
   label: `${v.model.brand} ${v.model.name} ${v.name} (${v.colour})`,
 });
 
+/** M4D.3 — an import (up to CSV_IMPORT_MAX_ROWS rows) runs in one transaction; give it room. */
+const CSV_IMPORT_TX_TIMEOUT_MS = 60_000;
+const CSV_IMPORT_TX_MAX_WAIT_MS = 10_000;
+
+/** Thrown inside the import transaction to roll it back and answer REJECTED with the validation. */
+class CsvImportRejected extends Error {
+  constructor(readonly preview: CsvImportPreview) {
+    super('CSV import rejected');
+  }
+}
+
+const rejectedImport = (preview: CsvImportPreview): CsvImportResult => {
+  const invalid = preview.rows.filter((r) => r.status === 'INVALID');
+  return {
+    status: 'REJECTED',
+    created: 0,
+    failed: invalid.length,
+    errors: invalid.map((r) => ({ row: r.row, message: r.issues.map((i) => i.message).join(' ') })),
+    fileSha256: preview.fileSha256,
+    preview,
+  };
+};
+
+const isUniqueViolation = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+
+/**
+ * Postgres gave up on the transaction because of another one — deadlock (40P01) or serialization failure
+ * (40001). Prisma reports it as P2034, as P2010 from raw SQL, and — for createMany — as an unknown request
+ * error whose message carries the Postgres code (there is no structured field to read it from).
+ */
+const CONCURRENCY_ABORT_CODES = ['40P01', '40001'];
+const isConcurrencyAbort = (error: unknown): boolean => {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return error.code === 'P2034' || (error.code === 'P2010' && CONCURRENCY_ABORT_CODES.includes(String((error.meta as { code?: unknown } | undefined)?.code)));
+  }
+  return error instanceof Prisma.PrismaClientUnknownRequestError && /\bcode: "(40P01|40001)"/.test(error.message);
+};
+
+/** The interactive transaction could not start in time (maxWait) or ran past its timeout. */
+const isTransactionTimeout = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028';
+
 @Injectable()
 export class InventoryService {
-  private readonly logger = new Logger(InventoryService.name);
-
   constructor(
     private readonly repo: InventoryRepository,
     private readonly activityLog: ActivityLogService,
@@ -537,83 +577,89 @@ export class InventoryService {
 
   // ── Bulk CSV import ────────────────────────────────────
   /**
-   * M4D.1 — creates AVAILABLE units from a CSV, one transaction per row (a failed row leaves no trace;
-   * the other rows still import). Each row must name an existing, active model and variant of the
-   * company: nothing is ever created in the catalogue (see csv-import.ts for the matching rules). A blank
-   * selling price takes the variant's list price. Errors carry the row's source line.
+   * M4D.3 — confirmed import, ALL OR NOTHING. Inside one transaction the whole file is validated against
+   * the current catalogue and inventory (exactly the preview's rules — the preview itself is never
+   * trusted); the catalogue rows it uses are share-locked and the file validated again; then every unit,
+   * its history event and one audit entry are written. Any invalid row, or a number taken concurrently
+   * (unique-constraint race), leaves nothing behind; a deadlock with another import is answered like that
+   * race, a transaction timeout with 503. `expectedSha256` ties the request to the previewed file.
    */
-  async importCsv(file: UploadedFile, userId: string): Promise<CsvImportResult> {
+  async importCsv(file: UploadedFile, userId: string, expectedSha256?: string): Promise<CsvImportResult> {
     const companyId = this.tenant.requireCompanyId();
-    let rows: CsvSourceRow[];
+    const { rows, fileSha256 } = this.readCsvFile(file);
+    if (expectedSha256 !== undefined && expectedSha256.toLowerCase() !== fileSha256) {
+      throw new ConflictException('This is not the file that was previewed — preview it again before importing.');
+    }
+    if (rows.length === 0) throw new BadRequestException('The file has no rows to import.');
+    const validate = async (db?: Prisma.TransactionClient) =>
+      validateCsvFile(rows, await this.csvCatalogue(companyId, db), await this.repo.findUsedIdentifiers(identifierCandidates(rows), companyId, db), CSV_IMPORT_MAX_ROWS, new Date(), fileSha256);
+
     try {
-      rows = readCsvRows(file.buffer, (h) => this.normalizeHeader(h));
+      return await this.repo.transaction(async (tx) => {
+        const first = await validate(tx);
+        if (first.preview.summary.invalid > 0) throw new CsvImportRejected(first.preview);
+        // Hold the catalogue rows this file uses (no deactivation / rename until we commit), then re-check.
+        const variantIds = [...new Set(first.units.map((u) => u.variantId))];
+        const modelIds = [...new Set(first.preview.rows.map((r) => r.unit!.modelId))];
+        await this.repo.lockCatalogueRows(companyId, modelIds, variantIds, tx);
+        const { preview, units } = await validate(tx);
+        if (preview.summary.invalid > 0) throw new CsvImportRejected(preview);
+
+        const created = units.map((u) => ({ ...u, id: randomUUID() }));
+        await this.repo.createUnits(created.map((u) => ({
+          id: u.id,
+          variantId: u.variantId,
+          vin: u.vin,
+          motorNumber: u.motorNumber,
+          batteryNumber: u.batteryNumber,
+          status: UnitStatus.AVAILABLE,
+          purchaseDate: u.purchaseDate,
+          purchaseCost: u.purchaseCost,
+          sellingPrice: u.sellingPrice,
+          supplier: u.supplier,
+          location: u.location,
+          createdById: userId,
+          updatedById: userId,
+        })), tx);
+        await this.repo.addEvents(created.map((u) => ({ unitId: u.id, fromStatus: null, toStatus: UnitStatus.AVAILABLE, note: 'Imported via CSV', createdById: userId })), tx);
+        await this.activityLog.recordInTransaction({
+          actorId: userId,
+          action: ActivityAction.CREATE,
+          entityType: 'InventoryUnit',
+          summary: `CSV import: ${created.length} scooters added`,
+          metadata: { created: created.length, fileSha256 },
+        }, tx);
+        return { status: 'IMPORTED', created: created.length, failed: 0, errors: [], fileSha256, preview: null } satisfies CsvImportResult;
+      }, { timeout: CSV_IMPORT_TX_TIMEOUT_MS, maxWait: CSV_IMPORT_TX_MAX_WAIT_MS });
     } catch (error) {
-      throw new BadRequestException(csvParseMessage(error));
-    }
-
-    const catalogue = await this.csvCatalogue(companyId);
-
-    const result: CsvImportResult = { created: 0, failed: 0, errors: [] };
-    for (const { line, record } of rows) {
-      let row: CsvUnitRow | null = null;
-      try {
-        row = csvUnitRowSchema.parse(record);
-        const status = csvStatus(row.status);
-        const purchaseDate = row.purchaseDate ? parseCsvDate(row.purchaseDate) : null;
-        const match = resolveCsvVariant(catalogue, row);
-        const parsed = row;
-        await this.repo.transaction(async (tx) => {
-          // Re-checked when the unit is written — the same rule as Add Scooter (company's, both active).
-          const found = await this.catalog.findActiveVariantForUnit(companyId, match.id, tx);
-          if (!('variant' in found)) {
-            throw new CsvRowError(found.error === 'NOT_FOUND' ? 'The variant is no longer in the catalogue.' : 'The model or variant was deactivated during the import — activate it under Inventory → Models.');
-          }
-          const unit = await this.repo.createUnit(
-            {
-              variant: { connect: { id: found.variant.id } },
-              vin: parsed.vin,
-              motorNumber: parsed.motorNumber,
-              batteryNumber: parsed.batteryNumber,
-              status,
-              purchaseDate,
-              purchaseCost: rupeesToPaise(parsed.purchaseCost),
-              // Blank → the variant's list price. The list price itself is never changed by an import.
-              sellingPrice: parsed.sellingPrice !== undefined ? rupeesToPaise(parsed.sellingPrice) : found.variant.exShowroomPrice,
-              supplier: parsed.supplier || null,
-              location: parsed.location || null,
-              createdById: userId,
-              updatedById: userId,
-            },
-            tx,
-          );
-          await this.repo.addEvent({ unitId: unit.id, fromStatus: null, toStatus: status, note: 'Imported via CSV', createdById: userId }, tx);
-        });
-        result.created += 1;
-      } catch (error) {
-        const { message, unexpected } = csvRowMessage(error, row);
-        if (unexpected) this.logger.error(`CSV import: unexpected error on line ${line}`, error instanceof Error ? error.stack : String(error));
-        result.failed += 1;
-        result.errors.push({ row: line, message });
+      if (error instanceof CsvImportRejected) return rejectedImport(error.preview);
+      if (isUniqueViolation(error) || isConcurrencyAbort(error)) {
+        // A number was taken by a concurrent import or edit after validation (or Postgres aborted us in favour
+        // of one); the whole import rolled back. Validate again (outside the failed transaction) to name the rows.
+        const { preview } = await validate();
+        if (preview.summary.invalid > 0) return rejectedImport(preview);
+        throw new ConflictException('Inventory changed while importing — nothing was imported. Try again.');
       }
+      if (isTransactionTimeout(error)) {
+        throw new ServiceUnavailableException('The import could not finish in time — nothing was imported. Try again, or split the file into smaller files.');
+      }
+      throw error;
     }
-
-    await this.activityLog.record({
-      actorId: userId,
-      action: ActivityAction.CREATE,
-      entityType: 'InventoryUnit',
-      summary: `CSV import: ${result.created} added, ${result.failed} failed`,
-      metadata: { created: result.created, failed: result.failed },
-    });
-    return result;
   }
 
   /**
-   * M4D.2 — import PREVIEW (dry run): validates every row exactly as importCsv does, plus duplicates
-   * within the file and identifiers already in use, and writes nothing (no unit, no catalogue entry, no
-   * event, no activity log). Advisory: the import re-validates every row when it runs.
+   * M4D.2 — import PREVIEW (dry run): validates every row exactly as importCsv does and writes nothing
+   * (no unit, no catalogue entry, no event, no activity log). Advisory: the import re-validates.
    */
   async previewCsv(file: UploadedFile): Promise<CsvImportPreview> {
     const companyId = this.tenant.requireCompanyId();
+    const { rows, fileSha256 } = this.readCsvFile(file);
+    const [catalogue, used] = await Promise.all([this.csvCatalogue(companyId), this.repo.findUsedIdentifiers(identifierCandidates(rows), companyId)]);
+    return buildCsvPreview(rows, catalogue, used, CSV_IMPORT_MAX_ROWS, new Date(), fileSha256);
+  }
+
+  /** Parses the file (400 when unreadable or over the row limit) and hashes its bytes. */
+  private readCsvFile(file: UploadedFile): { rows: CsvSourceRow[]; fileSha256: string } {
     let rows: CsvSourceRow[];
     try {
       rows = readCsvRows(file.buffer, (h) => this.normalizeHeader(h));
@@ -623,15 +669,14 @@ export class InventoryService {
     if (rows.length > CSV_IMPORT_MAX_ROWS) {
       throw new BadRequestException(`The file has ${rows.length} rows; at most ${CSV_IMPORT_MAX_ROWS} can be imported at once — split it into smaller files.`);
     }
-    const [catalogue, used] = await Promise.all([this.csvCatalogue(companyId), this.repo.findUsedIdentifiers(identifierCandidates(rows))]);
-    return buildCsvPreview(rows, catalogue, used, CSV_IMPORT_MAX_ROWS, new Date());
+    return { rows, fileSha256: createHash('sha256').update(file.buffer).digest('hex') };
   }
 
-  /** The company's whole catalogue, active and inactive (inactive is reported as such), read once. */
-  private async csvCatalogue(companyId: string): Promise<Catalogue> {
+  /** The company's whole catalogue, active and inactive (inactive is reported as such). */
+  private async csvCatalogue(companyId: string, db?: Prisma.TransactionClient): Promise<Catalogue> {
     const [models, variants] = await Promise.all([
-      this.catalog.listModels(companyId, { status: 'all' }),
-      this.catalog.listVariants(companyId, { status: 'all' }),
+      db ? this.catalog.listModels(companyId, { status: 'all' }, db) : this.catalog.listModels(companyId, { status: 'all' }),
+      db ? this.catalog.listVariants(companyId, { status: 'all' }, db) : this.catalog.listVariants(companyId, { status: 'all' }),
     ]);
     return { models, variants };
   }

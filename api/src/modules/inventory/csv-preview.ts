@@ -2,6 +2,7 @@ import { csvUnitRowSchema, type CsvImportIssue, type CsvImportPreview, type CsvI
 import { rupeesToPaise } from '../../common/utils/money';
 import {
   alreadyExistsMessage,
+  unavailableMessage,
   CsvRowError,
   csvStatus,
   IDENTIFIER_FIELDS,
@@ -17,14 +18,34 @@ import {
 } from './csv-import';
 
 /*
- * M4D.2 — the CSV import preview, as a pure function: every row is checked with exactly the M4D.1 rules
+ * M4D.2 / M4D.3 — CSV validation, as a pure function: every row is checked with exactly the M4D.1 rules
  * (schema, status, date, catalogue match), plus duplicates within the file and against identifiers already
- * in use. Nothing here reads or writes the database; the caller supplies the catalogue and the identifiers
- * that already exist.
+ * in use. The preview shows the result; the import runs the SAME function inside its transaction and
+ * creates `units` only when every row is valid. Nothing here reads or writes the database: the caller
+ * supplies the catalogue and the identifiers that already exist.
  */
 
+/** Who already uses an identifier value: the company itself (deleted scooters included) or someone else. */
+export interface UsedIdentifier {
+  own: boolean;
+  deleted: boolean;
+}
 /** Identifier values already used by a scooter, per field (trimmed, upper-case — how they are stored). */
-export type ExistingIdentifiers = Record<IdentifierField, Set<string>>;
+export type ExistingIdentifiers = Record<IdentifierField, Map<string, UsedIdentifier>>;
+
+/** Everything the import writes for one valid row (money in paise). */
+export interface ImportableUnit {
+  line: number;
+  variantId: string;
+  vin: string;
+  motorNumber: string;
+  batteryNumber: string;
+  sellingPrice: bigint;
+  purchaseCost: bigint;
+  purchaseDate: Date | null;
+  supplier: string | null;
+  location: string | null;
+}
 
 const normaliseIdentifier = (raw: unknown): string | null => {
   if (typeof raw !== 'string') return null;
@@ -48,8 +69,19 @@ export function identifierCandidates(rows: CsvSourceRow[]): Record<IdentifierFie
 const isoDate = (date: Date): string => date.toISOString().slice(0, 10);
 const plural = (lines: number[]): string => (lines.length === 1 ? `line ${lines[0]}` : `lines ${lines.join(', ')}`);
 
-/** Builds the preview. `existing` must hold the matches for identifierCandidates(rows). */
-export function buildCsvPreview(rows: CsvSourceRow[], catalogue: Catalogue, existing: ExistingIdentifiers, maxRows: number, checkedAt: Date): CsvImportPreview {
+/** The preview only. `existing` must hold the matches for identifierCandidates(rows). */
+export function buildCsvPreview(rows: CsvSourceRow[], catalogue: Catalogue, existing: ExistingIdentifiers, maxRows: number, checkedAt: Date, fileSha256: string): CsvImportPreview {
+  return validateCsvFile(rows, catalogue, existing, maxRows, checkedAt, fileSha256).preview;
+}
+
+/**
+ * Validates the file. `units` holds what the import would create — one per row, in file order — and is
+ * only meaningful when `preview.summary.invalid` is 0.
+ */
+export function validateCsvFile(
+  rows: CsvSourceRow[], catalogue: Catalogue, existing: ExistingIdentifiers, maxRows: number, checkedAt: Date, fileSha256: string,
+): { preview: CsvImportPreview; units: ImportableUnit[] } {
+  const units: ImportableUnit[] = [];
   // Which lines use each identifier value, per field.
   const linesByValue: Record<IdentifierField, Map<string, number[]>> = { vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() };
   for (const { line, record } of rows) {
@@ -93,7 +125,9 @@ export function buildCsvPreview(rows: CsvSourceRow[], catalogue: Catalogue, exis
       if (others.length > 0) {
         add({ code: 'DUPLICATE_IN_FILE', field, message: `${IDENTIFIER_LABELS[field]} "${value}" also appears on ${plural(others)} of this file — each scooter must be listed once.` });
       }
-      if (existing[field].has(value)) add({ code: 'ALREADY_EXISTS', field, message: alreadyExistsMessage(field, value) });
+      const used = existing[field].get(value);
+      if (used?.own) add({ code: 'ALREADY_EXISTS', field, message: alreadyExistsMessage(field, value, used.deleted) });
+      else if (used) add({ code: 'IDENTIFIER_UNAVAILABLE', field, message: unavailableMessage(field, value) });
     }
 
     const vin = normaliseIdentifier(record.vin);
@@ -114,19 +148,33 @@ export function buildCsvPreview(rows: CsvSourceRow[], catalogue: Catalogue, exis
       purchaseCost: rupeesToPaise(data.purchaseCost).toString(),
       purchaseDate: purchaseDate ? isoDate(purchaseDate) : null,
     };
+    units.push({
+      line,
+      variantId: matched.id,
+      vin: data.vin,
+      motorNumber: data.motorNumber,
+      batteryNumber: data.batteryNumber,
+      sellingPrice: BigInt(unit.sellingPrice),
+      purchaseCost: BigInt(unit.purchaseCost),
+      purchaseDate,
+      supplier: data.supplier || null,
+      location: data.location || null,
+    });
     return { row: line, status: 'VALID', vin, issues: [], unit };
   });
 
   const valid = previewRows.filter((r) => r.status === 'VALID').length;
-  return {
+  const preview: CsvImportPreview = {
     checkedAt: checkedAt.toISOString(),
+    fileSha256,
     maxRows,
     summary: {
       total: previewRows.length,
       valid,
       invalid: previewRows.length - valid,
-      duplicate: previewRows.filter((r) => r.issues.some((i) => i.code === 'DUPLICATE_IN_FILE' || i.code === 'ALREADY_EXISTS')).length,
+      duplicate: previewRows.filter((r) => r.issues.some((i) => i.code === 'DUPLICATE_IN_FILE' || i.code === 'ALREADY_EXISTS' || i.code === 'IDENTIFIER_UNAVAILABLE')).length,
     },
     rows: previewRows,
   };
+  return { preview, units };
 }

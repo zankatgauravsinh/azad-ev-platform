@@ -258,14 +258,16 @@ export type CsvImportField =
  *   model name used by several brands; names that differ only in case need fixing in the catalogue).
  * - DUPLICATE_IN_FILE: another row of this file has the same VIN, motor or battery number — every row
  *   involved is invalid, none is chosen.
- * - ALREADY_EXISTS: that VIN, motor or battery number is already used by a scooter. These numbers are
- *   unique across the whole system, so the message never says where.
+ * - ALREADY_EXISTS: that VIN, motor or battery number is already used by a scooter in YOUR company's
+ *   inventory (deleted scooters included).
+ * - IDENTIFIER_UNAVAILABLE: that number is already registered outside your company. These numbers are
+ *   unique across the whole system, so it cannot be used; nothing else about it is disclosed.
  */
 export type CsvImportIssueCode =
   | 'INVALID_VALUE' | 'INVALID_DATE' | 'STATUS_NOT_ALLOWED'
   | 'MODEL_NOT_FOUND' | 'MODEL_INACTIVE' | 'MODEL_AMBIGUOUS'
   | 'VARIANT_NOT_FOUND' | 'VARIANT_INACTIVE' | 'VARIANT_AMBIGUOUS'
-  | 'DUPLICATE_IN_FILE' | 'ALREADY_EXISTS';
+  | 'DUPLICATE_IN_FILE' | 'ALREADY_EXISTS' | 'IDENTIFIER_UNAVAILABLE';
 
 export interface CsvImportIssue {
   code: CsvImportIssueCode;
@@ -305,23 +307,49 @@ export interface CsvImportPreviewRow {
 export interface CsvImportPreview {
   /** When the preview was computed (ISO). Advisory: the import re-validates every row when it runs. */
   checkedAt: string;
+  /** SHA-256 (hex) of the file's bytes. Send it back as `expectedSha256` when confirming the import. */
+  fileSha256: string;
   maxRows: number;
   summary: {
     /** Data rows read from the file. */
     total: number;
     valid: number;
     invalid: number;
-    /** Rows with a DUPLICATE_IN_FILE or ALREADY_EXISTS issue (they are also counted as invalid). */
+    /** Rows with a DUPLICATE_IN_FILE, ALREADY_EXISTS or IDENTIFIER_UNAVAILABLE issue (also counted as invalid). */
     duplicate: number;
   };
   /** Every row, in file order. */
   rows: CsvImportPreviewRow[];
 }
 
+/*
+ * M4D.3 — confirmed CSV import (POST /inventory/units/import, multipart "file" + optional text field
+ * "expectedSha256"). ALL OR NOTHING: the server re-validates the whole file inside one transaction (the
+ * preview is never trusted) and creates every row, or none.
+ *
+ * - expectedSha256 (the preview's fileSha256): when given and the uploaded bytes differ → 409, nothing
+ *   imported ("preview it again"). The server stores no CSV; the hash is how a confirmation is tied to
+ *   the previewed file. Without it the file is still fully re-validated.
+ * - 200 IMPORTED: every row was created (one transaction: units, their history events, one audit entry).
+ * - 200 REJECTED: nothing was created; `preview` is the server's validation at import time (row issues
+ *   as in the preview). Includes numbers taken by a concurrent import or edit after validation.
+ * - 400 no file / unreadable CSV (line named) / more than CSV_IMPORT_MAX_ROWS rows / no data rows;
+ *   413 larger than CSV_IMPORT_MAX_BYTES; 409 file changed since the preview, or a concurrent change
+ *   (including a deadlock with another import) that could not be attributed to a row (retry); 503 the
+ *   transaction could not finish in time (retry or split the file); 401 / 403 auth. Nothing is imported
+ *   on any non-IMPORTED outcome.
+ */
 export interface CsvImportResult {
+  status: 'IMPORTED' | 'REJECTED';
+  /** Units created (0 when REJECTED). */
   created: number;
+  /** Rows that blocked the import (0 when IMPORTED). */
   failed: number;
+  /** One entry per invalid row, its issue messages joined — the shape the current import dialog shows. */
   errors: { row: number; message: string }[];
+  fileSha256: string;
+  /** REJECTED: the full validation at import time. IMPORTED: null. */
+  preview: CsvImportPreview | null;
 }
 
 export const inventoryDocumentTypes = DOCUMENT_TYPES;
