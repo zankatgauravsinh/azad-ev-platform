@@ -1,5 +1,7 @@
 import { INestApplication } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
+import { configureHttpApp } from '../../src/common/http/configure-http-app';
 import { AppModule } from '../../src/app.module';
 
 /**
@@ -20,7 +22,8 @@ export const E2E_HOOK_TIMEOUT = 30_000;
  */
 export async function createE2eApp(): Promise<INestApplication> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication<NestExpressApplication>();
+  configureHttpApp(app); // same proxy trust as main.ts
   app.setGlobalPrefix('api/v1');
   await app.listen(0, '127.0.0.1');
   return app;

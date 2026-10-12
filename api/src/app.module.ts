@@ -2,6 +2,7 @@ import './common/bigint-serializer';
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { throttlerOptions } from './common/throttle/throttle.config';
 import { AppConfigModule } from './config/config.module';
 import { TenantModule } from './tenant/tenant.module';
 import { TenantInterceptor } from './tenant/tenant.interceptor';
@@ -40,11 +41,8 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
   imports: [
     AppConfigModule,
     TenantModule,
-    ThrottlerModule.forRoot({
-      throttlers: [{ ttl: 60_000, limit: 120 }],
-      // Rate limiting would make the serial e2e suite (many logins from one IP) flaky.
-      skipIf: () => process.env.NODE_ENV === 'test',
-    }),
+    // Default 120/min per route per IP, plus the per-user CSV import limit (see throttle.config.ts).
+    ThrottlerModule.forRoot(throttlerOptions()),
     PrismaModule,
     StorageModule,
     ExportModule,

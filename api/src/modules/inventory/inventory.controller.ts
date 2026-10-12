@@ -47,6 +47,7 @@ import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
+import { CsvImportThrottle } from '../../common/throttle/throttle.config';
 import { InventoryService } from './inventory.service';
 
 interface MulterFile {
@@ -161,6 +162,7 @@ export class InventoryController {
   }
 
   @Post('units/import/preview')
+  @CsvImportThrottle()
   @Permissions('inventory.create')
   @HttpCode(200)
   @ApiConsumes('multipart/form-data')
@@ -176,6 +178,7 @@ export class InventoryController {
   @ApiResponse({ status: 200, description: 'CsvImportPreview: { checkedAt, maxRows, summary { total, valid, invalid, duplicate }, rows[{ row, status, vin, issues[{ code, field, message }], unit }] }' })
   @ApiResponse({ status: 400, description: 'No file, an unreadable CSV (the message names the line), or more rows than CSV_IMPORT_MAX_ROWS' })
   @ApiResponse({ status: 413, description: 'File larger than CSV_IMPORT_MAX_BYTES' })
+  @ApiResponse({ status: 429, description: 'More than 10 requests to this route in a minute by this user (nothing was processed)' })
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: CSV_IMPORT_MAX_BYTES } }))
   previewCsv(@UploadedFile() file: MulterFile | undefined): Promise<CsvImportPreview> {
     if (!file) throw new BadRequestException('A CSV file is required');
@@ -183,6 +186,7 @@ export class InventoryController {
   }
 
   @Post('units/import')
+  @CsvImportThrottle()
   @Permissions('inventory.create')
   @HttpCode(200)
   @ApiConsumes('multipart/form-data')
@@ -202,6 +206,7 @@ export class InventoryController {
   @ApiResponse({ status: 400, description: 'No file, an unreadable CSV, no data rows, more than CSV_IMPORT_MAX_ROWS rows, or a malformed expectedSha256' })
   @ApiResponse({ status: 409, description: 'Not the previewed file, or inventory changed concurrently (retry)' })
   @ApiResponse({ status: 413, description: 'File larger than CSV_IMPORT_MAX_BYTES' })
+  @ApiResponse({ status: 429, description: 'More than 10 requests to this route in a minute by this user (nothing was processed)' })
   @ApiResponse({ status: 503, description: 'The import could not finish in time — nothing was imported (retry or split the file)' })
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: CSV_IMPORT_MAX_BYTES } }))
   importCsv(

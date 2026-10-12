@@ -118,6 +118,22 @@ pm2 logs <api-app-name> --lines 50             # no errors
 Then in a browser, smoke-test what the release touched. For any auth/role-gated feature,
 check it as the intended role **and** as a role that should not see it.
 
+## Client IP and proxy trust
+
+The API trusts **only loopback proxy hops** (`api/src/common/http/configure-http-app.ts`): a reverse proxy
+on the same host connecting over 127.0.0.1 / ::1 may set `X-Forwarded-For`; Express then uses the right-most
+non-loopback address. Anyone connecting directly (the API listens on 0.0.0.0) is keyed by their own socket
+address and their `X-Forwarded-For` is ignored. The per-IP app-wide rate limit depends on this; the CSV import
+limits are per signed-in user and do not.
+
+Check on the server when this changes, or when deploying release 3.2:
+- Which address the browser/app calls (`cat web/.env`), and what listens on that port (`sudo ss -ltnp` / `lsof -iTCP -sTCP:LISTEN`).
+- If nginx proxies the API, it must connect over loopback and append the client address:
+  `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` (never `$http_x_forwarded_for` alone).
+- If another proxy or load balancer sits in front, or nginx runs in a container / on another host, loopback
+  trust is not enough: every client would share that proxy's address for the per-IP limit. Change
+  `TRUSTED_PROXY_HOPS` to exactly those hops; never `true`.
+
 ## Rollback
 
 1. Note the previous commit (`git log --oneline` shows it just under the current one).

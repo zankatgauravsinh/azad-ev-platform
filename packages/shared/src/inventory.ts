@@ -336,7 +336,8 @@ export interface CsvImportPreview {
  * - 400 no file / unreadable CSV (line named) / more than CSV_IMPORT_MAX_ROWS rows / no data rows;
  *   413 larger than CSV_IMPORT_MAX_BYTES; 409 file changed since the preview, or a concurrent change
  *   (including a deadlock with another import) that could not be attributed to a row (retry); 503 the
- *   transaction could not finish in time (retry or split the file); 401 / 403 auth. Nothing is imported
+ *   transaction could not finish in time (retry or split the file); 429 more than 10 imports by this user
+ *   in a minute (preview has its own limit of 10); 401 / 403 auth. Nothing is imported
  *   on any non-IMPORTED outcome.
  */
 export interface CsvImportResult {

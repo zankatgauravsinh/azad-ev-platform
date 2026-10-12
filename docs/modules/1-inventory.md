@@ -79,6 +79,8 @@ Inventory → **Import** opens a two-step dialog.
 
 Headers are matched ignoring case and spaces (`Make` = Brand, `Color` = Colour, `Motor No` = Motor Number…); names are matched ignoring case and extra spaces. A number already used in your own inventory is reported as such (deleted scooters included); one registered by another company is only reported as *not available*. Limits: 2,000 rows and 2 MB per file.
 
+**Rate limits** — preview and import each allow 10 requests per minute **per signed-in user** (a 429 says to wait a minute; nothing is processed). The app-wide limit of 120 requests per minute per route per client IP applies as well. See `api/src/common/throttle/throttle.config.ts`.
+
 ## Tests
 - **Unit** (`inventory.service.spec.ts`) — VIN dup guard, genesis event on create, transition validation, no-op guard, delete guard, VIN normalisation.
 - **Integration / API** (`test/inventory.e2e-spec.ts`) — auth guard, create + genesis event, duplicate 409, check-vin, search, illegal vs legal transition + history growth, stats, xlsx export.
