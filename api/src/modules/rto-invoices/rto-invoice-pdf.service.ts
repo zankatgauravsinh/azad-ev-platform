@@ -153,9 +153,11 @@ class Painter {
   // ── Signatures + jurisdiction, anchored to the bottom of the page ──
   private signatures(): void {
     const base = this.doc.page.height - this.doc.page.margins.bottom;
-    const sigY = Math.max(this.y + 46, base - 70);
+    // Room to sign: "For, <dealer>" sits well above the signature line.
+    const signSpace = 72;
+    const sigY = Math.max(this.y + signSpace + 18, base - 70);
     const colW = this.width / 3;
-    this.text(`For, ${this.d.dealerName}`, this.left + colW * 2, sigY - 40, colW, { font: FONT_BOLD, size: 8.5, color: NAVY, align: 'right' });
+    this.text(`For, ${this.d.dealerName}`, this.left + colW * 2, sigY - signSpace, colW, { font: FONT_BOLD, size: 8.5, color: NAVY, align: 'right' });
     this.text(this.d.preparedBy, this.left + colW, sigY - 12, colW, { size: 8, align: 'center', color: LABEL });
     const labels = ['Customer Signature', 'Prepared By', 'Authorised Signatory'];
     labels.forEach((label, i) => {
@@ -167,7 +169,6 @@ class Painter {
     const footY = sigY + 26;
     this.doc.moveTo(this.left, footY).lineTo(this.left + this.width, footY).strokeColor('#EEEEEE').lineWidth(1).stroke();
     if (this.d.jurisdiction) this.text(this.d.jurisdiction, this.left, footY + 6, this.width / 2, { size: 7.5, color: LABEL });
-    this.text('Computer-generated document', this.left + this.width / 2, footY + 6, this.width / 2, { size: 7, color: '#999999', align: 'right' });
     this.text(this.brand.tagline, this.left, footY + 6, this.width, { font: FONT_BOLD, size: 7, color: GOLD, align: 'center' });
   }
 

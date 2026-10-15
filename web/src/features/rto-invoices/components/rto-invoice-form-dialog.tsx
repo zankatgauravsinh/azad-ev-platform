@@ -25,6 +25,9 @@ import { rtoApi } from '../api';
 import { useRtoMutations } from '../hooks';
 import { useAuth } from '@/features/auth/auth-context';
 
+const NONE = 'none';
+const KEEP = 'keep';
+
 /** Where the delivery date came from, and who may change it. */
 function deliveryHint(isOwner: boolean, revising: boolean, source: 'DELIVERED' | 'EXPECTED' | null): string {
   const from = revising ? 'As on the invoice.' : source === 'DELIVERED' ? "The booking's delivery date." : source === 'EXPECTED' ? "The booking's expected delivery date (not delivered yet)." : 'The booking has no delivery date yet.';
@@ -57,6 +60,8 @@ export function RtoInvoiceFormDialog({ open, onOpenChange, preset, invoice, onDo
   const [rate, setRate] = useState('');
   const [supplyType, setSupplyType] = useState<RtoSupplyType>(RtoSupplyType.INTRA);
   const [policyNumber, setPolicyNumber] = useState('');
+  // An HSN classification id, NONE (print no code) or KEEP (a revision keeps the code it already prints).
+  const [hsn, setHsn] = useState<string>(NONE);
   const [deliveryDate, setDeliveryDate] = useState('');
   const [tried, setTried] = useState(false);
   // Only the owner may change the delivery date; for everyone else it is the booking's (the API enforces this too).
@@ -76,6 +81,8 @@ export function RtoInvoiceFormDialog({ open, onOpenChange, preset, invoice, onDo
       setSupplyType(invoice.supplyType);
       setPolicyNumber(invoice.policyNumber ?? '');
       setDeliveryDate(invoice.deliveryDate ?? '');
+      // Until the HSN list loads, saving keeps the printed code (never clears it by accident).
+      setHsn(invoice.hsnCode ? KEEP : NONE);
     } else {
       setCustomerId(preset?.customerId ?? '');
       setBookingId(preset?.bookingId ?? '');
@@ -96,11 +103,13 @@ export function RtoInvoiceFormDialog({ open, onOpenChange, preset, invoice, onDo
   });
   const choices = (bookings?.data ?? []).filter((b) => b.status !== BookingStatus.CANCELLED);
 
+  // Also fetched when revising — for the HSN list; the figures then come from the invoice, not the booking.
   const { data: defaults } = useQuery({
     queryKey: ['rto-invoices', 'defaults', bookingId],
     queryFn: () => rtoApi.defaults(bookingId),
-    enabled: open && !revising && Boolean(bookingId),
+    enabled: open && Boolean(bookingId),
   });
+  const hsnOptions = defaults?.hsnOptions ?? [];
   // A newly chosen booking fills in its defaults; the user can then change them.
   useEffect(() => {
     if (!defaults || revising) return;
@@ -109,7 +118,14 @@ export function RtoInvoiceFormDialog({ open, onOpenChange, preset, invoice, onDo
     setSupplyType(defaults.supplyType);
     setPolicyNumber(defaults.policyNumber ?? '');
     setDeliveryDate(defaults.deliveryDate ?? '');
+    setHsn(defaults.taxClassificationId ?? NONE);
   }, [defaults, revising]);
+  // A revision starts from the code the invoice prints: the matching entry, or KEEP when it is no longer listed.
+  useEffect(() => {
+    if (!open || !invoice || !defaults) return;
+    const match = defaults.hsnOptions.find((o) => o.code === invoice.hsnCode);
+    setHsn(match ? match.id : invoice.hsnCode ? KEEP : NONE);
+  }, [open, invoice, defaults]);
 
   const existing = !revising ? defaults?.existing ?? null : null;
   const priceNum = Number(price);
@@ -141,6 +157,7 @@ export function RtoInvoiceFormDialog({ open, onOpenChange, preset, invoice, onDo
       gstRate: rateNum,
       supplyType,
       policyNumber: policyNumber.trim() || null,
+      ...(hsn === KEEP ? {} : { taxClassificationId: hsn === NONE ? null : hsn }),
       // Left out for anyone but the owner: the API then uses the booking's date (and keeps it on a revision).
       ...(isOwner ? { deliveryDate: deliveryDate || null } : {}),
     };
@@ -225,7 +242,17 @@ export function RtoInvoiceFormDialog({ open, onOpenChange, preset, invoice, onDo
             </div>
             {defaults?.supplyTypeHint && !revising && <p className="-mt-2 text-xs text-muted-foreground">{defaults.supplyTypeHint}</p>}
 
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <FormField label="HSN code">
+                <Select value={hsn} onValueChange={setHsn}>
+                  <SelectTrigger><SelectValue placeholder="Select HSN code" /></SelectTrigger>
+                  <SelectContent>
+                    {invoice?.hsnCode && (hsn === KEEP || !hsnOptions.some((o) => o.code === invoice.hsnCode)) && <SelectItem value={KEEP}>{invoice.hsnCode} (current)</SelectItem>}
+                    {hsnOptions.map((o) => <SelectItem key={o.id} value={o.id}>{o.code} · {o.name}</SelectItem>)}
+                    <SelectItem value={NONE}>No HSN code</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormField>
               <FormField label="Insurance policy no.">
                 <Input value={policyNumber} maxLength={80} placeholder="Optional" onChange={(e) => setPolicyNumber(e.target.value)} />
               </FormField>
@@ -234,6 +261,7 @@ export function RtoInvoiceFormDialog({ open, onOpenChange, preset, invoice, onDo
               </FormField>
             </div>
             <p className="-mt-2 text-xs text-muted-foreground">{deliveryHint(isOwner, revising, defaults?.deliveryDateSource ?? null)}</p>
+            {defaults && hsnOptions.length === 0 && <p className="-mt-2 text-xs text-amber-600">No HSN codes yet — add them in Settings → GST Management.</p>}
 
             <dl aria-label="Invoice amount" className="space-y-1 rounded-lg bg-secondary px-4 py-3 text-sm">
               {discountNum > 0 && !errors.price && !errors.discount && (

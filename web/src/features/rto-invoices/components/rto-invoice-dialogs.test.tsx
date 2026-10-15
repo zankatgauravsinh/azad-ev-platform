@@ -35,7 +35,7 @@ const wrap = (ui: React.ReactNode) => render(
 );
 
 beforeEach(() => {
-  h.defaults.mockReset().mockResolvedValue({ listPrice: '11800000', gstRate: 5, supplyType: 'INTRA', supplyTypeHint: 'The customer is in your state (GST state code 24).', policyNumber: 'POL-1', deliveryDate: '2026-10-14', deliveryDateSource: 'DELIVERED', existing: null });
+  h.defaults.mockReset().mockResolvedValue({ listPrice: '11800000', gstRate: 5, supplyType: 'INTRA', supplyTypeHint: 'The customer is in your state (GST state code 24).', policyNumber: 'POL-1', deliveryDate: '2026-10-14', deliveryDateSource: 'DELIVERED', hsnOptions: [{ id: 'h1', code: '87116020', name: 'Electric scooter' }, { id: 'h2', code: '87141090', name: 'Parts' }], taxClassificationId: 'h1', existing: null });
   h.detail.mockReset().mockResolvedValue(invoice);
   h.generate.mockReset().mockResolvedValue(invoice);
   h.revise.mockReset().mockResolvedValue({ ...invoice, revision: 2 });
@@ -66,7 +66,7 @@ describe('RtoInvoiceFormDialog — generate from a booking', () => {
     fireEvent.change(screen.getByLabelText('List price (₹)'), { target: { value: '100000' } });
     fireEvent.change(screen.getByLabelText('GST rate (%)'), { target: { value: '12' } });
     fireEvent.click(screen.getByRole('button', { name: 'Generate invoice' }));
-    await waitFor(() => expect(h.generate).toHaveBeenCalledWith({ customerId: 'c1', bookingId: 'b1', listPrice: 10_000_000, discount: 0, gstRate: 12, supplyType: 'INTRA', policyNumber: 'POL-1', deliveryDate: '2026-10-14' }));
+    await waitFor(() => expect(h.generate).toHaveBeenCalledWith({ customerId: 'c1', bookingId: 'b1', listPrice: 10_000_000, discount: 0, gstRate: 12, supplyType: 'INTRA', policyNumber: 'POL-1', taxClassificationId: 'h1', deliveryDate: '2026-10-14' }));
     await waitFor(() => expect(onDone).toHaveBeenCalledWith('r1'));
   });
 
@@ -79,7 +79,7 @@ describe('RtoInvoiceFormDialog — generate from a booking', () => {
     expect(summary).toHaveTextContent('Basic price (taxable value)₹1,35,000.00');
     expect(summary).toHaveTextContent('Total₹1,41,750.00');
     fireEvent.click(screen.getByRole('button', { name: 'Generate invoice' }));
-    await waitFor(() => expect(h.generate).toHaveBeenCalledWith({ customerId: 'c1', bookingId: 'b1', listPrice: 13_900_000, discount: 400_000, gstRate: 5, supplyType: 'INTRA', policyNumber: 'POL-1', deliveryDate: '2026-10-14' }));
+    await waitFor(() => expect(h.generate).toHaveBeenCalledWith({ customerId: 'c1', bookingId: 'b1', listPrice: 13_900_000, discount: 400_000, gstRate: 5, supplyType: 'INTRA', policyNumber: 'POL-1', taxClassificationId: 'h1', deliveryDate: '2026-10-14' }));
   });
 
   it('refuses a discount that is not below the list price', async () => {
@@ -101,7 +101,7 @@ describe('RtoInvoiceFormDialog — generate from a booking', () => {
   });
 
   it('a booking that already has one offers to open it instead', async () => {
-    h.defaults.mockResolvedValue({ listPrice: '1', gstRate: 5, supplyType: 'INTRA', supplyTypeHint: '', existing: { id: 'r1', invoiceNumber: 'RTO0001' } });
+    h.defaults.mockResolvedValue({ listPrice: '1', gstRate: 5, supplyType: 'INTRA', supplyTypeHint: '', policyNumber: null, deliveryDate: null, deliveryDateSource: null, hsnOptions: [], taxClassificationId: null, existing: { id: 'r1', invoiceNumber: 'RTO0001' } });
     const onDone = vi.fn();
     wrap(<RtoInvoiceFormDialog open onOpenChange={() => {}} preset={{ customerId: 'c1', bookingId: 'b1' }} onDone={onDone} />);
     expect(await screen.findByRole('alert')).toHaveTextContent('already has RTO invoice RTO0001');
@@ -117,9 +117,18 @@ describe('RtoInvoiceFormDialog — owner revision', () => {
     expect(screen.getByText('Edit RTO invoice RTO0001')).toBeInTheDocument();
     expect((screen.getByLabelText('List price (₹)') as HTMLInputElement).value).toBe('100000');
     fireEvent.change(screen.getByLabelText('List price (₹)'), { target: { value: '120000' } });
+    // Once the HSN list loads, the code the invoice prints is selected.
+    expect(await screen.findByText('87116020 · Electric scooter')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate invoice' }));
-    await waitFor(() => expect(h.revise).toHaveBeenCalledWith('r1', { listPrice: 12_000_000, discount: 0, gstRate: 5, supplyType: 'INTRA', policyNumber: 'POL-1', deliveryDate: '2026-10-14' }));
-    expect(h.defaults).not.toHaveBeenCalled();
+    await waitFor(() => expect(h.revise).toHaveBeenCalledWith('r1', { listPrice: 12_000_000, discount: 0, gstRate: 5, supplyType: 'INTRA', policyNumber: 'POL-1', taxClassificationId: 'h1', deliveryDate: '2026-10-14' }));
+  });
+
+  it('saving before the HSN list has loaded keeps the printed code', async () => {
+    h.defaults.mockReturnValue(new Promise(() => {})); // never loads
+    wrap(<RtoInvoiceFormDialog open onOpenChange={() => {}} invoice={invoice} onDone={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate invoice' }));
+    await waitFor(() => expect(h.revise).toHaveBeenCalled());
+    expect(h.revise.mock.calls[0]![1]).not.toHaveProperty('taxClassificationId');
   });
 });
 
@@ -162,7 +171,7 @@ describe('RtoInvoiceFormDialog — policy number and delivery date', () => {
   it("a manager sees the booking's date but cannot change it, and does not send one", async () => {
     h.user.current = { role: 'MANAGER' };
     h.perms.current = new Set(['rto.view', 'rto.generate']);
-    h.defaults.mockResolvedValue({ listPrice: '11800000', gstRate: 5, supplyType: 'INTRA', supplyTypeHint: '', policyNumber: null, deliveryDate: '2026-11-20', deliveryDateSource: 'EXPECTED', existing: null });
+    h.defaults.mockResolvedValue({ listPrice: '11800000', gstRate: 5, supplyType: 'INTRA', supplyTypeHint: '', policyNumber: null, deliveryDate: '2026-11-20', deliveryDateSource: 'EXPECTED', hsnOptions: [{ id: 'h1', code: '87116020', name: 'Electric scooter' }, { id: 'h2', code: '87141090', name: 'Parts' }], taxClassificationId: 'h1', existing: null });
     wrap(<RtoInvoiceFormDialog open onOpenChange={() => {}} preset={{ customerId: 'c1', bookingId: 'b1' }} onDone={() => {}} />);
     await waitFor(() => expect((screen.getByLabelText('Delivery date') as HTMLInputElement).value).toBe('2026-11-20'));
     expect(screen.getByLabelText('Delivery date')).toBeDisabled();
@@ -172,5 +181,22 @@ describe('RtoInvoiceFormDialog — policy number and delivery date', () => {
     await waitFor(() => expect(h.generate).toHaveBeenCalled());
     expect(h.generate.mock.calls[0]![0]).toMatchObject({ policyNumber: 'POL-9' });
     expect(h.generate.mock.calls[0]![0]).not.toHaveProperty('deliveryDate');
+  });
+});
+
+describe('RtoInvoiceFormDialog — HSN code', () => {
+  it("defaults to the model's HSN code; another one from GST Management, or none, can be chosen", async () => {
+    wrap(<RtoInvoiceFormDialog open onOpenChange={() => {}} preset={{ customerId: 'c1', bookingId: 'b1' }} onDone={() => {}} />);
+    await waitFor(() => expect((screen.getByLabelText('List price (₹)') as HTMLInputElement).value).toBe('118000'));
+    fireEvent.click(screen.getByRole('button', { name: 'Generate invoice' }));
+    await waitFor(() => expect(h.generate).toHaveBeenCalledWith(expect.objectContaining({ taxClassificationId: 'h1' })));
+  });
+
+  it('a revision keeps a code that is no longer listed unless another is chosen', async () => {
+    wrap(<RtoInvoiceFormDialog open onOpenChange={() => {}} invoice={{ ...invoice, hsnCode: '99999999' }} onDone={() => {}} />);
+    await waitFor(() => expect(h.defaults).toHaveBeenCalledWith('b1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate invoice' }));
+    await waitFor(() => expect(h.revise).toHaveBeenCalled());
+    expect(h.revise.mock.calls[0]![1]).not.toHaveProperty('taxClassificationId');
   });
 });

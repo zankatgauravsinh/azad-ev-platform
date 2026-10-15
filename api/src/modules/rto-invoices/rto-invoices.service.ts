@@ -13,6 +13,7 @@ import {
   type Paginated,
   type ReviseRtoInvoiceInput,
   type RtoInvoiceDefaults,
+  type RtoHsnOption,
   type RtoInvoiceDto,
 } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -80,13 +81,15 @@ export class RtoInvoicesService {
     const [booking, company] = await Promise.all([
       this.prisma.booking.findFirst({
         where: { id: bookingId },
-        select: { unit: { select: { sellingPrice: true } }, customer: { select: { gstStateCode: true } }, rtoInvoice: { select: { id: true, invoiceNumber: true } } },
+        select: { unit: { select: { sellingPrice: true, variant: { select: { model: { select: { taxClassificationId: true } } } } } }, customer: { select: { gstStateCode: true } }, rtoInvoice: { select: { id: true, invoiceNumber: true } } },
       }),
       this.prisma.companySetting.findFirst({ select: { taxPercentage: true, gstStateCode: true } }),
     ]);
     if (!booking) throw new NotFoundException('Booking not found');
     const configured = Number(company?.taxPercentage ?? 0);
     const fromBooking = await this.bookingDefaults(bookingId);
+    const hsnOptions = await this.hsnOptions();
+    const modelHsn = booking.unit.variant.model.taxClassificationId;
     return {
       listPrice: booking.unit.sellingPrice.toString(),
       gstRate: configured > 0 ? configured : FALLBACK_GST_RATE,
@@ -94,6 +97,8 @@ export class RtoInvoicesService {
       policyNumber: fromBooking.policyNumber,
       deliveryDate: fromBooking.deliveryDate,
       deliveryDateSource: fromBooking.deliveryDateSource,
+      hsnOptions,
+      taxClassificationId: hsnOptions.some((o) => o.id === modelHsn) ? modelHsn : null,
       existing: booking.rtoInvoice,
     };
   }
@@ -116,6 +121,7 @@ export class RtoInvoicesService {
     if (deliveryDate !== fromBooking.deliveryDate && actor.role !== Role.OWNER) {
       throw new ForbiddenException("Only the owner can change the delivery date — leave it as the booking's");
     }
+    const hsnCode = dto.taxClassificationId === undefined ? booking.unit.variant.model.taxClassification?.code ?? null : await this.hsnCodeOf(dto.taxClassificationId);
     const details = { policyNumber: dto.policyNumber === undefined ? fromBooking.policyNumber : dto.policyNumber, deliveryDate: calendarDate(deliveryDate) };
     let created: Row;
     try {
@@ -129,7 +135,7 @@ export class RtoInvoicesService {
             unitId: booking.unitId,
             ...figures,
             ...details,
-            hsnCode: booking.unit.variant.model.taxClassification?.code ?? null,
+            hsnCode,
             createdById: actor.id,
             updatedById: actor.id,
           },
@@ -150,14 +156,14 @@ export class RtoInvoicesService {
     if (actor.role !== Role.OWNER) throw new ForbiddenException('Only the owner can edit an RTO invoice');
     const before = await this.load(id);
     const figures = this.figures(dto);
-    const hsn = await this.prisma.inventoryUnit.findFirst({ where: { id: before.unitId }, select: { variant: { select: { model: { select: { taxClassification: { select: { code: true } } } } } } } });
     const updated = await this.prisma.rtoInvoice.update({
       where: { id },
       data: {
         ...figures,
         ...(dto.policyNumber !== undefined ? { policyNumber: dto.policyNumber } : {}),
         ...(dto.deliveryDate !== undefined ? { deliveryDate: calendarDate(dto.deliveryDate) } : {}),
-        hsnCode: hsn?.variant.model.taxClassification?.code ?? before.hsnCode,
+        // The printed HSN code changes only when one is chosen (or cleared).
+        ...(dto.taxClassificationId !== undefined ? { hsnCode: await this.hsnCodeOf(dto.taxClassificationId) } : {}),
         revision: { increment: 1 },
         updatedById: actor.id,
       },
@@ -178,7 +184,7 @@ export class RtoInvoicesService {
       this.prisma.companySetting.findFirst({ select: { businessName: true, timezone: true, gstNumber: true, gstStateCode: true, state: true, city: true } }),
       this.prisma.customer.findFirst({ where: { id: r.customerId }, select: { name: true, phone: true, address: true, village: true, city: true, tehsil: true, district: true, state: true, pin: true, aadhaarNumber: true, panNumber: true, gstin: true } }),
       this.prisma.inventoryUnit.findFirst({ where: { id: r.unitId }, select: { vin: true, motorNumber: true, batteryNumber: true, keyNumber: true, variant: { select: { name: true, colour: true, model: { select: { name: true, brand: true } } } } } }),
-      this.prisma.booking.findFirst({ where: { id: r.bookingId }, select: { code: true, finance: { select: { financeCompany: true, status: true } }, sale: { select: { invoiceNumber: true } } } }),
+      this.prisma.booking.findFirst({ where: { id: r.bookingId }, select: { finance: { select: { financeCompany: true, status: true } } } }),
       r.createdById ? this.prisma.user.findFirst({ where: { id: r.createdById }, select: { name: true } }) : null,
     ]);
     if (!customer || !unit || !booking) throw new NotFoundException('The customer, booking or vehicle on this RTO invoice no longer exists');
@@ -189,7 +195,6 @@ export class RtoInvoicesService {
         customer,
         // Hypothecated only while the finance is live — a rejected or cancelled loan prints SELF.
         financeCompany: booking.finance && !['REJECTED', 'CANCELLED'].includes(booking.finance.status) ? booking.finance.financeCompany : null,
-        booking: { code: booking.code, saleInvoiceNumber: booking.sale?.invoiceNumber ?? null },
         vehicle: { make: unit.variant.model.brand, model: unit.variant.model.name, variant: unit.variant.name, colour: unit.variant.colour, vin: unit.vin, motorNumber: unit.motorNumber, batteryNumber: unit.batteryNumber, keyNumber: unit.keyNumber },
         preparedBy: preparedBy?.name ?? null,
         timeZone: resolveTimeZone(company?.timezone),
@@ -213,6 +218,20 @@ export class RtoInvoicesService {
     // The expected date is entered as a calendar date (stored at midnight UTC).
     if (b?.expectedDelivery) return { policyNumber, deliveryDate: b.expectedDelivery.toISOString().slice(0, 10), deliveryDateSource: 'EXPECTED' };
     return { policyNumber, deliveryDate: null, deliveryDateSource: null };
+  }
+
+  /** Active HSN classifications with a code (GST Management), for the picker. */
+  private async hsnOptions(): Promise<RtoHsnOption[]> {
+    const rows = await this.prisma.taxClassification.findMany({ where: { codeType: 'HSN', isActive: true, code: { not: null } }, select: { id: true, code: true, name: true }, orderBy: [{ code: 'asc' }, { name: 'asc' }] });
+    return rows.filter((r): r is RtoHsnOption => !!r.code?.trim()).map((r) => ({ id: r.id, code: r.code.trim(), name: r.name }));
+  }
+
+  /** The code of a chosen classification — it must be this company's active HSN code; null clears it. */
+  private async hsnCodeOf(taxClassificationId: string | null): Promise<string | null> {
+    if (taxClassificationId === null) return null;
+    const c = await this.prisma.taxClassification.findFirst({ where: { id: taxClassificationId }, select: { codeType: true, isActive: true, code: true } });
+    if (!c || c.codeType !== 'HSN' || !c.isActive || !c.code?.trim()) throw new BadRequestException('Choose an active HSN code from GST Management');
+    return c.code.trim();
   }
 
   private async load(id: string): Promise<Row> {

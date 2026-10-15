@@ -157,6 +157,43 @@ describe('RTO invoices (e2e)', () => {
     expect(d).toMatchObject({ deliveryDate: day, deliveryDateSource: 'DELIVERED' });
   });
 
+  it('HSN code: defaults to the model\'s, can be chosen from GST Management or left out; the PDF has no booking / sale numbers', async () => {
+    const mk = (name: string, codeType: 'HSN' | 'SAC', code: string, isActive = true) => prisma.taxClassification.create({ data: { companyId: co.id, name: `${name} ${stamp}`, codeType, code, isActive } });
+    const scooter = await mk('Electric scooter', 'HSN', '87116020');
+    const parts = await mk('Parts', 'HSN', '87141090');
+    const service = await mk('Service', 'SAC', '998714');
+    const retired = await mk('Retired', 'HSN', '87110000', false);
+    await prisma.scooterModel.update({ where: { id: co.modelId }, data: { taxClassificationId: scooter.id } });
+
+    const b = await booking();
+    const d = (await http().get(`/api/v1/rto-invoices/defaults?bookingId=${b.id}`).set('Authorization', as('MANAGER')).expect(200)).body;
+    expect(d.taxClassificationId).toBe(scooter.id);
+    const ids = d.hsnOptions.map((o: { id: string }) => o.id);
+    expect(ids).toEqual(expect.arrayContaining([scooter.id, parts.id]));
+    expect(ids).not.toContain(service.id); // SAC codes are services
+    expect(ids).not.toContain(retired.id);
+
+    const body = { customerId, listPrice: 100, gstRate: 5, supplyType: 'INTRA' };
+    expect((await generate(as(), { ...body, bookingId: b.id }).expect(201)).body.hsnCode).toBe('87116020'); // model default
+    expect((await generate(as('MANAGER'), { ...body, bookingId: (await booking()).id, taxClassificationId: parts.id }).expect(201)).body.hsnCode).toBe('87141090');
+    expect((await generate(as(), { ...body, bookingId: (await booking()).id, taxClassificationId: null }).expect(201)).body.hsnCode).toBeNull();
+    for (const bad of [service.id, retired.id]) {
+      expect((await generate(as(), { ...body, bookingId: (await booking()).id, taxClassificationId: bad }).expect(400)).body.message).toBe('Choose an active HSN code from GST Management');
+    }
+
+    // A revision keeps the code unless another is chosen.
+    const r = (await generate(as(), { ...body, bookingId: (await booking()).id, taxClassificationId: parts.id }).expect(201)).body;
+    const revise = (extra: Record<string, unknown>) => http().patch(`/api/v1/rto-invoices/${r.id}`).set('Authorization', as()).send({ listPrice: 100, gstRate: 5, supplyType: 'INTRA', ...extra }).expect(200);
+    expect((await revise({})).body.hsnCode).toBe('87141090');
+    expect((await revise({ taxClassificationId: scooter.id })).body.hsnCode).toBe('87116020');
+
+    const pdf = await http().get(`/api/v1/rto-invoices/${r.id}/pdf`).set('Authorization', as()).buffer().parse(binaryParser).expect(200);
+    const text = (await readPdfText(pdf.body as Buffer)).strings.join(' ');
+    expect(text).toContain('87116020');
+    for (const gone of ['Booking No.', 'Sale Invoice No.', 'Computer-generated']) expect(text).not.toContain(gone);
+    await prisma.scooterModel.update({ where: { id: co.modelId }, data: { taxClassificationId: null } });
+  });
+
   it('refuses a booking of another customer, a cancelled booking, and bad figures', async () => {
     const b = await booking();
     expect((await generate(as(), { customerId: otherCustomerId, bookingId: b.id, listPrice: 100, gstRate: 5, supplyType: 'INTRA' }).expect(400)).body.message).toBe(`Booking ${b.code} belongs to another customer`);

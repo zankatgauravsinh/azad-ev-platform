@@ -36,6 +36,11 @@ const rtoFigures = {
   /** GST rate in percent. */
   gstRate,
   supplyType: z.enum(RTO_SUPPLY_TYPES as [RtoSupplyType, ...RtoSupplyType[]]),
+  /**
+   * The HSN code to print, chosen from GST Management (an active HSN classification). Omitted → the vehicle
+   * model's classification on a new invoice, unchanged on a revision; null → no HSN code.
+   */
+  taxClassificationId: z.string().uuid().nullable().optional(),
   /** Insurance policy number; '' or null leaves it blank. Omitted → the booking's policy number. */
   policyNumber: z.string().trim().max(80).nullable().optional().transform((v) => (v == null ? v : v || null)),
   /**
@@ -123,6 +128,13 @@ export interface RtoInvoiceDto {
   updatedAt: string;
 }
 
+/** One HSN code the RTO invoice can print. */
+export interface RtoHsnOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
 /** What the generate form starts from for a booking. */
 export interface RtoInvoiceDefaults {
   /** The scooter's list price (paise) — the list price the form starts from. */
@@ -138,6 +150,10 @@ export interface RtoInvoiceDefaults {
   deliveryDate: string | null;
   /** Where deliveryDate came from: the recorded handover, the expected date, or nothing yet. */
   deliveryDateSource: 'DELIVERED' | 'EXPECTED' | null;
+  /** Active HSN codes from GST Management, for the HSN picker. */
+  hsnOptions: RtoHsnOption[];
+  /** The vehicle model's HSN classification when it is one of hsnOptions; otherwise null. */
+  taxClassificationId: string | null;
   /** The booking's RTO invoice when it already has one (a booking has at most one). */
   existing: { id: string; invoiceNumber: string } | null;
 }

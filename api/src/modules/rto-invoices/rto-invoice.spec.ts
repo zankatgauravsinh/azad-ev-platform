@@ -49,7 +49,6 @@ describe('buildRtoInvoiceDocument', () => {
     dealer: { name: 'AZAD EV POINT', gstin: '24AAJCT0051E1ZT', state: 'Gujarat', stateCode: '24', city: 'Una' },
     customer: { name: 'Asha Patel', phone: '9876543210', address: '4 Lake View', village: 'Panadar', city: 'Kodinar', tehsil: 'Kodinar', district: 'Gir Somnath', state: 'Gujarat', pin: '362720', aadhaarNumber: '234123412346', panNumber: 'ABCDE1234F', gstin: null },
     financeCompany: 'Bajaj Finance',
-    booking: { code: 'BK0001', saleInvoiceNumber: 'INV0001' },
     vehicle: { make: 'COMPTECH', model: 'MARS', variant: 'Max', colour: 'Sunset Orange', vin: 'VIN1', motorNumber: 'M1', batteryNumber: 'B1', keyNumber: 'PB51' },
     preparedBy: 'Showroom Owner',
     timeZone: 'Asia/Kolkata',
@@ -66,7 +65,13 @@ describe('buildRtoInvoiceDocument', () => {
     expect(value(doc.customer, 'Aadhaar No.')).toBe('2341 2341 2346');
     expect(value(doc.customer, 'GSTIN No.')).toBe('—');
     expect(value(doc.customer, 'HPA With')).toBe('BAJAJ FINANCE');
-    expect(doc.references.map((r) => r.value)).toEqual(['RTO0001', '15/10/2026', 'BK0001', 'INV0001', '14/10/2026', 'POL123456']);
+    // Booking and sale invoice numbers are not printed.
+    expect(doc.references).toEqual([
+      { label: 'Invoice No.', value: 'RTO0001' },
+      { label: 'Invoice Date', value: '15/10/2026' },
+      { label: 'Delivery Date', value: '14/10/2026' },
+      { label: 'Policy No.', value: 'POL123456' },
+    ]);
     expect(value(doc.vehicle, 'Product Make')).toBe('COMPTECH');
     expect(value(doc.vehicle, 'Chassis No.')).toBe('VIN1');
     expect(value(doc.vehicle, 'Key No.')).toBe('PB51');

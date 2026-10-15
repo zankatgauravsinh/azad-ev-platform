@@ -49,7 +49,6 @@ export interface RtoInvoiceIdentity {
   };
   /** The lender the vehicle is hypothecated to, or null when bought outright (printed as SELF). */
   financeCompany: string | null;
-  booking: { code: string; saleInvoiceNumber: string | null };
   vehicle: { make: string; model: string; variant: string; colour: string; vin: string; motorNumber: string; batteryNumber: string; keyNumber: string | null };
   preparedBy: string | null;
   timeZone: string;
@@ -116,8 +115,6 @@ export function buildRtoInvoiceDocument(r: RtoInvoiceFigures, id: RtoInvoiceIden
     references: [
       { label: 'Invoice No.', value: r.invoiceNumber },
       { label: 'Invoice Date', value: date(r.invoiceDate) },
-      { label: 'Booking No.', value: id.booking.code },
-      { label: 'Sale Invoice No.', value: show(id.booking.saleInvoiceNumber) },
       { label: 'Delivery Date', value: r.deliveryDate ? r.deliveryDate.split('-').reverse().join('/') : NOT_SET },
       { label: 'Policy No.', value: show(r.policyNumber) },
     ],
