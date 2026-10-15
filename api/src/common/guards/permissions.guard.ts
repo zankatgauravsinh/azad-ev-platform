@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import type { AuthenticatedRequest } from '../types/authenticated-request';
-import { PermissionResolver } from '../rbac/permission-resolver.service';
+import { PermissionResolver, effectivePermissions } from '../rbac/permission-resolver.service';
 
 /**
  * Permission-based authorization. Group 4 wires this as a global guard, but it is a NO-OP unless a
@@ -28,7 +28,7 @@ export class PermissionsGuard implements CanActivate {
     const { user } = context.switchToHttp().getRequest<AuthenticatedRequest>();
     if (!user) throw new ForbiddenException('You do not have permission to perform this action');
 
-    const effective = await this.resolver.resolve(user);
+    const effective = await effectivePermissions(context.switchToHttp().getRequest<AuthenticatedRequest>(), this.resolver);
     if (required.every((perm) => effective.has(perm))) return true;
     throw new ForbiddenException('You do not have permission to perform this action');
   }

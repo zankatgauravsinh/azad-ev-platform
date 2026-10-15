@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   Res,
   UploadedFile,
   UseInterceptors,
@@ -42,6 +43,7 @@ import {
   type IdentificationCorrectionInput,
   type ListUnitsQuery,
   type UpdateUnitInput,
+  PURCHASE_COST_PERMISSION,
 } from '@azad/shared';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -49,6 +51,8 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { CsvImportThrottle } from '../../common/throttle/throttle.config';
 import { InventoryService } from './inventory.service';
+import { PermissionResolver, effectivePermissions } from '../../common/rbac/permission-resolver.service';
+import type { AuthenticatedRequest } from '../../common/types/authenticated-request';
 
 interface MulterFile {
   buffer: Buffer;
@@ -85,7 +89,15 @@ const STATUS_EXAMPLE = { toStatus: 'RESERVED', note: 'Held for test ride' };
 @ApiBearerAuth('access-token')
 @Controller('inventory')
 export class InventoryController {
-  constructor(private readonly inventory: InventoryService) {}
+  constructor(
+    private readonly inventory: InventoryService,
+    private readonly resolver: PermissionResolver,
+  ) {}
+
+  /** Whether the caller may see and set purchase cost (inventory.cost — the owner, by default). */
+  private async canSeeCost(req: AuthenticatedRequest): Promise<boolean> {
+    return (await effectivePermissions(req, this.resolver)).has(PURCHASE_COST_PERMISSION);
+  }
 
   // ── Dashboard / stats ──────────────────────────────────
   @Get('stats')
@@ -138,10 +150,11 @@ export class InventoryController {
     @Query(new ZodValidationPipe(listUnitsQuerySchema)) query: ListUnitsQuery,
     @Query('format') format: string,
     @CurrentUser('id') userId: string,
+    @Req() req: AuthenticatedRequest,
     @Res() res: Response,
   ): Promise<void> {
     const fmt = format === 'pdf' ? 'pdf' : 'xlsx';
-    const { buffer, filename, contentType } = await this.inventory.export(query, fmt, userId);
+    const { buffer, filename, contentType } = await this.inventory.export(query, fmt, userId, await this.canSeeCost(req));
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -154,11 +167,12 @@ export class InventoryController {
   @ApiResponse({ status: 201, description: 'The created scooter with its variant/model' })
   @ApiResponse({ status: 409, description: 'VIN / motor / battery number already exists' })
   @ApiResponse({ status: 400, description: 'Validation failed' })
-  create(
+  async create(
     @Body(new ZodValidationPipe(createUnitSchema)) dto: CreateUnitInput,
     @CurrentUser('id') userId: string,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.inventory.create(dto, userId);
+    return this.inventory.create(dto, userId, await this.canSeeCost(req));
   }
 
   @Post('units/import/preview')
@@ -181,9 +195,9 @@ export class InventoryController {
   @ApiResponse({ status: 429, description: 'More than 10 requests to this route in a minute by this user (nothing was processed)' })
   @ApiResponse({ status: 503, description: 'The database could not serve the preview in time — try again (nothing was written)' })
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: CSV_IMPORT_MAX_BYTES } }))
-  previewCsv(@UploadedFile() file: MulterFile | undefined): Promise<CsvImportPreview> {
+  async previewCsv(@UploadedFile() file: MulterFile | undefined, @Req() req: AuthenticatedRequest): Promise<CsvImportPreview> {
     if (!file) throw new BadRequestException('A CSV file is required');
-    return this.inventory.previewCsv(file);
+    return this.inventory.previewCsv(file, await this.canSeeCost(req));
   }
 
   @Post('units/import')
@@ -210,16 +224,17 @@ export class InventoryController {
   @ApiResponse({ status: 429, description: 'More than 10 requests to this route in a minute by this user (nothing was processed)' })
   @ApiResponse({ status: 503, description: 'The import could not finish in time — nothing was imported (retry or split the file)' })
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: CSV_IMPORT_MAX_BYTES } }))
-  importCsv(
+  async importCsv(
     @UploadedFile() file: MulterFile | undefined,
     @Body('expectedSha256') expectedSha256: unknown,
     @CurrentUser('id') userId: string,
+    @Req() req: AuthenticatedRequest,
   ): Promise<CsvImportResult> {
     if (!file) throw new BadRequestException('A CSV file is required');
     if (expectedSha256 !== undefined && (typeof expectedSha256 !== 'string' || !/^[0-9a-fA-F]{64}$/.test(expectedSha256))) {
       throw new BadRequestException('expectedSha256 must be the fileSha256 returned by the preview');
     }
-    return this.inventory.importCsv(file, userId, expectedSha256);
+    return this.inventory.importCsv(file, userId, expectedSha256, await this.canSeeCost(req));
   }
 
   // ── Units: item ────────────────────────────────────────
@@ -245,12 +260,13 @@ export class InventoryController {
   @ApiResponse({ status: 200, description: 'The updated scooter' })
   @ApiResponse({ status: 404, description: 'Scooter not found' })
   @ApiResponse({ status: 409, description: 'VIN already exists' })
-  update(
+  async update(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(updateUnitSchema)) dto: UpdateUnitInput,
     @CurrentUser('id') userId: string,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.inventory.update(id, dto, userId);
+    return this.inventory.update(id, dto, userId, await this.canSeeCost(req));
   }
 
   @Patch('units/:id/identification-correction')

@@ -273,7 +273,7 @@ export class InventoryRepository {
    */
   async lockUnit(companyId: string, id: string, tx: Prisma.TransactionClient): Promise<LockedUnit | null> {
     const rows = await tx.$queryRaw<LockedUnit[]>`
-      SELECT id, status::text AS status, vin, "motorNumber", "batteryNumber", "variantId"
+      SELECT id, status::text AS status, vin, "motorNumber", "batteryNumber", "controllerNumber", "chargerNumber", "variantId"
       FROM "InventoryUnit"
       WHERE id = ${id} AND "companyId" = ${companyId} AND "deletedAt" IS NULL
       FOR UPDATE`;
@@ -301,5 +301,7 @@ export interface LockedUnit {
   vin: string;
   motorNumber: string;
   batteryNumber: string;
+  controllerNumber: string | null;
+  chargerNumber: string | null;
   variantId: string;
 }

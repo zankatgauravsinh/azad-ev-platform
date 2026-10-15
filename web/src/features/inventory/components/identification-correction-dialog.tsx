@@ -15,6 +15,9 @@ const FIELDS = [
   { key: 'vin', label: 'VIN', min: 3 },
   { key: 'motorNumber', label: 'Motor number', min: 1 },
   { key: 'batteryNumber', label: 'Battery number', min: 1 },
+  // Optional numbers: may be corrected, or cleared.
+  { key: 'controllerNumber', label: 'Controller number', min: 0 },
+  { key: 'chargerNumber', label: 'Charger number', min: 0 },
 ] as const;
 type FieldKey = (typeof FIELDS)[number]['key'];
 type Values = Record<FieldKey, string> & { reason: string };
@@ -23,30 +26,30 @@ type Errors = Partial<Record<FieldKey | 'reason' | 'form', string>>;
 const normalise = (value: string): string => value.trim().toUpperCase();
 
 /**
- * OWNER-only correction of a vehicle's VIN / motor / battery number (M4B.3). The fields start with the
+ * OWNER-only correction of a vehicle's VIN / motor / battery / controller / charger number (M4B.3). The fields start with the
  * current values; changed ones are highlighted; a reason is required; the old → new summary must be
  * confirmed. Only the changed fields and the reason are sent. Only the vehicle record changes — bookings,
  * sales, warranties, documents and GST records keep what they recorded.
  */
 export function IdentificationCorrectionDialog({ open, onOpenChange, unit }: { open: boolean; onOpenChange: (open: boolean) => void; unit: UnitDetail }): JSX.Element {
   const correct = useCorrectIdentification(unit.id);
-  const current: Record<FieldKey, string> = { vin: unit.vin, motorNumber: unit.motorNumber, batteryNumber: unit.batteryNumber };
+  const current: Record<FieldKey, string> = { vin: unit.vin, motorNumber: unit.motorNumber, batteryNumber: unit.batteryNumber, controllerNumber: unit.controllerNumber ?? '', chargerNumber: unit.chargerNumber ?? '' };
   const [values, setValues] = useState<Values>({ ...current, reason: '' });
   const [errors, setErrors] = useState<Errors>({});
   const [step, setStep] = useState<'edit' | 'confirm'>('edit');
 
   useEffect(() => {
     if (!open) return;
-    setValues({ vin: unit.vin, motorNumber: unit.motorNumber, batteryNumber: unit.batteryNumber, reason: '' });
+    setValues({ vin: unit.vin, motorNumber: unit.motorNumber, batteryNumber: unit.batteryNumber, controllerNumber: unit.controllerNumber ?? '', chargerNumber: unit.chargerNumber ?? '', reason: '' });
     setErrors({});
     setStep('edit');
-  }, [open, unit.vin, unit.motorNumber, unit.batteryNumber]);
+  }, [open, unit.vin, unit.motorNumber, unit.batteryNumber, unit.controllerNumber, unit.chargerNumber]);
 
   const changes = FIELDS.filter((f) => normalise(values[f.key]) !== current[f.key]).map((f) => ({ ...f, from: current[f.key], to: normalise(values[f.key]) }));
 
   const validate = (): Errors => {
     const found: Errors = {};
-    for (const f of FIELDS) if (values[f.key].trim().length < f.min) found[f.key] = f.key === 'vin' ? 'VIN is required' : 'Required';
+    for (const f of FIELDS) if (f.min > 0 && values[f.key].trim().length < f.min) found[f.key] = f.key === 'vin' ? 'VIN is required' : 'Required';
     if (values.reason.trim().length < IDENTIFICATION_CORRECTION_REASON_MIN) found.reason = `Give a reason of at least ${IDENTIFICATION_CORRECTION_REASON_MIN} characters`;
     if (changes.length === 0) found.form = 'Change at least one number — they all match the vehicle now.';
     return found;
@@ -60,7 +63,10 @@ export function IdentificationCorrectionDialog({ open, onOpenChange, unit }: { o
 
   const submit = async (): Promise<void> => {
     const input: IdentificationCorrectionInput = { reason: values.reason.trim() };
-    for (const c of changes) input[c.key] = c.to;
+    for (const c of changes) {
+      if (c.key === 'controllerNumber' || c.key === 'chargerNumber') input[c.key] = c.to || null; // blank clears it
+      else input[c.key] = c.to;
+    }
     try {
       await correct.mutateAsync(input);
       toast.success('Identification corrected');
@@ -130,9 +136,9 @@ export function IdentificationCorrectionDialog({ open, onOpenChange, unit }: { o
               {changes.map((c) => (
                 <li key={c.key} className="flex flex-wrap items-center gap-2">
                   <span className="w-32 text-muted-foreground">{c.label}</span>
-                  <span className="font-mono line-through decoration-muted-foreground">{c.from}</span>
+                  <span className="font-mono line-through decoration-muted-foreground">{c.from || '—'}</span>
                   <ArrowRight className="h-4 w-4" aria-label="to" />
-                  <span className="font-mono font-semibold">{c.to}</span>
+                  <span className="font-mono font-semibold">{c.to || '—'}</span>
                 </li>
               ))}
             </ul>

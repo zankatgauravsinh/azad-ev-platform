@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PERMISSION_KEYS, Role, type AuthUser } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { AuthenticatedRequest } from '../types/authenticated-request';
 
 /**
  * Resolves a user's effective permission key set for the (future) PermissionsGuard and /auth/me.
@@ -12,6 +13,12 @@ import { PrismaService } from '../../prisma/prisma.service';
  * Group 4 is infrastructure only: no endpoint consumes this yet. User.role / RolesGuard remain
  * authoritative, so this never affects an authorization decision for an existing endpoint.
  */
+/** The caller's effective permissions, resolved once per request and kept on it (guards, interceptors, controllers). */
+export async function effectivePermissions(request: AuthenticatedRequest, resolver: PermissionResolver): Promise<Set<string>> {
+  request.permissions ??= await resolver.resolve(request.user);
+  return request.permissions;
+}
+
 @Injectable()
 export class PermissionResolver {
   private readonly cache = new Map<string, Set<string>>();

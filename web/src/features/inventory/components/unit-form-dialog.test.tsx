@@ -38,6 +38,7 @@ vi.mock('../hooks', () => ({
   useUpdateUnit: () => ({ mutateAsync: h.update }),
 }));
 vi.mock('../api', () => ({ inventoryApi: { checkVin: vi.fn().mockResolvedValue({ exists: false }) } }));
+vi.mock('@/features/settings/hooks', () => ({ useCompanySettings: () => ({ data: { taxPercentage: '5' } }) }));
 vi.mock('./vin-scanner', () => ({ VinScanner: () => null }));
 vi.mock('sonner', () => ({ toast: { success: (m: string) => h.toastSuccess(m), error: (m: string) => h.toastError(m) } }));
 // The existing catalogue dialog, stubbed: "creating" a variant adds it to the model's list and reports it back.
@@ -109,8 +110,10 @@ describe('UnitFormDialog — Add scooter', () => {
     submit('Add scooter');
     await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
     const input = h.create.mock.calls[0]![0];
-    expect(input).toMatchObject({ variantId: V2, vin: 'MD9ABC123', motorNumber: 'M-1', batteryNumber: 'B-1', status: 'AVAILABLE', purchaseCost: 0 });
-    for (const key of ['sellingPrice', 'modelId', 'variant', 'colour', 'hexColour']) expect(input).not.toHaveProperty(key);
+    expect(input).toMatchObject({ variantId: V2, vin: 'MD9ABC123', motorNumber: 'M-1', batteryNumber: 'B-1', status: 'AVAILABLE' });
+    // Without inventory.cost there is no purchase section and nothing about cost is sent.
+    expect(screen.queryByText('Purchase cost')).toBeNull();
+    for (const key of ['sellingPrice', 'modelId', 'variant', 'colour', 'hexColour', 'purchasePrice', 'purchaseGst', 'purchaseGstRate', 'transportCharge', 'purchaseCost']) expect(input).not.toHaveProperty(key);
   });
 
   it('keeps an explicit selling price, independent of the list price', async () => {
@@ -264,5 +267,54 @@ describe('UnitFormDialog — Edit scooter', () => {
     render(<UnitFormDialog open onOpenChange={() => {}} unit={unit('AVAILABLE', policy())} />);
     expect(variantOptions()).toEqual([V1, V2]);
     expect(h.fetchedVariantsOf).toContain(M1);
+  });
+});
+
+describe('UnitFormDialog — purchase cost (owner) and controller / charger numbers', () => {
+  const fillIdentifiers = (): void => { fill('VIN', 'md9abc123'); fill('Motor number', 'm-1'); fill('Battery number', 'b-1'); };
+
+  it('price + GST from the rate (default 5%) + transport; the total is shown and the parts are sent', async () => {
+    h.perms = new Set(['inventory.create', 'inventory.update', 'inventory.cost']);
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    choose(0, M1);
+    choose(1, V1);
+    fillIdentifiers();
+    fill('Controller number', 'ctl-1');
+    expect(field('GST rate (%)').value).toBe('5');
+    fill('Purchase price (₹)', '100000');
+    fill('Transport charge (₹)', '1500');
+    expect(screen.getByLabelText('Purchase cost total')).toHaveTextContent('₹1,06,500');
+    submit('Add scooter');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
+    expect(h.create.mock.calls[0]![0]).toMatchObject({ controllerNumber: 'CTL-1', purchasePrice: 10_000_000, purchaseGstRate: 5, transportCharge: 150_000 });
+    expect(h.create.mock.calls[0]![0]).not.toHaveProperty('purchaseGst');
+  });
+
+  it('the pencil switches GST to a typed amount', async () => {
+    h.perms = new Set(['inventory.create', 'inventory.update', 'inventory.cost']);
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    choose(0, M1);
+    choose(1, V1);
+    fillIdentifiers();
+    fill('Purchase price (₹)', '100000');
+    fireEvent.click(screen.getByRole('button', { name: 'Type the GST amount instead' }));
+    expect(field('GST paid (₹)').value).toBe('5000'); // starts from what the rate gave
+    fill('GST paid (₹)', '5123');
+    submit('Add scooter');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
+    expect(h.create.mock.calls[0]![0]).toMatchObject({ purchasePrice: 10_000_000, purchaseGst: 512_300 });
+    expect(h.create.mock.calls[0]![0]).not.toHaveProperty('purchaseGstRate');
+  });
+
+  it('after sale a recorded controller number is read-only; a blank charger number can still be filled in', async () => {
+    const locked = { ...unit('DELIVERED', policy({ catalogueEditable: false, identificationEditable: false })), controllerNumber: 'CTL-1', chargerNumber: null } as UnitDetail;
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={locked} />);
+    expect(field('Controller number').readOnly).toBe(true);
+    expect(field('Charger number').readOnly).toBe(false);
+    fill('Charger number', 'chg-9');
+    submit('Save changes');
+    await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
+    expect(h.update.mock.calls[0]![0]).toMatchObject({ chargerNumber: 'CHG-9' });
+    expect(h.update.mock.calls[0]![0]).not.toHaveProperty('controllerNumber');
   });
 });

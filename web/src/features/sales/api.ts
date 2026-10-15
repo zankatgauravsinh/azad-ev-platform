@@ -75,6 +75,8 @@ export interface VehicleUnitDetail {
   sellingPrice: string;
   location: string | null;
   keyNumber: string | null;
+  controllerNumber: string | null;
+  chargerNumber: string | null;
   notes: string | null;
   variant: VehicleVariantDetail;
 }

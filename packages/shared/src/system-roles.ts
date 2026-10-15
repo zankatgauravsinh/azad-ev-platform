@@ -27,7 +27,7 @@ export const SYSTEM_ROLES: readonly SystemRoleDef[] = [
 ];
 
 /** OWNER-only capabilities — the only keys MANAGER does NOT receive. */
-const OWNER_ONLY = new Set<string>(['settings.manage', 'staff.manage', 'roles.manage', 'rto.edit']);
+const OWNER_ONLY = new Set<string>(['settings.manage', 'staff.manage', 'roles.manage', 'rto.edit', 'inventory.cost']);
 
 // SALES_EXECUTIVE: full sales cycle + read-only Service + search/notifications (current behavior).
 const SALES_EXECUTIVE_PERMISSIONS: readonly string[] = [

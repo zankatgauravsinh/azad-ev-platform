@@ -597,22 +597,35 @@ model ScooterVariant {
 }
 
 model InventoryUnit {
-  id            String         @id @default(uuid())
-  companyId     String         @default("")
-  variantId     String
-  variant       ScooterVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
-  vin           String         @unique
-  motorNumber   String         @unique
-  batteryNumber String         @unique
-  status        UnitStatus     @default(AVAILABLE)
-  purchaseDate  DateTime?
-  purchaseCost  BigInt         @default(0)
-  sellingPrice  BigInt         @default(0)
-  location      String?
+  id                String         @id @default(uuid())
+  companyId         String         @default("")
+  variantId         String
+  variant           ScooterVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  vin               String         @unique
+  motorNumber       String         @unique
+  batteryNumber     String         @unique
+  /// Motor controller and charger serial numbers. Optional; locked after sale like the motor / battery numbers
+  /// (a blank one may still be filled in).
+  controllerNumber  String?
+  chargerNumber     String?
+  status            UnitStatus     @default(AVAILABLE)
+  purchaseDate      DateTime?
+  /// Total cost of buying the vehicle: purchasePrice + purchaseGst + transportCharge. Visible only with inventory.cost.
+  purchaseCost      BigInt         @default(0)
+  /// Supplier's price before GST.
+  purchasePrice     BigInt         @default(0)
+  /// GST rate used to work out purchaseGst, in basis points; null when the GST amount was typed in directly.
+  purchaseGstRateBp Int?
+  /// GST paid on the purchase.
+  purchaseGst       BigInt         @default(0)
+  /// Transportation charge for bringing the vehicle in.
+  transportCharge   BigInt         @default(0)
+  sellingPrice      BigInt         @default(0)
+  location          String?
   /// The ignition key's number (printed on the RTO invoice). Not part of the locked identity.
-  keyNumber     String?
-  supplier      String?
-  notes         String?
+  keyNumber         String?
+  supplier          String?
+  notes             String?
 
   createdById String?
   updatedById String?

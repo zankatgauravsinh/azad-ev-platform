@@ -129,7 +129,7 @@ describe('InventoryService', () => {
   });
 
   describe('create with a curated variant (M4A)', () => {
-    const base = { vin: 'VIN9', motorNumber: 'M9', batteryNumber: 'B9', purchaseCost: 100, status: 'AVAILABLE' as const };
+    const base = { vin: 'VIN9', motorNumber: 'M9', batteryNumber: 'B9', status: 'AVAILABLE' as const };
     beforeEach(() => { repo.findByVin.mockResolvedValue(null); });
 
     it('resolves the variant through the catalogue, scoped to the company, and creates no variant', async () => {
@@ -502,10 +502,28 @@ describe('InventoryService', () => {
 
       it('non-identity edits on a committed unit are unchanged: no lock, no history query', async () => {
         at('AVAILABLE', true);
-        await service.update('unit-1', { notes: 'n', location: 'Bay 4', supplier: 'S', sellingPrice: 123, purchaseCost: 100 }, 'user-1');
+        await service.update('unit-1', { notes: 'n', location: 'Bay 4', supplier: 'S', sellingPrice: 123, purchasePrice: 100 }, 'user-1', true);
         expect(repo.lockUnit).not.toHaveBeenCalled();
         expect(repo.hasCommittedHistory).not.toHaveBeenCalled();
-        expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', expect.objectContaining({ notes: 'n', location: 'Bay 4', supplier: 'S', sellingPrice: 123n, purchaseCost: 100n }), TX);
+        expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', expect.objectContaining({ notes: 'n', location: 'Bay 4', supplier: 'S', sellingPrice: 123n, purchasePrice: 100n, purchaseCost: 100n }), TX);
+      });
+
+      it('purchase cost: refused without inventory.cost; worked out from price, GST rate and transport with it', async () => {
+        at('AVAILABLE', false);
+        await expect(service.update('unit-1', { purchasePrice: 100 }, 'user-1')).rejects.toMatchObject({ status: 403, message: 'Only the owner can set the purchase cost' });
+        nothingWritten();
+        await service.update('unit-1', { purchasePrice: 10_000_000, purchaseGstRate: 5, transportCharge: 150_000 }, 'user-1', true);
+        expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', expect.objectContaining({ purchasePrice: 10_000_000n, purchaseGstRateBp: 500, purchaseGst: 500_000n, transportCharge: 150_000n, purchaseCost: 10_650_000n }), TX);
+      });
+
+      it('controller / charger numbers: a blank one can be filled in after sale; replacing one is locked', async () => {
+        at('DELIVERED', true);
+        await service.update('unit-1', { controllerNumber: 'CTL1' }, 'user-1');
+        expect(repo.updateUnit).toHaveBeenCalledWith('unit-1', expect.objectContaining({ controllerNumber: 'CTL1' }), TX);
+        repo.updateUnit.mockClear();
+        repo.findByIdWithVariant.mockResolvedValue({ ...unit, status: 'DELIVERED', motorNumber: 'M1', batteryNumber: 'B1', controllerNumber: 'CTL1' } as never);
+        await expect(service.update('unit-1', { controllerNumber: 'CTL2' }, 'user-1')).rejects.toMatchObject({ status: 409 });
+        expect(repo.updateUnit).not.toHaveBeenCalled();
       });
 
       it('sending the current identity values on a committed unit is not a change and is allowed', async () => {
@@ -575,7 +593,7 @@ describe('InventoryService', () => {
     });
 
     it('requires at least one identifier', () => {
-      expect(messages({ reason: 'Typo at entry' })).toEqual(['Give the VIN, motor number or battery number to correct']);
+      expect(messages({ reason: 'Typo at entry' })).toEqual(['Give the VIN, motor, battery, controller or charger number to correct']);
     });
 
     it('rejects model / variant / colour keys outright (M4B.4)', () => {
@@ -657,7 +675,7 @@ describe('InventoryService', () => {
     });
 
     it('a valid file: validated, catalogue rows locked, validated again, then every unit + event + one audit entry in ONE transaction', async () => {
-      const res = await service.importCsv(file(VALID), 'user-1', sha(VALID));
+      const res = await service.importCsv(file(VALID), 'user-1', sha(VALID), true);
       expect(res).toEqual({ status: 'IMPORTED', created: 2, failed: 0, errors: [], fileSha256: sha(VALID), preview: null });
       expect(repo.transaction).toHaveBeenCalledTimes(1);
       expect(repo.transaction.mock.calls[0]![1]).toEqual({ timeout: 30_000, maxWait: 5_000 });
@@ -681,7 +699,7 @@ describe('InventoryService', () => {
 
     it('one invalid row → REJECTED, nothing written, the whole validation returned', async () => {
       const csv = `${VALID}Nope,Pro,Teal,vin3,m3,b3,,,,,\n`;
-      const res = await service.importCsv(file(csv), 'user-1');
+      const res = await service.importCsv(file(csv), 'user-1', undefined, true);
       expect(res).toMatchObject({ status: 'REJECTED', created: 0, failed: 1, errors: [{ row: 4, message: expect.stringContaining('Model "Nope" was not found') }] });
       expect(res.preview!.summary).toEqual({ total: 3, valid: 2, invalid: 1, duplicate: 0 });
       expect(repo.lockCatalogueRows).not.toHaveBeenCalled();
@@ -690,7 +708,7 @@ describe('InventoryService', () => {
 
     it('a change between the first check and the lock (e.g. variant deactivated) → REJECTED, nothing written', async () => {
       catalog.listVariants.mockResolvedValueOnce([proTeal]).mockResolvedValueOnce([{ ...proTeal, isActive: false }]);
-      const res = await service.importCsv(file(VALID), 'user-1');
+      const res = await service.importCsv(file(VALID), 'user-1', undefined, true);
       expect(res.status).toBe('REJECTED');
       expect(res.preview!.rows[0]!.issues[0]!.code).toBe('VARIANT_INACTIVE');
       nothingWritten();
@@ -704,7 +722,7 @@ describe('InventoryService', () => {
         catalog.listVariants
           .mockResolvedValueOnce([proTeal]) // first check: resolves variant-pro, which is then locked
           .mockResolvedValueOnce([{ ...proTeal, colour: 'Grey' }, other]); // after the lock: variant-pro renamed away, variant-other renamed in
-        await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: CHANGED });
+        await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ status: 409, message: CHANGED });
         expect(repo.lockCatalogueRows).toHaveBeenCalledWith('company-1', ['model-solo'], ['variant-pro'], TX);
         nothingWritten();
       });
@@ -714,21 +732,21 @@ describe('InventoryService', () => {
         const itsPro = { id: 'variant-new', modelId: 'model-new', name: 'Pro', colour: 'Teal', isActive: true, exShowroomPrice: 1n };
         catalog.listModels.mockResolvedValueOnce([solo]).mockResolvedValueOnce([{ ...solo, name: 'Solo Old' }, newSolo]);
         catalog.listVariants.mockResolvedValueOnce([proTeal]).mockResolvedValueOnce([proTeal, itsPro]);
-        await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: CHANGED });
+        await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ status: 409, message: CHANGED });
         nothingWritten();
       });
 
       it('a row the lock did not actually take (gone, or not this company\'s) is never imported into', async () => {
         repo.lockCatalogueRows.mockResolvedValueOnce({ modelIds: new Set(['model-solo']), variantIds: new Set() });
-        await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: CHANGED });
+        await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ status: 409, message: CHANGED });
         repo.lockCatalogueRows.mockResolvedValueOnce({ modelIds: new Set(), variantIds: new Set(['variant-pro']) });
-        await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: CHANGED });
+        await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ status: 409, message: CHANGED });
         nothingWritten();
       });
 
       it('a re-check resolving to the same locked rows imports normally', async () => {
         catalog.listVariants.mockResolvedValueOnce([proTeal]).mockResolvedValueOnce([{ ...proTeal, exShowroomPrice: 1n }]); // a price change is not a catalogue-identity change
-        expect(await service.importCsv(file(VALID), 'user-1')).toMatchObject({ status: 'IMPORTED', created: 2 });
+        expect(await service.importCsv(file(VALID), 'user-1', undefined, true)).toMatchObject({ status: 'IMPORTED', created: 2 });
       });
     });
 
@@ -739,7 +757,7 @@ describe('InventoryService', () => {
         .mockResolvedValueOnce({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() })
         .mockResolvedValueOnce({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() })
         .mockResolvedValueOnce({ vin: new Map([['VIN2', { own: true, deleted: false }]]), motorNumber: new Map(), batteryNumber: new Map() });
-      const res = await service.importCsv(file(VALID), 'user-1');
+      const res = await service.importCsv(file(VALID), 'user-1', undefined, true);
       expect(res).toMatchObject({ status: 'REJECTED', created: 0, failed: 1, errors: [{ row: 3, message: 'VIN "VIN2" is already used by a scooter in your inventory.' }] });
       expect(repo.transaction).toHaveBeenCalledTimes(2); // the failed import, then the re-check
       expect(repo.transaction.mock.calls[1]![1]).toEqual({ timeout: 10_000, maxWait: 5_000 });
@@ -751,23 +769,23 @@ describe('InventoryService', () => {
       repo.transaction
         .mockImplementationOnce(((fn: (tx: unknown) => unknown) => fn(TX)) as never)
         .mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Transaction already closed', { code: 'P2028', clientVersion: 'x' }));
-      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: 'Inventory changed while importing — nothing was imported. Try again.' });
+      await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ status: 409, message: 'Inventory changed while importing — nothing was imported. Try again.' });
       repo.createUnits.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'x' }));
       repo.findUsedIdentifiers
         .mockResolvedValueOnce({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() })
         .mockResolvedValueOnce({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() })
         .mockRejectedValueOnce(new Error('connection lost'));
-      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409 });
+      await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ status: 409 });
     });
 
     it('a pool timeout (P2024) is a 503 like a transaction timeout — never a raw database error', async () => {
       repo.transaction.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Timed out fetching a new connection from the connection pool', { code: 'P2024', clientVersion: 'x' }));
-      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 503 });
+      await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ status: 503 });
     });
 
     it('a unique violation that the re-check cannot attribute → 409 retry, nothing reported as imported', async () => {
       repo.createUnits.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'x' }));
-      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: 'Inventory changed while importing — nothing was imported. Try again.' });
+      await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ status: 409, message: 'Inventory changed while importing — nothing was imported. Try again.' });
     });
 
     it('a deadlock / write conflict is handled like the race (never a raw database error); a transaction timeout → 503, nothing imported', async () => {
@@ -775,39 +793,43 @@ describe('InventoryService', () => {
       const createManyDeadlock = new Prisma.PrismaClientUnknownRequestError('Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "40P01", message: "deadlock detected" }) })', { clientVersion: 'x' });
       for (const abort of [known('P2034'), known('P2010', { code: '40P01' }), known('P2010', { code: '40001' }), createManyDeadlock]) {
         repo.createUnits.mockRejectedValueOnce(abort);
-        await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 409, message: 'Inventory changed while importing — nothing was imported. Try again.' });
+        await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ status: 409, message: 'Inventory changed while importing — nothing was imported. Try again.' });
       }
       repo.lockCatalogueRows.mockRejectedValueOnce(known('P2034'));
       repo.findUsedIdentifiers
         .mockResolvedValueOnce({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() })
         .mockResolvedValueOnce({ vin: new Map([['VIN1', { own: true, deleted: false }]]), motorNumber: new Map(), batteryNumber: new Map() });
-      expect(await service.importCsv(file(VALID), 'user-1')).toMatchObject({ status: 'REJECTED', errors: [{ row: 2 }] });
+      expect(await service.importCsv(file(VALID), 'user-1', undefined, true)).toMatchObject({ status: 'REJECTED', errors: [{ row: 2 }] });
       repo.createUnits.mockRejectedValueOnce(known('P2028'));
-      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ status: 503, message: 'The import could not finish in time — nothing was imported. Try again, or split the file into smaller files.' });
+      await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ status: 503, message: 'The import could not finish in time — nothing was imported. Try again, or split the file into smaller files.' });
       repo.createUnits.mockRejectedValueOnce(known('P2010', { code: '23514' })); // anything else is not disguised
-      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject({ code: 'P2010' });
+      await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toMatchObject({ code: 'P2010' });
       repo.createUnits.mockRejectedValueOnce(new Prisma.PrismaClientUnknownRequestError('PostgresError { code: "53100", message: "disk full" }', { clientVersion: 'x' }));
-      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
+      await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
     });
 
     it('a failing event or audit write fails the whole import (it propagates; the transaction rolls back)', async () => {
       repo.addEvents.mockRejectedValueOnce(new Error('event write failed'));
-      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toThrow('event write failed');
+      await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toThrow('event write failed');
       activityLog.recordInTransaction.mockRejectedValueOnce(new Error('audit write failed'));
-      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toThrow('audit write failed');
+      await expect(service.importCsv(file(VALID), 'user-1', undefined, true)).rejects.toThrow('audit write failed');
     });
 
     it('not the previewed file → 409 before anything is read; an empty file → 400', async () => {
-      await expect(service.importCsv(file(VALID), 'user-1', 'f'.repeat(64))).rejects.toMatchObject({ status: 409, message: 'This is not the file that was previewed — preview it again before importing.' });
-      await expect(service.importCsv(file(HEAD), 'user-1')).rejects.toMatchObject({ status: 400, message: 'The file has no rows to import.' });
+      await expect(service.importCsv(file(VALID), 'user-1', 'f'.repeat(64), true)).rejects.toMatchObject({ status: 409, message: 'This is not the file that was previewed — preview it again before importing.' });
+      await expect(service.importCsv(file(HEAD), 'user-1', undefined, true)).rejects.toMatchObject({ status: 400, message: 'The file has no rows to import.' });
+      // Without inventory.cost, a purchase cost in the file is refused before anything is read or written.
+      const COST_REFUSED = { status: 403, message: 'Only the owner can import purchase costs — leave the Purchase cost column empty or remove it.' };
+      await expect(service.importCsv(file(VALID), 'user-1')).rejects.toMatchObject(COST_REFUSED);
+      await expect(service.previewCsv(file(VALID))).rejects.toMatchObject(COST_REFUSED);
       expect(catalog.listModels).not.toHaveBeenCalled();
       nothingWritten();
     });
 
     it('row limit and unreadable file → 400 before anything is read', async () => {
       const many = Array.from({ length: CSV_IMPORT_MAX_ROWS + 1 }, (_, i) => `Solo,Pro,Teal,vin${i},m${i},b${i},,,,,`).join('\n');
-      await expect(service.importCsv(file(`${HEAD}${many}\n`), 'user-1')).rejects.toBeInstanceOf(BadRequestException);
-      await expect(service.importCsv(file(`${HEAD}Solo,"open,Teal\n`), 'user-1')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.importCsv(file(`${HEAD}${many}\n`), 'user-1', undefined, true)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.importCsv(file(`${HEAD}Solo,"open,Teal\n`), 'user-1', undefined, true)).rejects.toBeInstanceOf(BadRequestException);
       expect(catalog.listModels).not.toHaveBeenCalled();
     });
   });
@@ -825,13 +847,13 @@ describe('InventoryService', () => {
     it('a preview that cannot get the database in time → 503 "busy", never a raw database error', async () => {
       for (const code of ['P2028', 'P2024']) {
         repo.transaction.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('timeout', { code, clientVersion: 'x' }));
-        await expect(service.previewCsv(file(`${HEAD}Solo,Pro,Teal,vin1,m1,b1,\n`))).rejects.toMatchObject({ status: 503, message: 'The server is busy — the preview could not run in time. Try again in a moment.' });
+        await expect(service.previewCsv(file(`${HEAD}Solo,Pro,Teal,vin1,m1,b1,\n`), true)).rejects.toMatchObject({ status: 503, message: 'The server is busy — the preview could not run in time. Try again in a moment.' });
       }
     });
 
     it('reads the explicitly scoped catalogue and the used identifiers once, and writes nothing at all', async () => {
       repo.findUsedIdentifiers.mockResolvedValue({ vin: new Map([['VIN2', { own: true, deleted: false }]]), motorNumber: new Map(), batteryNumber: new Map() });
-      const preview = await service.previewCsv(file(`${HEAD}Solo,Pro,Teal,vin1,m1,b1,\nSolo,Pro,Teal,vin2,m2,b2,99000\n`));
+      const preview = await service.previewCsv(file(`${HEAD}Solo,Pro,Teal,vin1,m1,b1,\nSolo,Pro,Teal,vin2,m2,b2,99000\n`), true);
       expect(catalog.listModels).toHaveBeenCalledWith('company-1', { status: 'all' }, expect.anything()); // inside the bounded read transaction
       expect(catalog.listVariants).toHaveBeenCalledWith('company-1', { status: 'all' }, expect.anything());
       expect(repo.findUsedIdentifiers).toHaveBeenCalledTimes(1);
@@ -848,15 +870,15 @@ describe('InventoryService', () => {
 
     it(`refuses more than ${CSV_IMPORT_MAX_ROWS} rows, and an unreadable file, before reading the catalogue`, async () => {
       const many = Array.from({ length: CSV_IMPORT_MAX_ROWS + 1 }, (_, i) => `Solo,Pro,Teal,v${i},m${i},b${i},`).join('\n');
-      await expect(service.previewCsv(file(`${HEAD}${many}\n`))).rejects.toMatchObject({ status: 400, message: `The file has ${CSV_IMPORT_MAX_ROWS + 1} rows; at most ${CSV_IMPORT_MAX_ROWS} can be imported at once — split it into smaller files.` });
-      await expect(service.previewCsv(file(`${HEAD}Solo,"open,Teal\n`))).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.previewCsv(file(`${HEAD}${many}\n`), true)).rejects.toMatchObject({ status: 400, message: `The file has ${CSV_IMPORT_MAX_ROWS + 1} rows; at most ${CSV_IMPORT_MAX_ROWS} can be imported at once — split it into smaller files.` });
+      await expect(service.previewCsv(file(`${HEAD}Solo,"open,Teal\n`), true)).rejects.toBeInstanceOf(BadRequestException);
       expect(catalog.listModels).not.toHaveBeenCalled();
       expect(repo.findUsedIdentifiers).not.toHaveBeenCalled();
     });
 
     it(`exactly ${CSV_IMPORT_MAX_ROWS} rows are accepted`, async () => {
       const rows = Array.from({ length: CSV_IMPORT_MAX_ROWS }, (_, i) => `Solo,Pro,Teal,vin${i},m${i},b${i},`).join('\n');
-      expect((await service.previewCsv(file(`${HEAD}${rows}\n`))).summary).toMatchObject({ total: CSV_IMPORT_MAX_ROWS, valid: CSV_IMPORT_MAX_ROWS });
+      expect((await service.previewCsv(file(`${HEAD}${rows}\n`), true)).summary).toMatchObject({ total: CSV_IMPORT_MAX_ROWS, valid: CSV_IMPORT_MAX_ROWS });
     });
   });
 

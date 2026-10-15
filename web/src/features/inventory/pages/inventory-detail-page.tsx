@@ -127,11 +127,21 @@ export function InventoryDetailPage(): JSX.Element {
                 <Info label="VIN" value={unit.vin} mono />
                 <Info label="Motor number" value={unit.motorNumber} mono />
                 <Info label="Battery number" value={unit.batteryNumber} mono />
+                <Info label="Controller number" value={unit.controllerNumber ?? '—'} mono={Boolean(unit.controllerNumber)} />
+                <Info label="Charger number" value={unit.chargerNumber ?? '—'} mono={Boolean(unit.chargerNumber)} />
                 <Info label="Model" value={`${unit.variant.model.brand} ${unit.variant.model.name}`} />
                 <Info label="Variant" value={unit.variant.name} />
                 <Info label="Colour" value={unit.variant.colour} />
                 <Info label="Purchase date" value={unit.purchaseDate ? new Date(unit.purchaseDate).toLocaleDateString('en-IN') : '—'} />
-                <Info label="Purchase cost" value={formatPaise(unit.purchaseCost)} />
+                {/* The API sends purchase figures only to users with inventory.cost (the owner, by default). */}
+                {unit.purchaseCost !== undefined && (
+                  <>
+                    <Info label="Purchase price" value={formatPaise(unit.purchasePrice ?? 0)} />
+                    <Info label={unit.purchaseGstRateBp != null ? `GST paid (${unit.purchaseGstRateBp / 100}%)` : 'GST paid'} value={formatPaise(unit.purchaseGst ?? 0)} />
+                    <Info label="Transport charge" value={formatPaise(unit.transportCharge ?? 0)} />
+                    <Info label="Purchase cost" value={formatPaise(unit.purchaseCost)} />
+                  </>
+                )}
                 <Info label="Selling price" value={formatPaise(unit.sellingPrice)} />
                 <Info label="Supplier" value={unit.supplier ?? '—'} />
                 <Info label="Location" value={unit.location ?? '—'} />

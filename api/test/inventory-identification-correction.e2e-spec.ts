@@ -183,7 +183,7 @@ describe('Inventory identification correction (e2e)', () => {
     });
 
     it('6b. no identifier at all is a 400', async () => {
-      expect(await problems({ reason })).toEqual([{ path: 'vin', message: 'Give the VIN, motor number or battery number to correct' }]);
+      expect(await problems({ reason })).toEqual([{ path: 'vin', message: 'Give the VIN, motor, battery, controller or charger number to correct' }]);
     });
 
     it('7. the same values only are a 400', async () => {

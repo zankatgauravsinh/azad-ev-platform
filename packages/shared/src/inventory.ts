@@ -19,6 +19,42 @@ const vinField = z
   .transform((v) => v.toUpperCase());
 
 const identifierField = z.string().trim().min(1).max(64).transform((v) => v.toUpperCase());
+/** An optional identification number (controller / charger): normalised like the others; '' or null clears it. */
+const optionalIdentifierField = z
+  .union([z.literal(''), identifierField])
+  .nullable()
+  .optional()
+  .transform((v) => (v === '' ? null : v));
+
+/* ── Purchase cost ──────────────────────────────────────────────────────────────────────────────
+ * What the dealer paid for a vehicle: price + GST paid + transport charge = purchaseCost. The GST is
+ * worked out from a rate by default; the owner may type the amount instead. Only users with
+ * `inventory.cost` (the owner, by default) see or set any of these — the API removes them from every
+ * response for anyone else.
+ */
+export const PURCHASE_COST_PERMISSION = 'inventory.cost';
+/** Response keys that carry purchase-cost data (removed for users without inventory.cost). */
+export const PURCHASE_COST_FIELDS = ['purchaseCost', 'purchasePrice', 'purchaseGstRateBp', 'purchaseGst', 'transportCharge'] as const;
+/** Request keys that set purchase-cost data (refused from users without inventory.cost). */
+export const PURCHASE_COST_INPUTS = ['purchasePrice', 'purchaseGstRate', 'purchaseGst', 'transportCharge'] as const;
+
+export interface PurchaseCostBreakdown {
+  purchasePrice: bigint;
+  /** null when the GST amount was typed in. */
+  purchaseGstRateBp: number | null;
+  purchaseGst: bigint;
+  transportCharge: bigint;
+  purchaseCost: bigint;
+}
+
+/**
+ * price + GST + transport. GST = price × rate (half-up to the paisa) unless an amount is given, which then
+ * wins. Shared by the API (which stores it) and the form (which previews it).
+ */
+export function computePurchaseCost(price: bigint, gst: { rateBp: number } | { amount: bigint }, transport: bigint): PurchaseCostBreakdown {
+  const purchaseGst = 'amount' in gst ? gst.amount : (price * BigInt(gst.rateBp) * 2n + 10000n) / 20000n;
+  return { purchasePrice: price, purchaseGstRateBp: 'amount' in gst ? null : gst.rateBp, purchaseGst, transportCharge: transport, purchaseCost: price + purchaseGst + transport };
+}
 
 /**
  * A unit names its catalogue entry in one of two ways:
@@ -40,8 +76,16 @@ const unitFields = {
   vin: vinField,
   motorNumber: identifierField,
   batteryNumber: identifierField,
+  controllerNumber: optionalIdentifierField,
+  chargerNumber: optionalIdentifierField,
   purchaseDate: z.coerce.date().optional(),
-  purchaseCost: paise.default(0),
+  // Purchase cost (inventory.cost only). Omitted → unchanged on an edit, zero on a new unit.
+  purchasePrice: paise.optional(),
+  /** GST rate in percent, used when no GST amount is given. */
+  purchaseGstRate: z.coerce.number().min(0).max(100).optional(),
+  /** GST amount typed in (owner's override); wins over the rate. */
+  purchaseGst: paise.optional(),
+  transportCharge: paise.optional(),
   sellingPrice: paise.optional(),
   supplier: optionalTrimmed,
   location: optionalTrimmed,
@@ -87,14 +131,16 @@ export const identificationCorrectionSchema = z
     vin: vinField.optional(),
     motorNumber: identifierField.optional(),
     batteryNumber: identifierField.optional(),
+    controllerNumber: optionalIdentifierField,
+    chargerNumber: optionalIdentifierField,
     reason: z
       .string({ required_error: 'A reason is required' })
       .trim()
       .min(IDENTIFICATION_CORRECTION_REASON_MIN, `Give a reason of at least ${IDENTIFICATION_CORRECTION_REASON_MIN} characters`)
       .max(500),
   })
-  .refine((v) => v.vin !== undefined || v.motorNumber !== undefined || v.batteryNumber !== undefined, {
-    message: 'Give the VIN, motor number or battery number to correct',
+  .refine((v) => v.vin !== undefined || v.motorNumber !== undefined || v.batteryNumber !== undefined || v.controllerNumber !== undefined || v.chargerNumber !== undefined, {
+    message: 'Give the VIN, motor, battery, controller or charger number to correct',
     path: ['vin'],
   });
 export type IdentificationCorrectionInput = z.infer<typeof identificationCorrectionSchema>;
@@ -167,8 +213,15 @@ export interface InventoryUnitDto {
   motorNumber: string;
   batteryNumber: string;
   status: UnitStatus;
+  controllerNumber: string | null;
+  chargerNumber: string | null;
   purchaseDate: string | null;
-  purchaseCost: string;
+  /** Purchase-cost fields: present only for users with inventory.cost. */
+  purchaseCost?: string;
+  purchasePrice?: string;
+  purchaseGstRateBp?: number | null;
+  purchaseGst?: string;
+  transportCharge?: string;
   sellingPrice: string;
   supplier: string | null;
   location: string | null;

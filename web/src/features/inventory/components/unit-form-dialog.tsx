@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { Lock, Plus, ScanLine } from 'lucide-react';
+import { Lock, Pencil, Percent, Plus, ScanLine } from 'lucide-react';
 import { toast } from 'sonner';
-import { UNIT_STATUSES, UnitStatus, type CreateUnitInput, type UpdateUnitInput } from '@azad/shared';
+import { PURCHASE_COST_PERMISSION, UNIT_STATUSES, UnitStatus, computePurchaseCost, type CreateUnitInput, type UpdateUnitInput } from '@azad/shared';
+import { useCompanySettings } from '@/features/settings/hooks';
 import { useAuth } from '@/features/auth/auth-context';
 import { VariantFormDialog } from '@/features/catalog/components/variant-form-dialog';
 import { apiErrorMessage } from '@/lib/api-client';
@@ -37,8 +38,14 @@ const formSchema = z.object({
   vin: z.string().trim().min(3, 'VIN is required'),
   motorNumber: z.string().trim().min(1, 'Required'),
   batteryNumber: z.string().trim().min(1, 'Required'),
+  controllerNumber: z.string().max(64).optional(),
+  chargerNumber: z.string().max(64).optional(),
   purchaseDate: z.string().optional(),
-  purchaseCost: z.coerce.number().min(0),
+  // Purchase cost — shown and sent only with inventory.cost (the owner, by default).
+  purchasePrice: optionalRupees,
+  purchaseGstRate: z.union([z.literal(''), z.coerce.number().min(0, 'Cannot be negative').max(100, 'At most 100%')]),
+  purchaseGstAmount: optionalRupees,
+  transportCharge: optionalRupees,
   sellingPrice: optionalRupees,
   supplier: z.string().optional(),
   location: z.string().optional(),
@@ -66,6 +73,11 @@ export function UnitFormDialog({
 }): JSX.Element {
   const isEdit = Boolean(unit);
   const { can } = useAuth();
+  const canCost = can(PURCHASE_COST_PERMISSION);
+  // GST paid: worked out from a rate by default; the pencil switches to typing the amount.
+  const [gstAsAmount, setGstAsAmount] = useState(false);
+  const { data: settings } = useCompanySettings(canCost);
+  const defaultGstRate = Number(settings?.taxPercentage ?? 0) > 0 ? Number(settings!.taxPercentage) : 5;
   const canCreateVariant = can('inventory.create');
   const { data: activeModels = [] } = useModels();
   const createUnit = useCreateUnit();
@@ -94,10 +106,22 @@ export function UnitFormDialog({
   useEffect(() => {
     if (!open) return;
     reset(unit ? toFormValues(unit) : emptyValues());
+    // A typed GST amount (no rate stored) opens in amount mode; otherwise the rate, defaulting for a new one.
+    setGstAsAmount(Boolean(unit && unit.purchaseGstRateBp == null && unit.purchaseGst && unit.purchaseGst !== '0'));
     setVinTaken(false);
   }, [open, unit, reset]);
 
   const modelId = watch('modelId');
+  // A new rate field starts from the company's tax rate (5% when none is set).
+  useEffect(() => {
+    if (open && canCost && watch('purchaseGstRate') === '' && !(unit && unit.purchaseGstRateBp == null && unit.purchaseGst && unit.purchaseGst !== '0')) setValue('purchaseGstRate', defaultGstRate);
+  }, [open, canCost, defaultGstRate, unit, setValue, watch]);
+  const [price, gstRate, gstAmount, transport] = watch(['purchasePrice', 'purchaseGstRate', 'purchaseGstAmount', 'transportCharge']);
+  // The same calculation the server stores (computePurchaseCost), previewed as the owner types.
+  const purchaseBreakdown = useMemo(() => {
+    const paise = (v: number | '' | undefined): bigint => BigInt(v === '' || v === undefined || !Number.isFinite(Number(v)) ? 0 : rupeesToPaise(Number(v)));
+    return computePurchaseCost(paise(price), gstAsAmount ? { amount: paise(gstAmount) } : { rateBp: Math.round(Number(gstRate || 0) * 100) }, paise(transport));
+  }, [price, gstRate, gstAmount, transport, gstAsAmount]);
   const variantId = watch('variantId');
   const modelIsActive = activeModels.some((m) => m.id === modelId);
   // Only an active model's variants can be chosen (the server refuses a variant of an inactive model).
@@ -147,7 +171,15 @@ export function UnitFormDialog({
     // Fields that are not part of the vehicle's identity — sent as before.
     const details = {
       purchaseDate: values.purchaseDate ? new Date(values.purchaseDate) : undefined,
-      purchaseCost: Number(rupeesToPaise(values.purchaseCost)),
+      ...(canCost
+        ? {
+            purchasePrice: values.purchasePrice === '' ? 0 : Number(rupeesToPaise(values.purchasePrice)),
+            transportCharge: values.transportCharge === '' ? 0 : Number(rupeesToPaise(values.transportCharge)),
+            ...(gstAsAmount
+              ? { purchaseGst: values.purchaseGstAmount === '' ? 0 : Number(rupeesToPaise(values.purchaseGstAmount)) }
+              : { purchaseGstRate: values.purchaseGstRate === '' ? 0 : values.purchaseGstRate }),
+          }
+        : {}),
       // Blank selling price: left out (a new unit then takes the variant's list price; an edit keeps its price).
       ...(values.sellingPrice === '' ? {} : { sellingPrice: Number(rupeesToPaise(values.sellingPrice)) }),
       supplier: values.supplier || undefined,
@@ -166,6 +198,11 @@ export function UnitFormDialog({
             if (normalise(values[field]) !== unit[field]) identity[field] = normalise(values[field]);
           }
         }
+        // Controller / charger: a blank one can always be filled in; a recorded one only while not locked.
+        for (const field of ['controllerNumber', 'chargerNumber'] as const) {
+          const next = normalise(values[field] ?? '') || null;
+          if (next !== (unit[field] ?? null) && (!identificationLocked || !unit[field])) identity[field] = next;
+        }
         await updateUnit.mutateAsync({ ...details, ...identity });
         toast.success('Scooter updated');
       } else {
@@ -175,6 +212,8 @@ export function UnitFormDialog({
           vin: normalise(values.vin),
           motorNumber: normalise(values.motorNumber),
           batteryNumber: normalise(values.batteryNumber),
+          controllerNumber: normalise(values.controllerNumber ?? '') || undefined,
+          chargerNumber: normalise(values.chargerNumber ?? '') || undefined,
           status: values.status,
         } as CreateUnitInput;
         await createUnit.mutateAsync(input);
@@ -285,13 +324,48 @@ export function UnitFormDialog({
           <Field label="Battery number" htmlFor="unit-battery" error={errors.batteryNumber?.message}>
             <Input id="unit-battery" className={`uppercase ${identificationLocked ? 'bg-muted' : ''}`} readOnly={identificationLocked} aria-readonly={identificationLocked} {...register('batteryNumber')} />
           </Field>
+          <Field label="Controller number" htmlFor="unit-controller" error={errors.controllerNumber?.message}>
+            <Input id="unit-controller" className={`uppercase ${identificationLocked && unit?.controllerNumber ? 'bg-muted' : ''}`} placeholder="Optional" readOnly={identificationLocked && Boolean(unit?.controllerNumber)} {...register('controllerNumber')} />
+          </Field>
+          <Field label="Charger number" htmlFor="unit-charger" error={errors.chargerNumber?.message}>
+            <Input id="unit-charger" className={`uppercase ${identificationLocked && unit?.chargerNumber ? 'bg-muted' : ''}`} placeholder="Optional" readOnly={identificationLocked && Boolean(unit?.chargerNumber)} {...register('chargerNumber')} />
+          </Field>
           <Field label="Purchase date" htmlFor="unit-purchase-date">
             <Input id="unit-purchase-date" type="date" {...register('purchaseDate')} />
           </Field>
 
-          <Field label="Purchase cost (₹)" htmlFor="unit-purchase-cost" error={errors.purchaseCost?.message}>
-            <Input id="unit-purchase-cost" type="number" min={0} step={1} {...register('purchaseCost')} />
-          </Field>
+          {canCost && (
+            <div className="space-y-3 rounded-lg border p-3 sm:col-span-2" aria-label="Purchase cost">
+              <p className="text-sm font-semibold">Purchase <span className="text-xs font-normal text-muted-foreground">— visible to the owner only</span></p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Field label="Purchase price (₹)" htmlFor="unit-purchase-price" error={errors.purchasePrice?.message}>
+                  <Input id="unit-purchase-price" type="number" min={0} step="0.01" {...register('purchasePrice')} />
+                </Field>
+                {gstAsAmount ? (
+                  <Field label="GST paid (₹)" htmlFor="unit-purchase-gst" error={errors.purchaseGstAmount?.message}>
+                    <div className="flex gap-2">
+                      <Input id="unit-purchase-gst" type="number" min={0} step="0.01" {...register('purchaseGstAmount')} />
+                      <Button type="button" variant="outline" size="icon" aria-label="Work GST out from a rate instead" onClick={() => setGstAsAmount(false)}><Percent className="h-4 w-4" /></Button>
+                    </div>
+                  </Field>
+                ) : (
+                  <Field label="GST rate (%)" htmlFor="unit-purchase-gst-rate" error={errors.purchaseGstRate?.message}>
+                    <div className="flex gap-2">
+                      <Input id="unit-purchase-gst-rate" type="number" min={0} max={100} step="0.01" {...register('purchaseGstRate')} />
+                      <Button type="button" variant="outline" size="icon" aria-label="Type the GST amount instead" onClick={() => { setValue('purchaseGstAmount', purchaseBreakdown ? paiseToRupees(purchaseBreakdown.purchaseGst) : ''); setGstAsAmount(true); }}><Pencil className="h-4 w-4" /></Button>
+                    </div>
+                  </Field>
+                )}
+                <Field label="Transport charge (₹)" htmlFor="unit-transport" error={errors.transportCharge?.message}>
+                  <Input id="unit-transport" type="number" min={0} step="0.01" {...register('transportCharge')} />
+                </Field>
+              </div>
+              <dl className="flex flex-wrap justify-between gap-x-6 gap-y-1 rounded-md bg-secondary px-3 py-2 text-sm" aria-label="Purchase cost total">
+                <div className="flex gap-2"><dt className="text-muted-foreground">GST paid</dt><dd className="tabular-nums">{purchaseBreakdown ? formatPaise(purchaseBreakdown.purchaseGst) : '—'}</dd></div>
+                <div className="flex gap-2 font-semibold"><dt>Purchase cost</dt><dd className="tabular-nums">{purchaseBreakdown ? formatPaise(purchaseBreakdown.purchaseCost) : '—'}</dd></div>
+              </dl>
+            </div>
+          )}
           <Field label="Selling price (₹)" htmlFor="unit-selling-price" error={errors.sellingPrice?.message}>
             <Input
               id="unit-selling-price"
@@ -412,8 +486,13 @@ function emptyValues(): FormValues {
     vin: '',
     motorNumber: '',
     batteryNumber: '',
+    controllerNumber: '',
+    chargerNumber: '',
     purchaseDate: '',
-    purchaseCost: 0,
+    purchasePrice: '',
+    purchaseGstRate: '',
+    purchaseGstAmount: '',
+    transportCharge: '',
     sellingPrice: '',
     supplier: '',
     location: '',
@@ -430,8 +509,13 @@ function toFormValues(unit: UnitDetail): FormValues {
     vin: unit.vin,
     motorNumber: unit.motorNumber,
     batteryNumber: unit.batteryNumber,
+    controllerNumber: unit.controllerNumber ?? '',
+    chargerNumber: unit.chargerNumber ?? '',
     purchaseDate: unit.purchaseDate ? unit.purchaseDate.slice(0, 10) : '',
-    purchaseCost: paiseToRupees(unit.purchaseCost),
+    purchasePrice: unit.purchasePrice !== undefined ? paiseToRupees(unit.purchasePrice) : '',
+    purchaseGstRate: unit.purchaseGstRateBp != null ? unit.purchaseGstRateBp / 100 : '',
+    purchaseGstAmount: unit.purchaseGst !== undefined ? paiseToRupees(unit.purchaseGst) : '',
+    transportCharge: unit.transportCharge !== undefined ? paiseToRupees(unit.transportCharge) : '',
     sellingPrice: paiseToRupees(unit.sellingPrice),
     supplier: unit.supplier ?? '',
     location: unit.location ?? '',

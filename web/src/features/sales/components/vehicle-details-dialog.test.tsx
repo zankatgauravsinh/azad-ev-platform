@@ -5,7 +5,7 @@ import { VehicleDetailsDialog } from './vehicle-details-dialog';
 
 const full: VehicleUnitDetail = {
   id: 'u1', vin: 'VIN123', motorNumber: 'MOT123', batteryNumber: 'BAT123', status: 'BOOKED',
-  purchaseDate: '2026-01-15T00:00:00.000Z', sellingPrice: '12500000', keyNumber: null, location: 'Main yard', notes: 'Delivered with extra charger.\nSecond line.',
+  purchaseDate: '2026-01-15T00:00:00.000Z', sellingPrice: '12500000', keyNumber: null, controllerNumber: null, chargerNumber: null, location: 'Main yard', notes: 'Delivered with extra charger.\nSecond line.',
   variant: {
     id: 'var1', name: 'Pro', colour: 'Midnight Blue', hexColour: '#001f54',
     batteryType: 'Li-ion', batteryCapacity: '3.2 kWh', rangeKm: 120, topSpeedKmph: 80,
@@ -50,7 +50,7 @@ describe('VehicleDetailsDialog', () => {
   it('gracefully hides optional fields and the Notes section when absent', () => {
     const sparse: VehicleUnitDetail = {
       id: 'u2', vin: 'VIN999', motorNumber: 'MOT999', batteryNumber: 'BAT999', status: 'AVAILABLE',
-      purchaseDate: null, sellingPrice: '0', keyNumber: null, location: null, notes: null,
+      purchaseDate: null, sellingPrice: '0', keyNumber: null, controllerNumber: null, chargerNumber: null, location: null, notes: null,
       variant: {
         id: 'var2', name: 'Lite', colour: 'White', hexColour: null,
         batteryType: null, batteryCapacity: null, rangeKm: null, topSpeedKmph: null,

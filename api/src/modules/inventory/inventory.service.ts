@@ -16,6 +16,9 @@ import {
   buildPageMeta,
   canTransitionUnit,
   CSV_IMPORT_MAX_ROWS,
+  PURCHASE_COST_INPUTS,
+  computePurchaseCost,
+  type PurchaseCostBreakdown,
   type CsvImportPreview,
   type CreateUnitInput,
   type CsvImportResult,
@@ -103,10 +106,11 @@ const once = (query: () => Promise<boolean>): HistoryCheck => {
   return () => (result ??= query());
 };
 
-const IDENTIFICATION_FIELDS = ['vin', 'motorNumber', 'batteryNumber'] as const;
+// Controller and charger numbers are optional (null until known) but locked like the others once set.
+const IDENTIFICATION_FIELDS = ['vin', 'motorNumber', 'batteryNumber', 'controllerNumber', 'chargerNumber'] as const;
 type IdentificationField = (typeof IDENTIFICATION_FIELDS)[number];
-type IdentificationChange = { field: IdentificationField; from: string; to: string };
-type IdentitySnapshot = Record<IdentificationField, string> & { variantId: string };
+type IdentificationChange = { field: IdentificationField; from: string | null; to: string | null };
+type IdentitySnapshot = Record<IdentificationField, string | null> & { variantId: string };
 const sameIdentity = (a: IdentitySnapshot, b: IdentitySnapshot): boolean =>
   a.variantId === b.variantId && IDENTIFICATION_FIELDS.every((f) => a[f] === b[f]);
 
@@ -116,13 +120,43 @@ const sameIdentity = (a: IdentitySnapshot, b: IdentitySnapshot): boolean =>
  * case-only or whitespace-only difference is not a change. Fields are reported in a fixed order.
  */
 const identificationChangesOf = (
-  existing: Record<IdentificationField, string>,
-  requested: Partial<Record<IdentificationField, string>>,
+  existing: Record<IdentificationField, string | null>,
+  requested: Partial<Record<IdentificationField, string | null>>,
 ): IdentificationChange[] =>
   IDENTIFICATION_FIELDS.flatMap((field) => {
     const to = requested[field];
     return to !== undefined && to !== existing[field] ? [{ field, from: existing[field], to }] : [];
   });
+
+/**
+ * The changes that the post-sale lock applies to: replacing or removing a number. Filling in a controller or
+ * charger number that was never recorded is not a change of identity, so it is allowed whatever the status.
+ */
+const lockedChangesOf = (changes: IdentificationChange[]): IdentificationChange[] => changes.filter((c) => c.from != null);
+
+/** Refuses purchase-cost fields from a caller without inventory.cost (they never see the cost either). */
+const assertMaySetPurchaseCost = (dto: Partial<Record<(typeof PURCHASE_COST_INPUTS)[number], unknown>>, canSeeCost: boolean): void => {
+  if (!canSeeCost && PURCHASE_COST_INPUTS.some((k) => dto[k] !== undefined)) throw new ForbiddenException('Only the owner can set the purchase cost');
+};
+
+/**
+ * The purchase-cost columns for a create or an edit, or nothing when no purchase field was sent. Fields not
+ * sent keep their stored values; a GST worked out from a rate follows a new price, a typed GST amount stays.
+ */
+const purchaseCostData = (
+  dto: { purchasePrice?: number; purchaseGstRate?: number; purchaseGst?: number; transportCharge?: number },
+  existing?: { purchasePrice: bigint; purchaseGstRateBp: number | null; purchaseGst: bigint; transportCharge: bigint },
+): Partial<PurchaseCostBreakdown> => {
+  if (PURCHASE_COST_INPUTS.every((k) => dto[k] === undefined)) return {};
+  const price = dto.purchasePrice !== undefined ? BigInt(dto.purchasePrice) : existing?.purchasePrice ?? 0n;
+  const transport = dto.transportCharge !== undefined ? BigInt(dto.transportCharge) : existing?.transportCharge ?? 0n;
+  const gst =
+    dto.purchaseGst !== undefined ? { amount: BigInt(dto.purchaseGst) }
+      : dto.purchaseGstRate !== undefined ? { rateBp: Math.round(dto.purchaseGstRate * 100) }
+        : existing?.purchaseGstRateBp != null ? { rateBp: existing.purchaseGstRateBp }
+          : { amount: existing?.purchaseGst ?? 0n };
+  return computePurchaseCost(price, gst, transport);
+};
 
 /** A plain JSON object (type alias, not an interface) so it can ride in the activity-log metadata. */
 type IdentityRef = { variantId: string; modelId: string; brand: string; model: string; variant: string; colour: string; label: string };
@@ -306,7 +340,8 @@ export class InventoryService {
   }
 
   // ── Writes ─────────────────────────────────────────────
-  async create(dto: CreateUnitInput, userId: string) {
+  async create(dto: CreateUnitInput, userId: string, canSeeCost = false) {
+    assertMaySetPurchaseCost(dto, canSeeCost);
     await this.assertVinAvailable(dto.vin);
     // Curated: an existing active variant, checked against the tenant before anything is written.
     const curated = dto.variantId ? await this.curatedVariant(dto.variantId) : null;
@@ -321,9 +356,11 @@ export class InventoryService {
           vin: dto.vin,
           motorNumber: dto.motorNumber,
           batteryNumber: dto.batteryNumber,
+          controllerNumber: dto.controllerNumber ?? null,
+          chargerNumber: dto.chargerNumber ?? null,
           status: dto.status,
           purchaseDate: dto.purchaseDate ?? null,
-          purchaseCost: BigInt(dto.purchaseCost),
+          ...purchaseCostData(dto),
           sellingPrice,
           supplier: dto.supplier ?? null,
           location: dto.location ?? null,
@@ -356,13 +393,14 @@ export class InventoryService {
     return unit;
   }
 
-  async update(id: string, dto: UpdateUnitInput, userId: string) {
+  async update(id: string, dto: UpdateUnitInput, userId: string, canSeeCost = false) {
+    assertMaySetPurchaseCost(dto, canSeeCost);
     const existing = await this.getUnitOrThrow(id);
     // Identification: only an ACTUAL change counts (inputs are already normalised upper-case by the
     // schema, like the stored values). Refused as a whole after delivery — before anything is checked
     // or written, so the request leaves no trace.
     const identificationChanges = identificationChangesOf(existing, dto);
-    if (identificationChanges.length > 0) {
+    if (lockedChangesOf(identificationChanges).length > 0) {
       await this.assertIdentificationEditable(existing.status as UnitStatus, once(() => this.repo.hasCommittedHistory(id)));
     }
     if (dto.vin && dto.vin !== existing.vin) {
@@ -383,7 +421,7 @@ export class InventoryService {
       const committed = once(() => this.repo.hasCommittedHistory(id, tx));
       if (touchesIdentity) {
         status = (await this.lockedUnchanged(id, existing, tx)).status;
-        if (identificationChanges.length > 0) await this.assertIdentificationEditable(status, committed);
+        if (lockedChangesOf(identificationChanges).length > 0) await this.assertIdentificationEditable(status, committed);
       }
 
       // The catalogue identity the request asks for — curated (wins over any free-text sent alongside)
@@ -413,7 +451,9 @@ export class InventoryService {
       if (dto.motorNumber !== undefined) data.motorNumber = dto.motorNumber;
       if (dto.batteryNumber !== undefined) data.batteryNumber = dto.batteryNumber;
       if (dto.purchaseDate !== undefined) data.purchaseDate = dto.purchaseDate;
-      if (dto.purchaseCost !== undefined) data.purchaseCost = BigInt(dto.purchaseCost);
+      if (dto.controllerNumber !== undefined) data.controllerNumber = dto.controllerNumber;
+      if (dto.chargerNumber !== undefined) data.chargerNumber = dto.chargerNumber;
+      Object.assign(data, purchaseCostData(dto, existing));
       if (dto.sellingPrice !== undefined) data.sellingPrice = BigInt(dto.sellingPrice);
       if (dto.supplier !== undefined) data.supplier = dto.supplier ?? null;
       if (dto.location !== undefined) data.location = dto.location ?? null;
@@ -462,10 +502,11 @@ export class InventoryService {
     // Uniqueness exactly as an ordinary edit: the VIN pre-check here, the database constraints for all
     // three at write time (a clash there rolls the whole transaction back).
     const vinChange = changes.find((c) => c.field === 'vin');
-    if (vinChange) await this.assertVinAvailable(vinChange.to);
+    if (vinChange?.to) await this.assertVinAvailable(vinChange.to);
 
     const data: Prisma.InventoryUnitUpdateInput = { updatedById: actor.id };
-    for (const change of changes) data[change.field] = change.to;
+    // VIN / motor / battery are never null here (the schema refuses it); controller / charger may be cleared.
+    for (const change of changes) (data as Record<string, unknown>)[change.field] = change.to;
     const identificationCorrection = { reason: dto.reason, changes };
 
     return this.repo.transaction(async (tx) => {
@@ -612,9 +653,10 @@ export class InventoryService {
    * (unique-constraint race), leaves nothing behind; a deadlock with another import is answered like that
    * race, a transaction timeout with 503. `expectedSha256` ties the request to the previewed file.
    */
-  async importCsv(file: UploadedFile, userId: string, expectedSha256?: string): Promise<CsvImportResult> {
+  async importCsv(file: UploadedFile, userId: string, expectedSha256?: string, canSeeCost = false): Promise<CsvImportResult> {
     const companyId = this.tenant.requireCompanyId();
     const { rows, fileSha256 } = this.readCsvFile(file);
+    this.assertCsvCostAllowed(rows, canSeeCost);
     if (expectedSha256 !== undefined && expectedSha256.toLowerCase() !== fileSha256) {
       throw new ConflictException('This is not the file that was previewed — preview it again before importing.');
     }
@@ -649,6 +691,7 @@ export class InventoryService {
           status: UnitStatus.AVAILABLE,
           purchaseDate: u.purchaseDate,
           purchaseCost: u.purchaseCost,
+          purchasePrice: u.purchaseCost, // the file gives one figure: the price, with no GST or transport recorded separately
           sellingPrice: u.sellingPrice,
           supplier: u.supplier,
           location: u.location,
@@ -694,9 +737,10 @@ export class InventoryService {
    * M4D.2 — import PREVIEW (dry run): validates every row exactly as importCsv does and writes nothing
    * (no unit, no catalogue entry, no event, no activity log). Advisory: the import re-validates.
    */
-  async previewCsv(file: UploadedFile): Promise<CsvImportPreview> {
+  async previewCsv(file: UploadedFile, canSeeCost = false): Promise<CsvImportPreview> {
     const companyId = this.tenant.requireCompanyId();
     const { rows, fileSha256 } = this.readCsvFile(file);
+    this.assertCsvCostAllowed(rows, canSeeCost);
     try {
       // A read-only transaction only to bound the time the preview may take (CSV_CHECK_TX).
       return await this.repo.transaction(async (tx) => {
@@ -707,6 +751,14 @@ export class InventoryService {
     } catch (error) {
       if (isTransactionTimeout(error)) throw new ServiceUnavailableException('The server is busy — the preview could not run in time. Try again in a moment.');
       throw error;
+    }
+  }
+
+  /** A purchase cost in the file needs inventory.cost, like any other way of setting it. */
+  private assertCsvCostAllowed(rows: CsvSourceRow[], canSeeCost: boolean): void {
+    if (canSeeCost) return;
+    if (rows.some((r) => (r.record.purchaseCost ?? '').trim() !== '')) {
+      throw new ForbiddenException('Only the owner can import purchase costs — leave the Purchase cost column empty or remove it.');
     }
   }
 
@@ -738,6 +790,7 @@ export class InventoryService {
     query: ListUnitsQuery,
     format: 'xlsx' | 'pdf',
     userId: string,
+    canSeeCost = false,
   ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
     const where = this.buildWhere(query);
     const units = await this.repo.findMany({
@@ -758,7 +811,7 @@ export class InventoryService {
         { header: 'Motor No', width: 1.6 },
         { header: 'Battery No', width: 1.6 },
         { header: 'Purchase Date', width: 1.3 },
-        { header: 'Purchase Cost', width: 1.3 },
+        ...(canSeeCost ? [{ header: 'Purchase Cost', width: 1.3 }] : []),
         { header: 'Selling Price', width: 1.3 },
         { header: 'Supplier', width: 1.4 },
       ],
@@ -771,7 +824,7 @@ export class InventoryService {
         u.motorNumber,
         u.batteryNumber,
         u.purchaseDate ? new Date(u.purchaseDate).toLocaleDateString('en-IN') : '—',
-        formatInr(u.purchaseCost),
+        ...(canSeeCost ? [formatInr(u.purchaseCost)] : []),
         formatInr(u.sellingPrice),
         u.supplier ?? '—',
       ]),

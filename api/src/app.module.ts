@@ -25,6 +25,7 @@ import { WarrantyModule } from './modules/warranty/warranty.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { DeliveryModule } from './modules/delivery/delivery.module';
 import { RtoInvoicesModule } from './modules/rto-invoices/rto-invoices.module';
+import { PurchaseCostInterceptor } from './common/interceptors/purchase-cost.interceptor';
 import { CompanySettingsModule } from './modules/settings/company-settings.module';
 import { PdfBrandModule } from './common/pdf/pdf-brand.module';
 import { ReturnsModule } from './modules/returns/returns.module';
@@ -82,6 +83,8 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     // Tenant context must wrap the handler (outermost) so every query is scoped.
     { provide: APP_INTERCEPTOR, useClass: TenantInterceptor },
     { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },
+    // Purchase cost leaves the API only for callers holding inventory.cost.
+    { provide: APP_INTERCEPTOR, useClass: PurchaseCostInterceptor },
   ],
 })
 export class AppModule {}

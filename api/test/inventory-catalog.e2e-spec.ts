@@ -69,7 +69,7 @@ describe('Inventory ↔ catalogue (e2e)', () => {
   describe('create with a curated variant', () => {
     it('1 + 2 + 3 + 13. attaches the existing variant, creates nothing, keeps the response shape', async () => {
       const variantsBefore = await variantCount(A);
-      const res = await create(A, { variantId: A.variantId, sellingPrice: 11_000_000, purchaseCost: 9_000_000 }).expect(201);
+      const res = await create(A, { variantId: A.variantId, sellingPrice: 11_000_000, purchasePrice: 9_000_000 }).expect(201);
       expect(res.body.variant).toMatchObject({ id: A.variantId, name: 'Pro', colour: 'Teal', hexColour: '#00B8A9', exShowroomPrice: '12500000', model: { id: A.modelId, brand: 'TESTBRAND', name: `Cat a ${stamp}` } });
       expect(res.body).toMatchObject({ sellingPrice: '11000000', purchaseCost: '9000000', status: 'AVAILABLE' });
       expect(res.body.vin).toMatch(/^ICV/);
