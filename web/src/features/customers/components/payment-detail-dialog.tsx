@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
 import type { CustomerRelated } from '@azad/shared';
 import { formatPaise } from '@/lib/money';
-import { titleCase } from '@/lib/labels';
+import { titleCase, paymentContextLabel } from '@/lib/labels';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
@@ -39,7 +39,7 @@ export function PaymentDetailDialog({
 
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
               <Field label="Receipt" value={payment.receiptNumber ?? '—'} mono />
-              <Field label="Context" value={titleCase(payment.context)} />
+              <Field label="Context" value={paymentContextLabel(payment.context)} />
               <Field label="Date" value={new Date(payment.paidAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} />
               <Field label="Reference" value={payment.reference ?? '—'} />
               <Field label="Customer" value={customerName} />

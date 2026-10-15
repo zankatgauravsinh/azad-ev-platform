@@ -1,21 +1,27 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TEST_PASSWORD, TestCompany } from './support/e2e-company';
 
 /**
- * End-to-end auth flow. Requires a running Postgres (docker compose up -d)
- * with migrations + seed applied. Run with: npm run test:e2e
+ * End-to-end auth flow, as the OWNER of a throwaway company (never the seeded owner).
+ * Requires a migrated local Postgres. Run with: npm run test:e2e
  */
 describe('Auth (e2e)', () => {
   let app: INestApplication;
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
+  let co: TestCompany;
+  let email = '';
+  const password = TEST_PASSWORD;
 
   beforeAll(async () => {
     app = await createE2eApp();
+    co = await createTestCompany(app, 'Auth');
+    email = co.user().email;
   }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
+    await purgeTestCompany(app.get(PrismaService), co?.id);
     await app.close();
   }, E2E_HOOK_TIMEOUT);
 

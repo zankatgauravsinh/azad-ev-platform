@@ -185,4 +185,116 @@ describe('Service & after-sales (e2e)', () => {
     await http().post(`/api/v1/service/spare-parts/${created.body.id}/adjust`).set('Authorization', auth(ownerToken)).send({ delta: -10 }).expect(400);
     await http().delete(`/api/v1/service/spare-parts/${created.body.id}`).set('Authorization', auth(ownerToken)).expect(204);
   });
+
+  it("a job card cannot be opened on another customer's vehicle", async () => {
+    const unit = await http().post('/api/v1/inventory/units').set('Authorization', auth(ownerToken))
+      .send({ modelId: co.modelId, variant: `SVC-${stamp}`, colour: 'Black', vin: `SVO${stamp}`, motorNumber: `SOM${stamp}`, batteryNumber: `SOB${stamp}` }).expect(201);
+    const owner = (await http().post('/api/v1/customers').set('Authorization', auth(ownerToken)).send({ name: 'Svc Vehicle Owner', phone: `95${stamp}` }).expect(201)).body.id;
+    const other = (await http().post('/api/v1/customers').set('Authorization', auth(ownerToken)).send({ name: 'Svc Someone Else', phone: `94${stamp}` }).expect(201)).body.id;
+    const booking = (await http().post('/api/v1/bookings').set('Authorization', auth(ownerToken)).send({ customerId: owner, unitId: unit.body.id, exShowroom: 9000000 }).expect(201)).body;
+    const job = (customer: string, extra: Record<string, unknown> = {}) => http().post('/api/v1/service/jobs').set('Authorization', auth(ownerToken))
+      .send({ customerId: customer, unitId: unit.body.id, type: 'PAID', complaints: [{ description: 'Check-up' }], ...extra });
+    const jobsOnUnit = () => prisma.serviceJob.count({ where: { unitId: unit.body.id } });
+
+    const refused = await job(other).expect(400);
+    expect(refused.body.message).toBe(`Vehicle SVO${stamp} belongs to another customer — choose one of this customer's vehicles`);
+    expect(refused.body.message).not.toContain('Svc Vehicle Owner'); // the other customer is not disclosed
+    // A booking or sale reference must match the customer and the vehicle.
+    await job(other, { bookingId: booking.id }).expect(400);
+    await job(owner, { bookingId: jobId }).expect(400);
+    expect(await jobsOnUnit()).toBe(0);
+    await job(owner, { bookingId: booking.id }).expect(201);
+
+    // The job card form is offered only the customer's own vehicles.
+    const vehicles = (customer: string) => http().get(`/api/v1/service/jobs/customer-vehicles?customerId=${customer}`).set('Authorization', auth(ownerToken)).expect(200);
+    expect((await vehicles(owner)).body).toEqual([{ id: unit.body.id, vin: `SVO${stamp}`, model: expect.any(String), variant: `SVC-${stamp}`, colour: 'Black' }]);
+    expect((await vehicles(other)).body).toEqual([]);
+    await http().get('/api/v1/service/jobs/customer-vehicles?customerId=nope').set('Authorization', auth(ownerToken)).expect(400);
+    await http().get(`/api/v1/service/jobs/customer-vehicles?customerId=${owner}`).set('Authorization', auth(salesToken)).expect(403);
+
+    // Once the booking is cancelled the scooter is dealer stock again, and stock has no owner.
+    await http().post(`/api/v1/bookings/${booking.id}/cancel`).set('Authorization', auth(ownerToken)).send({ reason: 'test' }).expect(201);
+    expect((await vehicles(owner)).body).toEqual([]);
+    await job(other).expect(201);
+  });
+
+  // ───────────────────────── Closed job cards (QA M1, M7) ─────────────────────────
+  const newJob = async (extra: Record<string, unknown> = {}): Promise<string> =>
+    (await http().post('/api/v1/service/jobs').set('Authorization', auth(ownerToken)).send({ customerId, unitId, type: 'PAID', complaints: [{ description: 'Check-up' }], ...extra }).expect(201)).body.id;
+  const stock = async (): Promise<number> => (await http().get(`/api/v1/service/spare-parts/${sparePartId}`).set('Authorization', auth(ownerToken))).body.quantity;
+
+  it('a cancelled job card is frozen: no parts, labour, bill, payment or edits — and stock is returned once', async () => {
+    const id = await newJob();
+    await setStatus(id, 'CHECKED_IN').expect(201);
+    const part = (await http().post(`/api/v1/service/jobs/${id}/parts`).set('Authorization', auth(ownerToken)).send({ sparePartId, qty: 1 }).expect(201)).body.parts[0];
+    const before = await stock();
+    const cancelled = await http().post(`/api/v1/service/jobs/${id}/status`).set('Authorization', auth(ownerToken)).send({ status: 'CANCELLED', reason: 'Customer withdrew the vehicle' }).expect(201);
+    expect(cancelled.body.notes).toContain('Cancelled: Customer withdrew the vehicle');
+    expect(await stock()).toBe(before + 1);
+
+    const refused = 'is cancelled and can no longer be changed';
+    const o = (r: request.Test) => r.set('Authorization', auth(ownerToken));
+    expect((await o(http().post(`/api/v1/service/jobs/${id}/parts`)).send({ sparePartId, qty: 1 }).expect(400)).body.message).toContain(refused);
+    await o(http().delete(`/api/v1/service/jobs/${id}/parts/${part.id}`)).expect(400); // would return the part to stock a second time
+    await o(http().post(`/api/v1/service/jobs/${id}/labour`)).send({ description: 'x', cost: 100 }).expect(400);
+    await o(http().post(`/api/v1/service/jobs/${id}/bill`)).send({ discount: 0, taxPercentage: 0 }).expect(400);
+    await o(http().post(`/api/v1/service/jobs/${id}/payments`)).send({ amount: 100, mode: 'CASH' }).expect(400);
+    await o(http().patch(`/api/v1/service/jobs/${id}`)).send({ notes: 'edit' }).expect(400);
+    await o(http().post(`/api/v1/service/jobs/${id}/complaints`)).send({ description: 'more' }).expect(400);
+    expect(await stock()).toBe(before + 1);
+  });
+
+  it('a delivered job card is closed to work but still takes payment and feedback', async () => {
+    // jobId was delivered above.
+    const o = (r: request.Test) => r.set('Authorization', auth(ownerToken));
+    expect((await o(http().post(`/api/v1/service/jobs/${jobId}/parts`)).send({ sparePartId, qty: 1 }).expect(400)).body.message).toContain('is delivered and closed');
+    await o(http().post(`/api/v1/service/jobs/${jobId}/bill`)).send({ discount: 0, taxPercentage: 0 }).expect(400);
+    await o(http().post(`/api/v1/service/jobs/${jobId}/feedback`)).send({ rating: 4 }).expect(201);
+  });
+
+  // ───────────────────────── Free services (QA M2) ─────────────────────────
+  it('delivering a FREE_1 job card completes the warranty\'s first free service', async () => {
+    // A sold, delivered scooter — delivery issues its warranty with three pending free services.
+    const sold = await http().post('/api/v1/inventory/units').set('Authorization', auth(ownerToken))
+      .send({ modelId: co.modelId, variant: `SVC-${stamp}`, colour: 'Black', vin: `SVF${stamp}`, motorNumber: `SFM${stamp}`, batteryNumber: `SFB${stamp}` }).expect(201);
+    const booking = (await http().post('/api/v1/bookings').set('Authorization', auth(ownerToken)).send({ customerId, unitId: sold.body.id, exShowroom: 9000000 }).expect(201)).body;
+    await http().post(`/api/v1/bookings/${booking.id}/invoice`).set('Authorization', auth(ownerToken)).expect(201);
+    await http().post(`/api/v1/bookings/${booking.id}/deliver`).set('Authorization', auth(ownerToken)).send({}).expect(201);
+    const free = () => prisma.freeService.findMany({ where: { warranty: { unitId: sold.body.id } }, orderBy: { serviceNumber: 'asc' } });
+    expect((await free()).map((f) => f.status)).toEqual(['PENDING', 'PENDING', 'PENDING']);
+
+    const job = (await http().post('/api/v1/service/jobs').set('Authorization', auth(ownerToken))
+      .send({ customerId, unitId: sold.body.id, type: 'FREE_1', technicianId: techId, complaints: [{ description: 'First free service' }] }).expect(201)).body;
+    for (const status of ['CHECKED_IN', 'DIAGNOSIS', 'REPAIRING', 'QUALITY_CHECK', 'READY']) await setStatus(job.id, status).expect(201);
+    expect((await free())[0]?.status).toBe('PENDING'); // not until the vehicle is handed back
+    await setStatus(job.id, 'DELIVERED').expect(201);
+    const [first, second] = await free();
+    expect(first).toMatchObject({ status: 'COMPLETED', technicianId: techId, remarks: `Job card ${job.code}` });
+    expect(first?.completedDate).toBeTruthy();
+    expect(second?.status).toBe('PENDING');
+  });
+
+  // ───────────────────────── Technician workload (QA M8) ─────────────────────────
+  it("the dashboard's technician workload includes anyone holding open jobs, whatever their role", async () => {
+    const owner = co.user();
+    const id = await newJob({ technicianId: owner.id });
+    const dash = await http().get('/api/v1/dashboard/summary').set('Authorization', auth(ownerToken)).expect(200);
+    const row = dash.body.service.technicianWorkload.find((t: { technicianId: string }) => t.technicianId === owner.id);
+    expect(row?.openJobs).toBeGreaterThanOrEqual(1);
+    expect(dash.body.service.technicianWorkload.some((t: { technicianId: string }) => t.technicianId === techId)).toBe(true);
+    await http().post(`/api/v1/service/jobs/${id}/status`).set('Authorization', auth(ownerToken)).send({ status: 'CANCELLED', reason: 'test' }).expect(201);
+  });
+
+  // QA (Low): the dashboard's Service Due list was always empty.
+  it("lists booked job cards due today on the dashboard's Service Due reminders", async () => {
+    const id = await newJob({ scheduledDate: new Date().toISOString() });
+    const later = await newJob({ scheduledDate: new Date(Date.now() + 5 * 86_400_000).toISOString() });
+    const due = async () => (await http().get('/api/v1/dashboard/summary').set('Authorization', auth(ownerToken)).expect(200)).body.reminders.serviceDue as { id: string; href: string }[];
+    const list = await due();
+    expect(list.find((r) => r.id === id)?.href).toBe(`/service/${id}`);
+    expect(list.some((r) => r.id === later)).toBe(false);
+    await setStatus(id, 'CHECKED_IN').expect(201); // once the vehicle is in, it is no longer "due"
+    expect((await due()).some((r) => r.id === id)).toBe(false);
+    for (const j of [id, later]) await http().post(`/api/v1/service/jobs/${j}/status`).set('Authorization', auth(ownerToken)).send({ status: 'CANCELLED', reason: 'test' }).expect(201);
+  });
 });

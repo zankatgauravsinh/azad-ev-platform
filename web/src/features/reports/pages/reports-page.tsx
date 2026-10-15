@@ -6,7 +6,7 @@ import { RETURN_DISPOSITIONS, RETURN_STATUSES } from '@azad/shared';
 import { apiErrorMessage } from '@/lib/api-client';
 import { saveBlob } from '@/lib/download';
 import { formatPaise, formatPaiseExact } from '@/lib/money';
-import { titleCase } from '@/lib/labels';
+import { titleCase, paymentContextLabel } from '@/lib/labels';
 import { PageHeader } from '@/components/common/page-header';
 import { StatCard } from '@/components/common/stat-card';
 import { Card, CardContent } from '@/components/ui/card';
@@ -173,7 +173,7 @@ export function ReportsPage(): JSX.Element {
             <Panel title="By payment method">{payments.data ? <HBarList items={payments.data.byMode} emptyLabel="No payments in range" /> : <Skeleton className="h-40" />}</Panel>
             <Panel title="Daily collection (14 days)">{payments.data ? <DailyBars points={payments.data.daily} /> : <Skeleton className="h-40" />}</Panel>
           </div>
-          <Panel title="Payments">{payments.data ? <ReportTable headers={['Receipt', 'Date', 'Customer', 'Mode', 'Context', 'Amount']} empty="No payments in range" rows={payments.data.rows.map((p) => [p.receipt, new Date(p.date).toLocaleDateString('en-IN'), p.customer, titleCase(p.mode), titleCase(p.context), formatPaise(p.amount)])} /> : <Skeleton className="h-40" />}</Panel>
+          <Panel title="Payments">{payments.data ? <ReportTable headers={['Receipt', 'Date', 'Customer', 'Mode', 'Context', 'Amount']} empty="No payments in range" rows={payments.data.rows.map((p) => [p.receipt, new Date(p.date).toLocaleDateString('en-IN'), p.customer, titleCase(p.mode), paymentContextLabel(p.context), formatPaise(p.amount)])} /> : <Skeleton className="h-40" />}</Panel>
         </TabsContent>
 
         {/* Service (reuses Module 5 service reports) */}

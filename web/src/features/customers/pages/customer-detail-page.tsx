@@ -8,6 +8,8 @@ import { formatPaise } from '@/lib/money';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { maskAadhaar } from '@azad/shared';
+import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/common/empty-state';
@@ -26,6 +28,7 @@ import { BookingDetailDialog } from '@/features/sales/components/booking-detail-
 import { ServiceJobDetailDialog } from '@/features/service/components/service-job-detail-dialog';
 import { DeliveryDetailDialog } from '@/features/delivery/components/delivery-detail-dialog';
 import { WarrantyDetailDialog } from '@/features/warranty/components/warranty-detail-dialog';
+import { paymentContextLabel, titleCase } from '@/lib/labels';
 
 export function CustomerDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -82,7 +85,9 @@ export function CustomerDetailPage(): JSX.Element {
       </div>
 
       <Tabs defaultValue="overview">
-        <TabsList className="flex-wrap">
+        {/* Horizontal scroll strip (as in Settings) so the ten tabs never wrap over the card below. */}
+        <div className="overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <TabsList className="w-max">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
           <TabsTrigger value="documents">Documents</TabsTrigger>
@@ -94,6 +99,7 @@ export function CustomerDetailPage(): JSX.Element {
           <TabsTrigger value="notes">Notes</TabsTrigger>
           <TabsTrigger value="activity">Activity Log</TabsTrigger>
         </TabsList>
+        </div>
 
         <TabsContent value="overview">
           <div className="grid gap-4 lg:grid-cols-3">
@@ -106,6 +112,13 @@ export function CustomerDetailPage(): JSX.Element {
                 <Info label="City" value={customer.city ?? '—'} />
                 <Info label="State" value={customer.state ?? '—'} />
                 <Info label="PIN" value={customer.pin ?? '—'} />
+                <Info label="Village" value={customer.village ?? '—'} />
+                <Info label="Tehsil" value={customer.tehsil ?? '—'} />
+                <Info label="District" value={customer.district ?? '—'} />
+                {/* Masked on screen; printed in full only on the RTO invoice. */}
+                <Info label="Aadhaar" value={maskAadhaar(customer.aadhaarNumber) ?? '—'} />
+                <Info label="PAN" value={customer.panNumber ?? '—'} />
+                <Info label="GSTIN" value={customer.gstin ?? '—'} />
                 <Info label="Occupation" value={customer.occupation ?? '—'} />
                 <Info label="Date of birth" value={customer.dateOfBirth ? new Date(customer.dateOfBirth).toLocaleDateString('en-IN') : '—'} />
                 <Info label="Gender" value={customer.gender ? customer.gender[0] + customer.gender.slice(1).toLowerCase() : '—'} />
@@ -144,9 +157,10 @@ export function CustomerDetailPage(): JSX.Element {
 
 function Info({ label, value, className }: { label: string; value: string; className?: string }): JSX.Element {
   return (
-    <div className={className}>
+    <div className={cn('min-w-0', className)}>
       <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-0.5 text-sm font-medium">{value}</p>
+      {/* Long values (an email) wrap inside their column instead of running into the next card. */}
+      <p className="mt-0.5 break-words text-sm font-medium [overflow-wrap:anywhere]">{value}</p>
     </div>
   );
 }
@@ -168,7 +182,7 @@ function RelatedList({ customerId, customerName, kind }: { customerId: string; c
   return (
     <div className="space-y-2">
       {kind === 'bookings' && data!.bookings.map((b) => <Row key={b.id} left={`Booking ${b.code}`} sub={b.status} right={new Date(b.createdAt).toLocaleDateString('en-IN')} onView={() => setViewId(b.id)} />)}
-      {kind === 'payments' && data!.payments.map((p) => <Row key={p.id} left={formatPaise(p.amount)} sub={`${p.context} · ${p.mode}`} right={new Date(p.paidAt).toLocaleDateString('en-IN')} onView={() => setViewPayment(p)} />)}
+      {kind === 'payments' && data!.payments.map((p) => <Row key={p.id} left={formatPaise(p.amount)} sub={`${paymentContextLabel(p.context)} · ${titleCase(p.mode)}`} right={new Date(p.paidAt).toLocaleDateString('en-IN')} onView={() => setViewPayment(p)} />)}
       {kind === 'deliveries' && data!.deliveries.map((d) => <Row key={d.id} left={`VIN ${d.vin}`} sub="Delivered" right={new Date(d.deliveredAt).toLocaleDateString('en-IN')} onView={d.bookingId ? () => setViewId(d.bookingId) : undefined} />)}
       {kind === 'service' && data!.service.map((s) => <Row key={s.id} left={s.code} sub={s.complaint} right={s.status} onView={() => setViewId(s.id)} />)}
       {kind === 'warranty' && data!.warranty.map((w) => (
@@ -205,7 +219,7 @@ function ActivityLog({ customerId }: { customerId: string }): JSX.Element {
       <ul className="space-y-3">
         {entries.map((e) => (
           <li key={e.id} className="flex items-center justify-between border-b pb-2 text-sm last:border-0">
-            <div><Badge variant="muted">{e.action}</Badge> <span className="ml-2">{e.summary}</span></div>
+            <div><Badge variant="muted">{titleCase(e.action)}</Badge> <span className="ml-2">{e.summary}</span></div>
             <span className="text-xs text-muted-foreground">{new Date(e.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
           </li>
         ))}

@@ -56,6 +56,13 @@ export const updateCompanySettingsSchema = z
     quotationPrefix: prefix('Quotation prefix').optional(),
     receiptPrefix: prefix('Receipt prefix').optional(),
     jobCardPrefix: prefix('Job card prefix').optional(),
+    rtoInvoicePrefix: prefix('RTO invoice prefix').optional(),
+    warrantyPrefix: prefix('Warranty prefix').optional(),
+    amcPrefix: prefix('AMC prefix').optional(),
+    claimPrefix: prefix('Claim prefix').optional(),
+    returnPrefix: prefix('Return prefix').optional(),
+    creditNotePrefix: prefix('Credit note prefix').optional(),
+    refundPrefix: prefix('Refund prefix').optional(),
     // Sales / Service
     defaultWarrantyMonths: z.coerce.number().int().min(0).max(240).optional(),
     serviceReminderDays: z.coerce.number().int().min(0).max(365).optional(),
@@ -138,6 +145,13 @@ export interface CompanySettingsDto {
   quotationPrefix: string;
   receiptPrefix: string;
   jobCardPrefix: string;
+  rtoInvoicePrefix: string;
+  warrantyPrefix: string;
+  amcPrefix: string;
+  claimPrefix: string;
+  returnPrefix: string;
+  creditNotePrefix: string;
+  refundPrefix: string;
   defaultWarrantyMonths: number;
   serviceReminderDays: number;
   warrantyEnabled: boolean;

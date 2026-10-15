@@ -50,16 +50,45 @@ daemon, so the image is not runtime-verified in this repo. Pair with the existin
 ## 6. Backups & restore
 Nightly via the systemd timer (host PostgreSQL client tools, version ≥ the server's), or manually:
 ```bash
-DATABASE_URL="…" BACKUP_DIR=/opt/azad-ev/backups ./scripts/backup.sh     # validated custom-format dump, prunes >14 days
+DATABASE_URL="…" BACKUP_DIR=/opt/azad-ev/backups ./scripts/backup.sh     # validated custom-format dump; deletes nothing
 ./scripts/restore-test.sh /opt/azad-ev/backups/azad_ev-<UTC time>.dump postgres:16-alpine   # proves it restores (needs Docker)
+DATABASE_URL="…" ./scripts/restore.sh /opt/azad-ev/backups/azad_ev-<UTC time>.dump   # restores into a NEW database azad_ev_restore_<time>
 ```
 `DATABASE_URL` is read from the environment only; the password goes to a temporary mode-600 password file,
-never a command-line argument. `backup.sh` prints `BACKUP_ARCHIVE_VALID` when the archive is readable;
-only `restore-test.sh` (`RESTORE_TEST_PASSED`) shows that it restores — run it for every release and at
-least quarterly. When PostgreSQL runs in Docker with no client tools on the host, use
-`scripts/backup-docker.sh` instead (see `deploy/DEPLOY.md` §2). `scripts/restore.sh` overwrites a database
-and is only for an archive of the same schema version; rollbacks across migrations are in `deploy/DEPLOY.md`
-→ Rollback. Also back up the `uploads/` directory (KYC docs, photos) with the database.
+never a command-line argument or any output. A URL that is ambiguous (several hosts, or `hostaddr`/`port`/
+`dbname`… repeated as query parameters) is refused, and the scripts print — and `.meta` records — the
+server's system identifier and the database OID, so the source is identified positively, not by host name.
+`BACKUP_DIR` must be an absolute path to a private folder (created mode 700 if missing; an existing one must
+belong to you and already be mode 700). Each backup is a set — `.dump`, `.dump.sha256`, `.toc`, `.counts`,
+`.meta` — built in a private `.incomplete-…` folder and put in place without ever overwriting a file; it is
+complete exactly when its `.meta` says `backup_status=ARCHIVE_VALID`. A failed run removes only its own
+temporary folder.
+
+**Retention is off unless `RETENTION_DAYS` is set** (the systemd unit sets 14). It then removes only
+complete sets of the same database on the same server (system identifier, address and database OID) older
+than that many days — never a set with a `<base>.keep` file (`touch <base>.keep` for release backups),
+an older-format set, or any other file.
+
+`backup.sh` prints `BACKUP_ARCHIVE_VALID` when the archive is readable (a checksum proves the file is the one
+written, not that its data is complete); only `restore-test.sh` (`RESTORE_TEST_PASSED`) shows that it
+restores — run it for every release and at least quarterly. Its results, in order: `ARCHIVE_READABLE`,
+`RESTORE_COMPLETED` (restored, nothing compared yet), then `RESTORE_TEST_PASSED` (exit 0: exact row counts and
+migration history match) or `RESTORE_TEST_PASSED_TABLES_ONLY` (exit 3: only the table list could be checked —
+the rows changed during the dump, so `.counts`, taken outside the dump's snapshot, need not match it; or there
+is no `.counts`; or the `.meta`, or a field of it, is absent). The weaker result is not a full verification:
+back up again in a quiet window. A full result also requires the set's `.counts` and `.meta` to be consistent
+with the archive; metadata that is present but malformed or contradictory is refused (`ARCHIVE_REJECTED`,
+exit 1), as are checksum failures. Other failures: `RESTORE_FAILED`, `RESTORE_NOT_VERIFIED` (exit 1).
+`restore.sh` reports `RESTORE_VERIFIED` / `RESTORE_VERIFIED_TABLES_ONLY` with the same labels and exit codes.
+When
+PostgreSQL runs in Docker with no client tools on the host, use `scripts/backup-docker.sh` instead (see
+`deploy/DEPLOY.md` §2). `scripts/restore.sh` checks the checksum first, refuses a server that is not on this
+machine (unless `ALLOW_REMOTE_HOST` names it), restores into a **new** database by default and prints
+`ARCHIVE_READABLE` → `RESTORE_COMPLETED` → `RESTORE_VERIFIED`. It replaces an existing database only with
+`--replace` and `CONFIRM_REPLACE='<db>@<system id>/<database oid>'` (the value it prints), with nothing else
+connected, and only for an archive of the same schema version; rollbacks across migrations are in
+`deploy/DEPLOY.md` → Rollback. `scripts/tests/backup-restore-safety.sh` tests all of this against a
+throwaway cluster and containers. Also back up the `uploads/` directory (KYC docs, photos) with the database.
 
 ## 7. Security checklist before go-live
 - [ ] Real, unique JWT secrets and owner password (enforced by the boot guard).

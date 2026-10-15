@@ -65,6 +65,8 @@ export interface DeliveryDetailDto {
     batteryNumber: string | null;
     total: string;
     paid: string;
+    /** The first date a delivery may be recorded on: the later of the booking and purchase dates. */
+    earliestDelivery: { date: string; label: string };
   };
   delivery: {
     id: string;

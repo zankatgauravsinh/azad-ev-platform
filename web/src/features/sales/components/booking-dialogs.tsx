@@ -10,18 +10,20 @@ import {
 } from '@azad/shared';
 import type { BookingDto } from '../api';
 import { apiErrorMessage } from '@/lib/api-client';
-import { rupeesToPaise, paiseToRupees, formatPaise } from '@/lib/money';
+import { rupeesToPaise, paiseToRupees, formatPaise, formatPaiseExact } from '@/lib/money';
 import { titleCase } from '@/lib/labels';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { FormField } from '@/components/common/form-field';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { salesApi } from '../api';
+import { todayDateInput } from '@/features/delivery/components/delivery-date-field';
 import { useSalesInvalidate } from '../hooks';
 
-type BookingRef = Pick<BookingDto, 'id' | 'paymentSummary' | 'finance' | 'insurance' | 'expectedDelivery' | 'pendingDocuments'>;
+type BookingRef = Pick<BookingDto, 'id' | 'paymentSummary' | 'finance' | 'insurance' | 'insuranceCharge' | 'expectedDelivery' | 'pendingDocuments'>;
 interface Props { open: boolean; onOpenChange: (o: boolean) => void; booking: BookingRef }
 
 function useSubmit(onOpenChange: (o: boolean) => void) {
@@ -41,23 +43,36 @@ export function PaymentDialog({ open, onOpenChange, booking }: Props): JSX.Eleme
   const [amount, setAmount] = useState(() => paiseToRupees(booking.paymentSummary.balance));
   const [mode, setMode] = useState<PaymentMode>(PaymentMode.CASH);
   const [reference, setReference] = useState('');
+  const [paidOn, setPaidOn] = useState(todayDateInput);
+  const futureDate = paidOn > todayDateInput();
+  // The server refuses anything above the balance due; checked here too so the user sees why before submitting.
+  const balance = Number(booking.paymentSummary.balance);
+  const tooMuch = rupeesToPaise(amount) > balance;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Record payment</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="space-y-1.5"><Label>Amount (₹)</Label><Input type="number" min={1} value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></div>
-          <div className="space-y-1.5"><Label>Mode</Label>
+          <FormField label="Amount (₹)">
+            <Input type="number" min={1} max={paiseToRupees(balance)} value={amount} onChange={(e) => setAmount(Number(e.target.value))} aria-invalid={tooMuch} />
+            <p className={tooMuch ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>{tooMuch ? `Cannot exceed the balance due of ${formatPaiseExact(balance)}` : `Balance due ${formatPaiseExact(balance)}`}</p>
+          </FormField>
+          <FormField label="Mode">
             <Select value={mode} onValueChange={(v) => setMode(v as PaymentMode)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>{PAYMENT_MODES.map((m) => <SelectItem key={m} value={m}>{titleCase(m)}</SelectItem>)}</SelectContent>
             </Select>
+          </FormField>
+          <FormField label="Reference"><Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UPI ref / cheque no" /></FormField>
+          <div className="space-y-1.5">
+            <Label htmlFor="payment-date">Received on</Label>
+            <Input id="payment-date" type="date" className="w-44" max={todayDateInput()} value={paidOn} aria-invalid={futureDate} onChange={(e) => setPaidOn(e.target.value)} />
+            {futureDate && <p className="text-xs text-destructive">Cannot be in the future</p>}
           </div>
-          <div className="space-y-1.5"><Label>Reference</Label><Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UPI ref / cheque no" /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button disabled={busy || amount <= 0} onClick={() => run(() => salesApi.addPayment(booking.id, { amount: Number(rupeesToPaise(amount)), mode, reference: reference || undefined }), 'Payment recorded')}>Record</Button>
+          <Button disabled={busy || amount <= 0 || tooMuch || !paidOn || futureDate} onClick={() => run(() => salesApi.addPayment(booking.id, { amount: Number(rupeesToPaise(amount)), mode, reference: reference || undefined, paidAt: paidOn === todayDateInput() ? undefined : new Date(paidOn) }), 'Payment recorded')}>Record</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -74,17 +89,17 @@ export function FinanceDialog({ open, onOpenChange, booking }: Props): JSX.Eleme
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>Finance details</DialogTitle></DialogHeader>
         <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2 space-y-1.5"><Label>Finance company</Label><Input value={v.financeCompany} onChange={(e) => set('financeCompany', e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Loan amount (₹)</Label><Input type="number" value={v.loanAmount} onChange={(e) => set('loanAmount', Number(e.target.value))} /></div>
-          <div className="space-y-1.5"><Label>Down payment (₹)</Label><Input type="number" value={v.downPayment} onChange={(e) => set('downPayment', Number(e.target.value))} /></div>
-          <div className="space-y-1.5"><Label>EMI (₹)</Label><Input type="number" value={v.emiAmount} onChange={(e) => set('emiAmount', Number(e.target.value))} /></div>
-          <div className="space-y-1.5"><Label>Tenure (months)</Label><Input type="number" value={v.tenureMonths} onChange={(e) => set('tenureMonths', Number(e.target.value))} /></div>
-          <div className="space-y-1.5"><Label>Status</Label>
+          <FormField className="col-span-2" label="Finance company"><Input value={v.financeCompany} onChange={(e) => set('financeCompany', e.target.value)} /></FormField>
+          <FormField label="Loan amount (₹)"><Input type="number" value={v.loanAmount} onChange={(e) => set('loanAmount', Number(e.target.value))} /></FormField>
+          <FormField label="Down payment (₹)"><Input type="number" value={v.downPayment} onChange={(e) => set('downPayment', Number(e.target.value))} /></FormField>
+          <FormField label="EMI (₹)"><Input type="number" value={v.emiAmount} onChange={(e) => set('emiAmount', Number(e.target.value))} /></FormField>
+          <FormField label="Tenure (months)"><Input type="number" value={v.tenureMonths} onChange={(e) => set('tenureMonths', Number(e.target.value))} /></FormField>
+          <FormField label="Status">
             <Select value={v.status} onValueChange={(val) => set('status', val)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>{FINANCE_STATUSES.map((s) => <SelectItem key={s} value={s}>{titleCase(s)}</SelectItem>)}</SelectContent>
             </Select>
-          </div>
+          </FormField>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -98,28 +113,34 @@ export function FinanceDialog({ open, onOpenChange, booking }: Props): JSX.Eleme
 export function InsuranceDialog({ open, onOpenChange, booking }: Props): JSX.Element {
   const { busy, run } = useSubmit(onOpenChange);
   const i = booking.insurance;
-  const [v, setV] = useState({ provider: i?.provider ?? '', policyNumber: i?.policyNumber ?? '', premium: paiseToRupees(i?.premium ?? '0'), startDate: i?.startDate?.slice(0, 10) ?? '', endDate: i?.endDate?.slice(0, 10) ?? '', status: (i?.status ?? InsuranceStatus.PENDING) as InsuranceStatus });
+  // A new policy starts from the insurance priced into the booking.
+  const [v, setV] = useState({ provider: i?.provider ?? '', policyNumber: i?.policyNumber ?? '', premium: paiseToRupees(i?.premium ?? booking.insuranceCharge ?? '0'), startDate: i?.startDate?.slice(0, 10) ?? '', endDate: i?.endDate?.slice(0, 10) ?? '', status: (i?.status ?? InsuranceStatus.PENDING) as InsuranceStatus });
   const set = (k: keyof typeof v, val: string | number) => setV((s) => ({ ...s, [k]: val }));
+  // 'YYYY-MM-DD' strings compare chronologically; the server applies the same rule.
+  const datesReversed = Boolean(v.startDate && v.endDate && v.endDate <= v.startDate);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>Insurance details</DialogTitle></DialogHeader>
         <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5"><Label>Provider</Label><Input value={v.provider} onChange={(e) => set('provider', e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Policy number</Label><Input value={v.policyNumber} onChange={(e) => set('policyNumber', e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Premium (₹)</Label><Input type="number" value={v.premium} onChange={(e) => set('premium', Number(e.target.value))} /></div>
-          <div className="space-y-1.5"><Label>Status</Label>
+          <FormField label="Provider"><Input value={v.provider} onChange={(e) => set('provider', e.target.value)} /></FormField>
+          <FormField label="Policy number"><Input value={v.policyNumber} onChange={(e) => set('policyNumber', e.target.value)} /></FormField>
+          <FormField label="Premium (₹)"><Input type="number" value={v.premium} onChange={(e) => set('premium', Number(e.target.value))} /></FormField>
+          <FormField label="Status">
             <Select value={v.status} onValueChange={(val) => set('status', val)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>{INSURANCE_STATUSES.map((s) => <SelectItem key={s} value={s}>{titleCase(s)}</SelectItem>)}</SelectContent>
             </Select>
-          </div>
-          <div className="space-y-1.5"><Label>Start date</Label><Input type="date" value={v.startDate} onChange={(e) => set('startDate', e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>End date</Label><Input type="date" value={v.endDate} onChange={(e) => set('endDate', e.target.value)} /></div>
+          </FormField>
+          <FormField label="Start date"><Input type="date" value={v.startDate} onChange={(e) => set('startDate', e.target.value)} /></FormField>
+          <FormField label="End date">
+            <Input type="date" value={v.endDate} min={v.startDate || undefined} aria-invalid={datesReversed} onChange={(e) => set('endDate', e.target.value)} />
+            {datesReversed && <p className="text-xs text-destructive">Must be after the start date</p>}
+          </FormField>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button disabled={busy || !v.provider} onClick={() => run(() => salesApi.upsertInsurance(booking.id, { provider: v.provider, policyNumber: v.policyNumber || undefined, premium: Number(rupeesToPaise(v.premium)), startDate: v.startDate ? new Date(v.startDate) : undefined, endDate: v.endDate ? new Date(v.endDate) : undefined, status: v.status }), 'Insurance saved')}>Save</Button>
+          <Button disabled={busy || !v.provider || datesReversed} onClick={() => run(() => salesApi.upsertInsurance(booking.id, { provider: v.provider, policyNumber: v.policyNumber || undefined, premium: Number(rupeesToPaise(v.premium)), startDate: v.startDate ? new Date(v.startDate) : undefined, endDate: v.endDate ? new Date(v.endDate) : undefined, status: v.status }), 'Insurance saved')}>Save</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -150,10 +171,9 @@ export function CancelBookingDialog({
               {formatPaise(booking.paymentSummary.paid)} already paid will be <strong>retained</strong> (not refunded). The payment history is preserved.
             </p>
           )}
-          <div className="space-y-1.5">
-            <Label>Reason for cancellation</Label>
+          <FormField label="Reason for cancellation">
             <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this booking being cancelled?" />
-          </div>
+          </FormField>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Keep booking</Button>
@@ -173,8 +193,8 @@ export function ScheduleDeliveryDialog({ open, onOpenChange, booking }: Props): 
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Schedule delivery</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="space-y-1.5"><Label>Expected delivery date</Label><Input type="date" value={expectedDelivery} onChange={(e) => setExpected(e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Pending documents</Label><Textarea rows={2} value={pendingDocuments} onChange={(e) => setPending(e.target.value)} placeholder="e.g. Address proof pending" /></div>
+          <FormField label="Expected delivery date"><Input type="date" value={expectedDelivery} onChange={(e) => setExpected(e.target.value)} /></FormField>
+          <FormField label="Pending documents"><Textarea rows={2} value={pendingDocuments} onChange={(e) => setPending(e.target.value)} placeholder="e.g. Address proof pending" /></FormField>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

@@ -1,4 +1,4 @@
-import { DEFAULT_BUSINESS_TIME_ZONE, businessDateOf, noonOf, resolveTimeZone } from './business-date';
+import { DEFAULT_BUSINESS_TIME_ZONE, businessDateOf, isAfterBusinessToday, noonOf, resolveTimeZone } from './business-date';
 
 const at = (iso: string): Date => new Date(iso);
 
@@ -55,5 +55,20 @@ describe('resolveTimeZone', () => {
   it('falls back to the default for a missing or unusable zone', () => {
     expect(DEFAULT_BUSINESS_TIME_ZONE).toBe('Asia/Kolkata');
     for (const bad of [null, undefined, '', '   ', 'Not/AZone', 'IST+5:30']) expect(resolveTimeZone(bad)).toBe('Asia/Kolkata');
+  });
+});
+
+describe('isAfterBusinessToday', () => {
+  const picked = (d: string): Date => new Date(d); // how 'YYYY-MM-DD' from a date input is parsed: midnight UTC
+  it('today and earlier days are not in the future', () => {
+    const now = new Date('2026-10-13T06:00:00.000Z'); // 11:30 in India
+    expect(isAfterBusinessToday(picked('2026-10-13'), now, 'Asia/Kolkata')).toBe(false);
+    expect(isAfterBusinessToday(picked('2026-10-01'), now, 'Asia/Kolkata')).toBe(false);
+    expect(isAfterBusinessToday(picked('2026-10-14'), now, 'Asia/Kolkata')).toBe(true);
+  });
+  it("uses the company's today: just after midnight in India, the new day is already today", () => {
+    const now = new Date('2026-10-12T18:40:00.000Z'); // 00:10 on 13 October in India, still the 12th in UTC
+    expect(isAfterBusinessToday(picked('2026-10-13'), now, 'Asia/Kolkata')).toBe(false);
+    expect(isAfterBusinessToday(picked('2026-10-13'), now, 'UTC')).toBe(true);
   });
 });

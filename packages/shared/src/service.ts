@@ -53,6 +53,8 @@ export type UpdateServiceJobInput = z.infer<typeof updateServiceJobSchema>;
 
 export const changeServiceStatusSchema = z.object({
   status: z.enum(SERVICE_STATUSES as [ServiceStatus, ...ServiceStatus[]]),
+  /** Why the job is being cancelled; recorded in the job's notes. Only used with CANCELLED. */
+  reason: z.string().trim().max(500).optional(),
 });
 export type ChangeServiceStatusInput = z.infer<typeof changeServiceStatusSchema>;
 
@@ -208,6 +210,14 @@ export interface ServiceBillDto {
   paid: string;
   balance: string;
   status: PaymentStatus;
+}
+/** A vehicle the customer owns, offered by the job card form (GET /service/jobs/customer-vehicles). */
+export interface ServiceVehicleOption {
+  id: string;
+  vin: string;
+  model: string;
+  variant: string;
+  colour: string;
 }
 export interface WarrantyStatusDto {
   vehicle: { months: number; startDate: string | null; endDate: string | null; active: boolean; daysRemaining: number };

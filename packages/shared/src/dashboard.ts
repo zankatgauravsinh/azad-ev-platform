@@ -76,6 +76,8 @@ export interface UpcomingFreeService {
   vin: string;
   service: string; // e.g. "1st Free Service"
   dueDate: string;
+  /** The due date has passed. */
+  overdue: boolean;
 }
 
 export interface ServiceDashboard {

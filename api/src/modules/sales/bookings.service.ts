@@ -35,13 +35,25 @@ import { SaleTaxSnapshotReader } from '../tax/sale-tax-snapshot.reader';
 import type { SaleTaxDocument } from '../tax/sale-tax-document';
 import { GstInvoiceDocumentError, buildGstInvoiceDocument, type GstInvoiceDocument } from './gst-invoice-document';
 import { GstInvoicePdfService } from './gst-invoice-pdf.service';
-import { resolveTimeZone } from '../../common/utils/business-date';
-import { FutureDeliveryDateError, resolveDeliveryDate, type ResolvedDeliveryDate } from './delivery-date';
+import { isAfterBusinessToday, resolveTimeZone } from '../../common/utils/business-date';
+import { formatInrExact } from '../../common/utils/money';
+import { EarlyDeliveryDateError, FutureDeliveryDateError, deliveryLowerBound, resolveDeliveryDate, type DeliveryLowerBound, type ResolvedDeliveryDate } from './delivery-date';
 import { computeTotal, sumAccessories } from './pricing';
 
 type Tx = Prisma.TransactionClient;
 
+export interface DeliveredVehicle {
+  bookingId: string;
+  saleId: string;
+  unitId: string;
+  customerId: string;
+  deliveredAt: Date;
+  userId: string;
+}
+export type DeliveredListener = (delivered: DeliveredVehicle) => Promise<void>;
+
 const include = {
+  rtoInvoice: { select: { id: true, invoiceNumber: true, total: true, revision: true } },
   customer: { select: { id: true, name: true, phone: true, address: true, city: true } },
   unit: { include: { variant: { include: { model: true } } } },
   salesExecutive: { select: { id: true, name: true } },
@@ -59,6 +71,7 @@ type BookingWithRelations = Prisma.BookingGetPayload<{ include: typeof include }
 @Injectable()
 export class BookingsService {
   private readonly logger = new Logger(BookingsService.name);
+  private readonly deliveredListeners: DeliveredListener[] = [];
 
   constructor(
     private readonly prisma: PrismaService,
@@ -96,7 +109,8 @@ export class BookingsService {
   async getById(id: string) {
     const booking = await this.prisma.booking.findFirst({ where: { id }, include });
     if (!booking) throw new NotFoundException('Booking not found');
-    return { ...booking, paymentSummary: this.paymentSummary(booking) };
+    // earliestDelivery: the first date a delivery may be recorded on (see delivery-date.ts), for the date pickers.
+    return { ...booking, paymentSummary: this.paymentSummary(booking), earliestDelivery: deliveryLowerBound(booking, await this.businessTimeZone()) };
   }
 
   // ── Create / allocate ──────────────────────────────────
@@ -105,6 +119,7 @@ export class BookingsService {
       const code = await this.sequence.next('booking', tx);
       const accessoriesTotal = sumAccessories(dto.accessories);
       const total = computeTotal({ ...dto, accessoriesTotal });
+      if (BigInt(dto.advanceAmount) > BigInt(total)) throw new BadRequestException('The advance cannot exceed the on-road total');
       await this.allocateUnit(tx, dto.unitId, code, userId, dto.customerId);
       const created = await tx.booking.create({
         data: this.buildBookingData(dto, code, accessoriesTotal, total, userId),
@@ -120,11 +135,25 @@ export class BookingsService {
     return this.getById(booking.id);
   }
 
-  /** Called by QuotationsService.convertToBooking — reuses the quotation's pricing. */
+  /**
+   * Called by QuotationsService.convertToBooking — reuses the quotation's pricing. Because the price is the
+   * quoted variant's, the allocated scooter must be of exactly that variant.
+   */
   async createFromQuotation(quotation: Prisma.QuotationGetPayload<{ include: { accessories: true } }>, dto: { unitId: string; salesExecutiveId?: string; expectedDelivery?: Date; advanceAmount: number }, userId: string) {
+    if (BigInt(dto.advanceAmount) > quotation.total) throw new BadRequestException('The advance cannot exceed the on-road total');
     const booking = await this.prisma.$transaction(async (tx) => {
+      const unit = await tx.inventoryUnit.findFirst({ where: { id: dto.unitId }, select: { vin: true, variantId: true } });
+      if (!unit) throw new NotFoundException('Scooter not found');
+      if (unit.variantId !== quotation.variantId) {
+        const variants = await tx.scooterVariant.findMany({ where: { id: { in: [unit.variantId, quotation.variantId] } }, select: { id: true, name: true, colour: true, model: { select: { name: true } } } });
+        const label = (id: string): string => { const v = variants.find((x) => x.id === id); return v ? `${v.model.name} ${v.name} · ${v.colour}` : 'another variant'; };
+        throw new BadRequestException(`Scooter ${unit.vin} is a ${label(unit.variantId)}, but ${quotation.code} quotes a ${label(quotation.variantId)} — allocate a scooter of the quoted variant, or create a new quotation`);
+      }
       const code = await this.sequence.next('booking', tx);
       await this.allocateUnit(tx, dto.unitId, code, userId, quotation.customerId);
+      // A quotation links to one booking. Converting it again after its booking was cancelled moves the link
+      // to the new booking; the cancelled booking keeps its own copy of the terms, and the timeline its history.
+      await tx.booking.updateMany({ where: { quotationId: quotation.id, status: BookingStatus.CANCELLED }, data: { quotationId: null } });
       const created = await tx.booking.create({
         data: {
           code,
@@ -199,6 +228,8 @@ export class BookingsService {
     await this.prisma.$transaction(async (tx) => {
       await this.releaseUnit(tx, booking.unitId, userId, `Booking ${booking.code} cancelled`);
       await tx.booking.update({ where: { id }, data: { status: BookingStatus.CANCELLED, notes: dto.reason ? `Cancelled: ${dto.reason}` : booking.notes, updatedById: userId } });
+      // Its quotation is open again — it can be converted anew while it is still valid.
+      if (booking.quotationId) await tx.quotation.updateMany({ where: { id: booking.quotationId, status: QuotationStatus.ACCEPTED }, data: { status: QuotationStatus.SENT, updatedById: userId } });
     });
     await this.activityLog.record({ actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'Booking', entityId: id, summary: `Cancelled booking ${booking.code}` });
     return this.getById(id);
@@ -208,9 +239,22 @@ export class BookingsService {
   async addPayment(id: string, dto: AddPaymentInput, userId: string) {
     const booking = await this.getById(id);
     if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot add a payment to a cancelled booking');
+    if (dto.paidAt && isAfterBusinessToday(dto.paidAt, new Date(), await this.businessTimeZone())) throw new BadRequestException('The payment date cannot be in the future');
     // A payment dated in a closed month would silently change that month's collected total.
     await this.closing.assertOpen(dto.paidAt ?? new Date());
-    const payment = await this.prisma.$transaction((tx) => this.insertPayment(tx, id, dto, userId, booking.customerId));
+    const payment = await this.prisma.$transaction(async (tx) => {
+      // Never accept more than is owed: an overpayment has no refund or credit record, and the balance would
+      // simply read ₹0. The booking row is locked so two payments recorded at once cannot both pass the check.
+      await tx.$queryRaw`SELECT id FROM "Booking" WHERE id = ${id} FOR UPDATE`;
+      const [fresh, paid] = await Promise.all([
+        tx.booking.findFirst({ where: { id }, select: { total: true } }),
+        tx.payment.aggregate({ where: { bookingId: id }, _sum: { amount: true } }),
+      ]);
+      const balance = (fresh?.total ?? 0n) - (paid._sum.amount ?? 0n);
+      if (balance <= 0n) throw new BadRequestException('This booking is already fully paid');
+      if (BigInt(dto.amount) > balance) throw new BadRequestException(`The payment exceeds the balance due of ${formatInrExact(balance)}`);
+      return this.insertPayment(tx, id, dto, userId, booking.customerId);
+    });
     return payment;
   }
 
@@ -272,7 +316,8 @@ export class BookingsService {
     // A partial (or nil) payment does NOT block delivery — the unpaid balance
     // stays tracked as outstanding via the booking's payments, and no automatic
     // adjustment is made to clear it. Only the invoice-exists guard remains.
-    const { deliveredAt, businessDate } = await this.resolveDelivery(dto.actualDelivery);
+    const timeZone = await this.businessTimeZone();
+    const { deliveredAt, businessDate } = this.resolveDelivery(dto.actualDelivery, timeZone, booking.earliestDelivery);
     await this.prisma.$transaction(async (tx) => {
       await this.transitionUnit(tx, booking.unitId, UnitStatus.DELIVERED, userId, `Delivered on booking ${booking.code}`);
       await tx.booking.update({ where: { id }, data: { actualDelivery: deliveredAt, updatedById: userId } });
@@ -281,7 +326,20 @@ export class BookingsService {
       await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.DELIVERY, title: `Vehicle delivered (${booking.unit.vin})`, entityType: 'Booking', entityId: id, actorId: userId }, tx);
     });
     await this.activityLog.record({ actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'Booking', entityId: id, summary: `Delivered ${booking.unit.vin} (delivery date ${businessDate})` });
+    const delivered: DeliveredVehicle = { bookingId: id, saleId: booking.sale.id, unitId: booking.unitId, customerId: booking.customerId, deliveredAt, userId };
+    for (const listener of this.deliveredListeners) {
+      // The delivery has been recorded; a follow-up that fails must not undo or fail it.
+      await listener(delivered).catch((e: unknown) => this.logger.warn(`After delivering ${booking.code}: ${e instanceof Error ? e.message : String(e)}`));
+    }
     return this.getById(id);
+  }
+
+  /**
+   * Runs `listener` after every delivery (both entry points), once the delivery is committed. Lets modules that
+   * depend on Sales react — the warranty module issues the vehicle's warranty — without Sales depending on them.
+   */
+  onDelivered(listener: DeliveredListener): void {
+    this.deliveredListeners.push(listener);
   }
 
   /** The time zone the company's business dates are read in (see common/utils/business-date). */
@@ -290,12 +348,12 @@ export class BookingsService {
     return resolveTimeZone(setting?.timezone);
   }
 
-  /** Applies the delivery-date rules (see delivery-date.ts): today or a past date; never the future. */
-  private async resolveDelivery(actualDelivery: MarkDeliveredInput['actualDelivery']): Promise<ResolvedDeliveryDate> {
+  /** Applies the delivery-date rules (see delivery-date.ts): never the future, never before `notBefore`. */
+  private resolveDelivery(actualDelivery: MarkDeliveredInput['actualDelivery'], timeZone: string, notBefore: DeliveryLowerBound): ResolvedDeliveryDate {
     try {
-      return resolveDeliveryDate(actualDelivery, new Date(), await this.businessTimeZone());
+      return resolveDeliveryDate(actualDelivery, new Date(), timeZone, notBefore);
     } catch (e) {
-      if (e instanceof FutureDeliveryDateError) throw new BadRequestException(e.message);
+      if (e instanceof FutureDeliveryDateError || e instanceof EarlyDeliveryDateError) throw new BadRequestException(e.message);
       throw e;
     }
   }

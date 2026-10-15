@@ -38,7 +38,7 @@ export class CustomersRepository {
   }
 
   findByPhone(phone: string) {
-    return this.prisma.customer.findUnique({ where: { phone } });
+    return this.prisma.customer.findFirst({ where: { phone } });
   }
 
   findById(id: string) {

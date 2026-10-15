@@ -1,0 +1,14 @@
+// Used by `nest build` / `nest start` (the Nest CLI picks tsconfig.build.json automatically).
+// Compiles application code only. Unit specs may import fixtures from ../test, which would widen the
+// output root and move dist/main.js to dist/src/main.js, away from the PDF fonts copied to
+// dist/common/pdf/fonts. rootDir pins the output: any non-spec import from outside src fails the build.
+// tsBuildInfoFile: with rootDir set, the incremental build info would otherwise land beside this file, outside
+// dist — then `nest build` (deleteOutDir) would empty dist while tsc, seeing its build info, emitted nothing.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo"
+  },
+  "exclude": ["node_modules", "dist", "prisma", "test", "**/*.spec.ts"]
+}

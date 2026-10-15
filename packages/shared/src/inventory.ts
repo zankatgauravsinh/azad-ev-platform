@@ -45,6 +45,8 @@ const unitFields = {
   sellingPrice: paise.optional(),
   supplier: optionalTrimmed,
   location: optionalTrimmed,
+  /** The ignition key's number (printed on the RTO invoice); upper-cased. '' clears it. */
+  keyNumber: z.string().trim().max(30).nullable().optional().transform((v) => (v == null ? v : v.toUpperCase() || null)),
   notes: z.string().trim().max(1000).optional(),
   status: z.enum(UNIT_STATUSES as [UnitStatus, ...UnitStatus[]]).default(UnitStatus.AVAILABLE),
 };
@@ -170,6 +172,7 @@ export interface InventoryUnitDto {
   sellingPrice: string;
   supplier: string | null;
   location: string | null;
+  keyNumber: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;

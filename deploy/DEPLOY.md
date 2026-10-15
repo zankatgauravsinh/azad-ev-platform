@@ -56,17 +56,43 @@ BACKUP_DIR="$HOME/azad-backups" ./scripts/backup-docker.sh "$CONTAINER" "$DB"
 ```
 
 It writes `<db>-<UTC time>.dump` (custom format) plus `.dump.sha256`, `.toc`, `.counts` (exact row count per
-table) and `.meta` (container, image, server version) into `$BACKUP_DIR`: files mode 600, folder mode 700,
-and it **refuses to overwrite** an existing file. No password is read or passed — the dump connects over
-the container's local socket as its `POSTGRES_USER`. It stops on any error and removes the partial file.
+table) and `.meta` (container, image, server version, system identifier and database OID, migration state)
+into `$BACKUP_DIR`: files mode 600, and it **refuses to overwrite** an existing file. `$BACKUP_DIR` must be
+an absolute path to a private folder — created with mode 700 if missing; an existing one must belong to you
+and already be mode 700 (a shared folder such as `/tmp` is refused, never `chmod`-ed). The container must
+be given by its exact name. No password is read or passed — the dump connects over the container's local
+socket as its `POSTGRES_USER` (which must be set in the container's environment). The set is built in a
+private `.incomplete-…` folder and only then put in place, `.meta` last: a set is complete exactly when its
+`.meta` ends with `backup_status=ARCHIVE_VALID`. On any error only that temporary folder is removed — an
+existing backup is never touched, and the script never deletes backups.
 
-Two different results — only the second proves the backup is usable:
+Distinct results — only `RESTORE_TEST_PASSED` proves the backup is usable:
 
 - **`BACKUP_ARCHIVE_VALID`** (from `backup-docker.sh`): the archive's table of contents is readable and
-  every data block decodes (`pg_restore --list` and `pg_restore -f /dev/null`). It does **not** prove a
-  restore succeeds.
-- **`RESTORE_TEST_PASSED`** (from `restore-test.sh`): the archive was restored into a throwaway database
-  and the restored tables, exact row counts and Prisma migration history match.
+  every data block decodes (`pg_restore --list` and `pg_restore -f /dev/null`), and the checksum verifies.
+  It does **not** prove a restore succeeds. A checksum only proves the file is the one the backup wrote —
+  not that the data in it is complete.
+- **`ARCHIVE_READABLE`**, then **`RESTORE_COMPLETED`** (from `restore-test.sh`): the checksum (required)
+  matched and the archive lists; then `pg_restore` into the throwaway database succeeded — not yet compared
+  with anything.
+- **`RESTORE_TEST_PASSED`** (exit 0) — full verification: the set's `.counts` and `.meta` are complete and
+  consistent with the archive, every table's exact row count equals `.counts`, and the Prisma migration
+  history equals the one recorded in `.meta`.
+- **`RESTORE_TEST_PASSED_TABLES_ONLY`** (exit 3) — only the table list could be verified; row counts were
+  **not**. Emitted when the rows changed while the dump ran (`.meta`: `counts_stable_during_dump=no`), when
+  there is no `.counts` (e.g. a hand-made backup — the list is then checked against the archive's own table
+  of contents), or when the `.meta` (or a field of it) is absent, e.g. an older set. **Not sufficient for a
+  release**: take the backup again in a quiet window (API stopped) and re-test until `RESTORE_TEST_PASSED`.
+- Failures, all exit 1: **`ARCHIVE_REJECTED`** — checksum mismatch, unreadable archive, or set metadata that is
+  present but malformed, duplicated or contradicts the archive (nothing is restored); **`RESTORE_FAILED`** —
+  `pg_restore` or the scratch server failed; **`RESTORE_NOT_VERIFIED`** — restored, but it does not match the
+  set. `scripts/restore.sh` uses the same labels and exit codes (`RESTORE_VERIFIED` /
+  `RESTORE_VERIFIED_TABLES_ONLY` for its two successes). The scripts stop with one clear error if a required
+  command is missing; they do not need `cmp` or `diff`.
+
+Why the counts can be unstable: `.counts` is taken just before (and checked just after) `pg_dump`, in
+separate sessions — outside the dump's own snapshot. The archive itself is always a consistent snapshot, but
+if rows change during the dump, `.counts` need not describe it, so no exact comparison is possible.
 
 ```bash
 ARCHIVE="${ARCHIVE:?absolute path of the .dump printed by backup-docker.sh}"
@@ -229,8 +255,10 @@ SQL
 ```
 
 Then check out and build the matching older code, `pm2 start` it, and verify (§6). Drop the
-`<db>_failed_<time>` database only once you no longer need it. (`scripts/restore.sh` restores over an
-existing database with `--clean`; use it only for an archive of the **same** schema version.)
+`<db>_failed_<time>` database only once you no longer need it. (`scripts/restore.sh` uses the host's
+PostgreSQL tools and restores into a **new** database by default; it replaces an existing database only
+with `--replace` and a `CONFIRM_REPLACE` naming that exact database and server — and only for an archive
+of the **same** schema version. See its header.)
 
 ## Troubleshooting
 

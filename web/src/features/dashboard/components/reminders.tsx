@@ -34,7 +34,7 @@ export function Reminders({ data }: { data: DashboardReminders }): JSX.Element {
       <ReminderList title="Follow-ups" icon={PhoneCall} items={data.followUps} empty="No follow-ups." />
       <ReminderList title="Pending Balance" icon={IndianRupee} items={data.pendingBalance} empty="All settled." />
       <ReminderList title="Pending Documents" icon={FileWarning} items={data.pendingDocuments} empty="Nothing pending." />
-      <ReminderList title="Service Due" icon={Wrench} items={data.serviceDue} empty="Arrives with Service module." />
+      <ReminderList title="Service Due" icon={Wrench} items={data.serviceDue} empty="No job cards due." />
     </div>
   );
 }

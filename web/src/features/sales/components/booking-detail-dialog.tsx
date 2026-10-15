@@ -34,7 +34,7 @@ export function BookingDetailDialog({ id, onOpenChange }: { id: string | null; o
               <DialogTitle className="flex flex-wrap items-center gap-2">
                 <span className="font-mono">{b.code}</span>
                 <BookingStatusBadge status={b.status} />
-                <PaymentStatusBadge status={b.paymentSummary.status} />
+                {b.status !== 'CANCELLED' && <PaymentStatusBadge status={b.paymentSummary.status} />}
               </DialogTitle>
             </DialogHeader>
 

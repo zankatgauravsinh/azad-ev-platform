@@ -7,11 +7,14 @@ import { CustomerFormDialog } from '@/features/customers/components/customer-for
 import { UnitFormDialog } from '@/features/inventory/components/unit-form-dialog';
 import { QuotationFormDialog } from '@/features/sales/components/quotation-form-dialog';
 import { BookingFormDialog } from '@/features/sales/components/booking-form-dialog';
+import { ServiceJobFormDialog } from '@/features/service/components/service-job-form-dialog';
+import { useCan } from '@/features/auth/auth-context';
 
-type ActionKey = 'customer' | 'inventory' | 'quotation' | 'booking';
+type ActionKey = 'customer' | 'inventory' | 'quotation' | 'booking' | 'service';
 
 export function QuickActions(): JSX.Element {
   const navigate = useNavigate();
+  const canBookService = useCan('service.create');
   const [open, setOpen] = useState<ActionKey | null>(null);
 
   const actions: { key: string; label: string; icon: LucideIcon; onClick: () => void; disabled?: boolean }[] = [
@@ -21,7 +24,7 @@ export function QuickActions(): JSX.Element {
     { key: 'booking', label: 'Create Booking', icon: ShoppingCart, onClick: () => setOpen('booking') },
     { key: 'payment', label: 'Receive Payment', icon: Banknote, onClick: () => navigate('/bookings') },
     { key: 'delivery', label: 'Schedule Delivery', icon: CalendarClock, onClick: () => navigate('/bookings') },
-    { key: 'service', label: 'Book Service', icon: Wrench, onClick: () => undefined, disabled: true },
+    ...(canBookService ? [{ key: 'service', label: 'Book Service', icon: Wrench, onClick: () => setOpen('service') }] : []),
   ];
 
   return (
@@ -30,7 +33,7 @@ export function QuickActions(): JSX.Element {
         {actions.map((a) => {
           const Icon = a.icon;
           return (
-            <Button key={a.key} variant="outline" size="sm" onClick={a.onClick} disabled={a.disabled} title={a.disabled ? 'Arrives with the Service module' : undefined}>
+            <Button key={a.key} variant="outline" size="sm" onClick={a.onClick} disabled={a.disabled}>
               <Icon className="h-4 w-4" /> {a.label}
             </Button>
           );
@@ -40,6 +43,7 @@ export function QuickActions(): JSX.Element {
       <UnitFormDialog open={open === 'inventory'} onOpenChange={(o) => !o && setOpen(null)} />
       <QuotationFormDialog open={open === 'quotation'} onOpenChange={(o) => !o && setOpen(null)} />
       <BookingFormDialog open={open === 'booking'} onOpenChange={(o) => !o && setOpen(null)} />
+      {canBookService && <ServiceJobFormDialog open={open === 'service'} onOpenChange={(o) => !o && setOpen(null)} onCreated={(id) => navigate(`/service/${id}`)} />}
     </>
   );
 }

@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BookingStatus, FreeServiceStatus, Prisma, SaleStatus, WarrantyStatus } from '@prisma/client';
 import {
   ActivityAction,
   CustomerEventType,
@@ -23,6 +23,7 @@ import {
   type ServiceBillInput,
   type ServiceFeedbackInput,
   type ServiceJobDto,
+  type ServiceVehicleOption,
   type ServicePaymentInput,
   type UpdateServiceJobInput,
 } from '@azad/shared';
@@ -40,6 +41,8 @@ export interface Actor {
   id: string;
   role: Role;
 }
+
+const FREE_SERVICE_NUMBER: Partial<Record<ServiceJobType, number>> = { FREE_1: 1, FREE_2: 2, FREE_3: 3 };
 
 const include = {
   customer: { select: { id: true, name: true, phone: true } },
@@ -151,10 +154,19 @@ export class ServiceJobsService {
   async create(dto: CreateServiceJobInput, userId: string): Promise<ServiceJobDto> {
     const [customer, unit] = await Promise.all([
       this.prisma.customer.findFirst({ where: { id: dto.customerId }, select: { id: true } }),
-      this.prisma.inventoryUnit.findFirst({ where: { id: dto.unitId }, select: { id: true } }),
+      this.prisma.inventoryUnit.findFirst({ where: { id: dto.unitId }, select: { id: true, vin: true } }),
     ]);
     if (!customer) throw new NotFoundException('Customer not found');
     if (!unit) throw new NotFoundException('Vehicle not found');
+    const owner = (await this.ownersOf([dto.unitId])).get(dto.unitId);
+    // The other customer is deliberately not named: the person creating the job card may not be allowed to see them.
+    if (owner && owner !== dto.customerId) throw new BadRequestException(`Vehicle ${unit.vin} belongs to another customer — choose one of this customer's vehicles`);
+    if (dto.bookingId && !(await this.prisma.booking.findFirst({ where: { id: dto.bookingId, customerId: dto.customerId, unitId: dto.unitId, deletedAt: null }, select: { id: true } }))) {
+      throw new BadRequestException('The booking is not for this customer and vehicle');
+    }
+    if (dto.saleId && !(await this.prisma.sale.findFirst({ where: { id: dto.saleId, customerId: dto.customerId, unitId: dto.unitId, deletedAt: null }, select: { id: true } }))) {
+      throw new BadRequestException('The sale is not for this customer and vehicle');
+    }
     if (dto.technicianId) await this.assertTechnician(dto.technicianId);
 
     const warranty = await this.warranty.vehicleWarranty(dto.unitId);
@@ -191,9 +203,57 @@ export class ServiceJobsService {
     return this.toDto(job);
   }
 
+  /**
+   * Delivering a FREE_1/2/3 job card is that free service done: it marks the matching pending free service on
+   * the vehicle's warranty completed. A vehicle without a warranty (or one already marked) is left as it is.
+   */
+  private async completeFreeService(tx: Tx, job: { code: string; type: ServiceJobType; unitId: string; technicianId: string | null }, at: Date): Promise<void> {
+    const serviceNumber = FREE_SERVICE_NUMBER[job.type];
+    if (!serviceNumber) return;
+    await tx.freeService.updateMany({
+      where: { serviceNumber, status: FreeServiceStatus.PENDING, warranty: { unitId: job.unitId, status: { not: WarrantyStatus.CANCELLED } } },
+      data: { status: FreeServiceStatus.COMPLETED, completedDate: at, technicianId: job.technicianId, remarks: `Job card ${job.code}` },
+    });
+  }
+
+  /** The vehicles a customer currently owns, for the job card form. */
+  async customerVehicles(customerId: string): Promise<ServiceVehicleOption[]> {
+    const [sales, bookings] = await Promise.all([
+      this.prisma.sale.findMany({ where: { customerId, deletedAt: null, status: { not: SaleStatus.CANCELLED } }, select: { unitId: true } }),
+      this.prisma.booking.findMany({ where: { customerId, deletedAt: null, status: { not: BookingStatus.CANCELLED } }, select: { unitId: true } }),
+    ]);
+    const candidates = [...new Set([...sales, ...bookings].map((r) => r.unitId))];
+    const owners = await this.ownersOf(candidates);
+    const units = await this.prisma.inventoryUnit.findMany({
+      where: { id: { in: candidates.filter((id) => owners.get(id) === customerId) } },
+      select: { id: true, vin: true, variant: { select: { name: true, colour: true, model: { select: { name: true } } } } },
+      orderBy: { vin: 'asc' },
+    });
+    return units.map((u) => ({ id: u.id, vin: u.vin, model: u.variant.model.name, variant: u.variant.name, colour: u.variant.colour }));
+  }
+
+  /**
+   * Who owns each vehicle: the customer on its most recent live sale or booking (cancelled and deleted ones
+   * ignored). A vehicle missing from the map has never been sold or booked — dealer stock — and may be serviced
+   * for any customer.
+   */
+  private async ownersOf(unitIds: string[]): Promise<Map<string, string>> {
+    if (unitIds.length === 0) return new Map();
+    const [sales, bookings] = await Promise.all([
+      this.prisma.sale.findMany({ where: { unitId: { in: unitIds }, deletedAt: null, status: { not: SaleStatus.CANCELLED } }, select: { unitId: true, customerId: true, createdAt: true } }),
+      this.prisma.booking.findMany({ where: { unitId: { in: unitIds }, deletedAt: null, status: { not: BookingStatus.CANCELLED } }, select: { unitId: true, customerId: true, createdAt: true } }),
+    ]);
+    const latest = new Map<string, { customerId: string; createdAt: Date }>();
+    for (const r of [...sales, ...bookings]) {
+      const seen = latest.get(r.unitId);
+      if (!seen || r.createdAt > seen.createdAt) latest.set(r.unitId, r);
+    }
+    return new Map([...latest].map(([unitId, r]) => [unitId, r.customerId]));
+  }
+
   // ── Update / workflow ──────────────────────────────────
   async update(id: string, dto: UpdateServiceJobInput, actor: Actor): Promise<ServiceJobDto> {
-    await this.load(id, actor);
+    this.assertWritable(await this.load(id, actor));
     const data: Prisma.ServiceJobUpdateInput = { updatedById: actor.id };
     if (dto.priority !== undefined) data.priority = dto.priority;
     if (dto.odometerKm !== undefined) data.odometerKm = dto.odometerKm;
@@ -213,6 +273,8 @@ export class ServiceJobsService {
     const data: Prisma.ServiceJobUpdateInput = { status: dto.status, updatedById: actor.id };
     const now = new Date();
     if (dto.status === ServiceStatus.CHECKED_IN && !job.checkInAt) data.checkInAt = now;
+    const reason = dto.status === ServiceStatus.CANCELLED ? dto.reason : undefined;
+    if (reason) data.notes = [job.notes, `Cancelled: ${reason}`].filter(Boolean).join('\n');
     if (dto.status === ServiceStatus.DELIVERED) {
       data.checkOutAt = now;
       data.actualDelivery = now;
@@ -227,15 +289,16 @@ export class ServiceJobsService {
           await tx.sparePart.updateMany({ where: { id: p.sparePartId as string }, data: { quantity: { increment: p.qty }, updatedById: actor.id } });
         }
       }
+      if (dto.status === ServiceStatus.DELIVERED) await this.completeFreeService(tx, job, now);
       const event = STATUS_EVENT[dto.status];
       if (event) await this.timeline.record({ customerId: job.customerId, type: event.type, title: `${event.title} (${job.code})`, entityType: 'ServiceJob', entityId: id, actorId: actor.id }, tx);
     });
-    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.STATUS_CHANGE, entityType: 'ServiceJob', entityId: id, summary: `Job ${job.code}: ${job.status} → ${dto.status}` });
+    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.STATUS_CHANGE, entityType: 'ServiceJob', entityId: id, summary: `Job ${job.code}: ${job.status} → ${dto.status}${reason ? ` (${reason})` : ''}` });
     return this.getById(id, actor);
   }
 
   async assignTechnician(id: string, dto: AssignTechnicianInput, userId: string): Promise<ServiceJobDto> {
-    await this.load(id);
+    this.assertWritable(await this.load(id));
     if (dto.technicianId) await this.assertTechnician(dto.technicianId);
     await this.prisma.serviceJob.update({ where: { id }, data: { technicianId: dto.technicianId, updatedById: userId } });
     await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, summary: dto.technicianId ? 'Assigned technician' : 'Unassigned technician' });
@@ -244,13 +307,13 @@ export class ServiceJobsService {
 
   // ── Complaints ─────────────────────────────────────────
   async addComplaint(id: string, dto: AddComplaintInput, actor: Actor): Promise<ServiceJobDto> {
-    await this.load(id, actor);
+    this.assertWritable(await this.load(id, actor));
     await this.prisma.serviceComplaint.create({ data: { serviceJobId: id, description: dto.description, priority: dto.priority, createdById: actor.id, updatedById: actor.id } });
     return this.getById(id, actor);
   }
 
   async resolveComplaint(id: string, complaintId: string, actor: Actor): Promise<ServiceJobDto> {
-    await this.load(id, actor);
+    this.assertWritable(await this.load(id, actor));
     const complaint = await this.prisma.serviceComplaint.findFirst({ where: { id: complaintId, serviceJobId: id } });
     if (!complaint) throw new NotFoundException('Complaint not found');
     await this.prisma.serviceComplaint.update({ where: { id: complaintId }, data: { resolved: true, updatedById: actor.id } });
@@ -260,6 +323,7 @@ export class ServiceJobsService {
   // ── Inspection ─────────────────────────────────────────
   async saveInspection(id: string, dto: SaveInspectionInput, actor: Actor): Promise<ServiceJobDto> {
     const job = await this.load(id, actor);
+    this.assertWritable(job);
     await this.prisma.$transaction(async (tx) => {
       for (const item of dto.items) {
         await tx.serviceInspectionItem.upsert({
@@ -276,6 +340,7 @@ export class ServiceJobsService {
   // ── Parts ──────────────────────────────────────────────
   async addPart(id: string, dto: AddServicePartInput, actor: Actor): Promise<ServiceJobDto> {
     const job = await this.load(id, actor);
+    this.assertWritable(job);
     await this.prisma.$transaction(async (tx) => {
       let name = dto.name ?? '';
       let unitCost = BigInt(dto.unitCost);
@@ -300,7 +365,8 @@ export class ServiceJobsService {
   }
 
   async removePart(id: string, partId: string, actor: Actor): Promise<ServiceJobDto> {
-    await this.load(id, actor);
+    // Also stops a cancelled job's parts — already returned to stock on cancellation — being returned twice.
+    this.assertWritable(await this.load(id, actor));
     await this.prisma.$transaction(async (tx) => {
       const part = await tx.servicePart.findFirst({ where: { id: partId, serviceJobId: id } });
       if (!part) throw new NotFoundException('Part line not found');
@@ -313,7 +379,7 @@ export class ServiceJobsService {
 
   // ── Labour ─────────────────────────────────────────────
   async addLabour(id: string, dto: AddServiceLabourInput, actor: Actor): Promise<ServiceJobDto> {
-    await this.load(id, actor);
+    this.assertWritable(await this.load(id, actor));
     await this.prisma.$transaction(async (tx) => {
       let description = dto.description ?? '';
       let cost = BigInt(dto.cost);
@@ -330,7 +396,7 @@ export class ServiceJobsService {
   }
 
   async removeLabour(id: string, labourId: string, actor: Actor): Promise<ServiceJobDto> {
-    await this.load(id, actor);
+    this.assertWritable(await this.load(id, actor));
     await this.prisma.$transaction(async (tx) => {
       const labour = await tx.serviceLabour.findFirst({ where: { id: labourId, serviceJobId: id } });
       if (!labour) throw new NotFoundException('Labour line not found');
@@ -343,6 +409,7 @@ export class ServiceJobsService {
   // ── Billing ────────────────────────────────────────────
   async applyBill(id: string, dto: ServiceBillInput, actor: Actor): Promise<ServiceJobDto> {
     const job = await this.load(id, actor);
+    this.assertWritable(job);
     const { partsTotal, labourTotal } = this.subtotals(job);
     const discount = BigInt(dto.discount);
     const taxable = partsTotal + labourTotal - discount;
@@ -356,6 +423,7 @@ export class ServiceJobsService {
 
   async addPayment(id: string, dto: ServicePaymentInput, actor: Actor): Promise<ServiceJobDto> {
     const job = await this.load(id, actor);
+    this.assertWritable(job, { afterDelivery: true }); // a customer may settle the bill after collecting the vehicle
     // Don't let a payment land in a month that finance has already closed.
     await this.closing.assertOpen(new Date());
     await this.prisma.$transaction(async (tx) => {
@@ -370,6 +438,7 @@ export class ServiceJobsService {
   // ── Feedback ───────────────────────────────────────────
   async feedback(id: string, dto: ServiceFeedbackInput, actor: Actor): Promise<ServiceJobDto> {
     const job = await this.load(id, actor);
+    this.assertWritable(job, { afterDelivery: true });
     await this.prisma.$transaction(async (tx) => {
       await tx.serviceJob.update({ where: { id }, data: { feedbackRating: dto.rating, feedbackNote: dto.note ?? null, updatedById: actor.id } });
       await this.timeline.record({ customerId: job.customerId, type: CustomerEventType.FEEDBACK_RECEIVED, title: `Service feedback: ${dto.rating}★`, description: dto.note ?? null, entityType: 'ServiceJob', entityId: id, actorId: actor.id }, tx);
@@ -378,6 +447,16 @@ export class ServiceJobsService {
   }
 
   // ── Helpers ────────────────────────────────────────────
+  /**
+   * A job card stops changing once it is closed. A CANCELLED job is frozen entirely: its spare parts went back
+   * to stock when it was cancelled, so adding or removing parts afterwards would corrupt stock. A DELIVERED job
+   * keeps only what legitimately happens after hand-over (`afterDelivery`: payment and feedback).
+   */
+  private assertWritable(job: { code: string; status: ServiceStatus }, { afterDelivery = false }: { afterDelivery?: boolean } = {}): void {
+    if (job.status === ServiceStatus.CANCELLED) throw new BadRequestException(`Job card ${job.code} is cancelled and can no longer be changed`);
+    if (job.status === ServiceStatus.DELIVERED && !afterDelivery) throw new BadRequestException(`Job card ${job.code} is delivered and closed`);
+  }
+
   private subtotals(job: { parts: { qty: number; unitPrice: bigint }[]; labour: { cost: bigint }[] }): { partsTotal: bigint; labourTotal: bigint } {
     const partsTotal = job.parts.reduce((s, p) => s + p.unitPrice * BigInt(p.qty), 0n);
     const labourTotal = job.labour.reduce((s, l) => s + l.cost, 0n);

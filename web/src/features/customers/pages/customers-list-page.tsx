@@ -85,7 +85,7 @@ export function CustomersListPage(): JSX.Element {
           render: (c: CustomerListItem) => (
             <DropdownMenu>
               <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                <Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="More actions"><MoreHorizontal className="h-4 w-4" /></Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                 {canUpdate && <DropdownMenuItem onClick={() => { setEditCustomer(c); setFormOpen(true); }}><Pencil className="h-4 w-4" /> Edit</DropdownMenuItem>}
@@ -106,7 +106,7 @@ export function CustomersListPage(): JSX.Element {
         actions={canCreate ? <Button onClick={() => { setEditCustomer(undefined); setFormOpen(true); }}><Plus className="h-4 w-4" /> Add customer</Button> : undefined}
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-9">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {tiles.map((t) => (
           <StatCard key={t.status} label={t.label} value={t.value} loading={!stats} active={status === t.status} onClick={() => { setStatus(t.status); setPage(1); }} />
         ))}

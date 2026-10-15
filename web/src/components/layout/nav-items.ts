@@ -1,4 +1,5 @@
 import {
+  FileBadge,
   LayoutDashboard,
   Users,
   PackageOpen,
@@ -57,6 +58,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Test Rides', to: '/test-rides', icon: Zap, enabled: false, roles: ['OWNER', 'MANAGER', 'SALES_EXECUTIVE'] },
   { label: 'Quotations', to: '/quotations', icon: IndianRupee, enabled: true, permission: 'quotations.view' },
   { label: 'Bookings', to: '/bookings', icon: ClipboardList, enabled: true, permission: 'bookings.view' },
+  { label: 'RTO Invoices', to: '/rto-invoices', icon: FileBadge, enabled: true, permission: 'rto.view' },
   { label: 'Delivery', to: '/delivery', icon: Bike, enabled: true, permission: 'delivery.view' },
   { label: 'Returns', to: '/returns', icon: Undo2, enabled: true, permission: 'returns.view' },
   { label: 'Service', to: '/service', icon: Wrench, enabled: true, permission: 'service.view' },

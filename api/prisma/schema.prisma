@@ -374,7 +374,7 @@ model Customer {
   id                     String        @id @default(uuid())
   companyId              String        @default("")
   name                   String
-  phone                  String        @unique
+  phone                  String
   altPhone               String?
   email                  String?
   address                String?
@@ -384,6 +384,13 @@ model Customer {
   /// GST state code for place of supply. Never derived from the free-text `state`; null until captured.
   gstStateCode           String?
   village                String?
+  /// Sub-district and district of the customer's address (printed on the RTO invoice).
+  tehsil                 String?
+  district               String?
+  /// Identity numbers the RTO needs. Aadhaar: 12 digits (Verhoeff-checked); PAN: ABCDE1234F; GSTIN: 15 characters.
+  aadhaarNumber          String?
+  panNumber              String?
+  gstin                  String?
   occupation             String?
   dateOfBirth            DateTime?
   gender                 Gender?
@@ -417,7 +424,9 @@ model Customer {
   income      Income[]
   returns     VehicleReturn[]
   refunds     Refund[]
+  rtoInvoices RtoInvoice[]
 
+  @@unique([companyId, phone]) // a mobile number is unique within a showroom, not across all of them
   @@index([leadStatus])
   @@index([assignedToId])
   @@index([name])
@@ -600,6 +609,8 @@ model InventoryUnit {
   purchaseCost  BigInt         @default(0)
   sellingPrice  BigInt         @default(0)
   location      String?
+  /// The ignition key's number (printed on the RTO invoice). Not part of the locked identity.
+  keyNumber     String?
   supplier      String?
   notes         String?
 
@@ -619,6 +630,7 @@ model InventoryUnit {
   warranties  Warranty[]
   amcPlans    AmcPlan[]
   returns     VehicleReturn[]
+  rtoInvoices RtoInvoice[]
 
   @@index([status])
   @@index([variantId])
@@ -762,6 +774,7 @@ model Booking {
   salesExecutive    User          @relation("BookingSalesExecutive", fields: [salesExecutiveId], references: [id])
   quotationId       String?       @unique
   quotation         Quotation?    @relation(fields: [quotationId], references: [id])
+  rtoInvoice        RtoInvoice?
   status            BookingStatus @default(DRAFT)
   financeRequired   Boolean       @default(false)
   insuranceRequired Boolean       @default(false)
@@ -1525,6 +1538,7 @@ model CompanySetting {
   returnPrefix            String  @default("RET")
   creditNotePrefix        String  @default("CN")
   refundPrefix            String  @default("RF")
+  rtoInvoicePrefix        String  @default("RTO")
   financeGstRate          Decimal @default(18) @db.Decimal(5, 2)
   financialYearStartMonth Int     @default(4)
   openingCash             BigInt  @default(0)
@@ -1593,6 +1607,7 @@ model InvoiceSetting {
   nextReturnNumber     Int    @default(1)
   nextCreditNoteNumber Int    @default(1)
   nextRefundNumber     Int    @default(1)
+  nextRtoInvoiceNumber Int    @default(1)
 
   createdById String?
   updatedById String?
@@ -2389,4 +2404,55 @@ model TaxSnapshotLine {
   @@unique([snapshotId, lineKey])
   @@unique([snapshotId, position])
   @@index([companyId])
+}
+
+// ─────────────────────────── RTO invoice ───────────────────────────
+
+/// The invoice the dealer issues for a vehicle's registration with the RTO. Raised from a booking with figures
+/// the dealer enters (price, GST rate, supply type) — independent of the sale's tax invoice. One per booking;
+/// the owner may revise it (same number, `revision` + 1). Amounts in paise; GST is added on top of the price.
+model RtoInvoice {
+  id            String        @id @default(uuid())
+  companyId     String        @default("")
+  invoiceNumber String
+  bookingId     String        @unique
+  booking       Booking       @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  customerId    String
+  customer      Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  unitId        String
+  unit          InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  invoiceDate   DateTime      @default(now())
+
+  /// The taxable value: listPrice − discount.
+  sellingPrice BigInt
+  /// Price before discount (defaults to the scooter's list price) and the discount: sellingPrice = listPrice − discount.
+  listPrice    BigInt    @default(0)
+  discount     BigInt    @default(0)
+  /// GST rate in basis points (500 = 5.00%).
+  gstRateBp    Int
+  /// INTRA → CGST + SGST; INTER → IGST.
+  supplyType   String
+  cgst         BigInt    @default(0)
+  sgst         BigInt    @default(0)
+  igst         BigInt    @default(0)
+  gstAmount    BigInt
+  total        BigInt
+  /// The vehicle model's HSN code when the invoice was (last) generated; null when none was configured.
+  hsnCode      String?
+  /// Insurance policy number printed on the invoice (defaults to the booking's policy).
+  policyNumber String?
+  /// Delivery date printed on the invoice — a calendar date. Defaults to the booking's delivery date; only the
+  /// owner may set a different one.
+  deliveryDate DateTime? @db.Date
+  revision     Int       @default(1)
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, invoiceNumber])
+  @@index([companyId, invoiceDate])
+  @@index([customerId])
+  @@index([unitId])
 }

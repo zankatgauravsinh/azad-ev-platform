@@ -1,10 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
-import { seedRbac } from '../src/common/rbac/rbac-seed';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 /**
  * Stage A — GST/Tax management (configuration only). Proves classification + effective-dated rate
@@ -14,53 +12,39 @@ import { seedRbac } from '../src/common/rbac/rbac-seed';
 describe('Tax management (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  const email = (process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in').toLowerCase();
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
+  let A: TestCompany;
+  let B: TestCompany;
   const stamp = Date.now().toString().slice(-8);
   const http = () => request(app.getHttpServer());
   const auth = (t: string): string => `Bearer ${t}`;
-  const login = async (mail: string, pass: string): Promise<string> =>
-    (await http().post('/api/v1/auth/login').send({ email: mail, password: pass }).expect(200)).body.accessToken;
 
   let ownerToken = '';
   let salesToken = '';
-  let companyAId = '';
   let companyBId = '';
   let bClassificationId = '';
-  const createdUserIds: string[] = [];
   const createdClassIds: string[] = [];
 
   beforeAll(async () => {
     app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    await seedRbac(prisma);
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email } });
-    companyAId = owner.companyId;
-    ownerToken = await login(email, password);
+    // Company A: OWNER + a SALES_EXECUTIVE (lacks settings.manage — used to prove write authorization).
+    A = await createTestCompany(app, 'Tax', { roles: ['SALES_EXECUTIVE'] });
+    ownerToken = A.user().token;
+    salesToken = A.user('SALES_EXECUTIVE').token;
 
-    // A SALES_EXECUTIVE lacks settings.manage — used to prove write authorization.
-    const hash = await bcrypt.hash('Test@12345', 12);
-    const sales = await prisma.user.create({
-      data: { companyId: companyAId, name: 'Tax Sales', email: `tax.sales.${stamp}@e2e.test`, role: 'SALES_EXECUTIVE', passwordHash: hash, isActive: true },
-    });
-    createdUserIds.push(sales.id);
-    salesToken = await login(sales.email, 'Test@12345');
-
-    // Second company + a classification, for tenant isolation (companyId set explicitly: no request context here).
-    const companyB = await prisma.company.create({ data: { name: `Tax B ${stamp}`, slug: `tax-b-${stamp}` } });
-    companyBId = companyB.id;
-    const bClass = await prisma.taxClassification.create({ data: { companyId: companyB.id, name: `B Vehicle ${stamp}`, codeType: 'HSN', code: '8703', treatment: 'TAXABLE' } });
+    // Second throwaway company + a classification, for tenant isolation (companyId set explicitly: no request context here).
+    B = await createTestCompany(app, 'TaxB');
+    companyBId = B.id;
+    const bClass = await prisma.taxClassification.create({ data: { companyId: companyBId, name: `B Vehicle ${stamp}`, codeType: 'HSN', code: '8703', treatment: 'TAXABLE' } });
     bClassificationId = bClass.id;
   }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    // TaxClassification is a soft-delete model (deleteMany only archives), so remove this suite's own
-    // rows with raw SQL — rates go with them via ON DELETE CASCADE. Nothing else is touched.
-    if (createdClassIds.length > 0) await prisma.$executeRaw(Prisma.sql`DELETE FROM "TaxClassification" WHERE id IN (${Prisma.join(createdClassIds)})`);
-    await prisma.$executeRaw(Prisma.sql`DELETE FROM "TaxClassification" WHERE "companyId" = ${companyBId}`);
-    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
-    await prisma.company.deleteMany({ where: { id: companyBId } });
+    // purgeTestCompany hard-deletes with raw SQL, so the soft-delete TaxClassification rows (and their
+    // rates) go too. Nothing outside the two throwaway companies is touched.
+    await purgeTestCompany(prisma, A?.id);
+    await purgeTestCompany(prisma, B?.id);
     await app.close();
   }, E2E_HOOK_TIMEOUT);
 

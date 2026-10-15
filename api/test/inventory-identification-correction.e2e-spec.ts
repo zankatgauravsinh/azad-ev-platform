@@ -283,7 +283,7 @@ describe('Inventory identification correction (e2e)', () => {
     it('14–15. a delivered vehicle with warranty, AMC and a service job, then returned: nothing but the unit changes', async () => {
       const u = await newUnit(A);
       const { saleId } = await deliver(A, customerA, u.id);
-      await http().post('/api/v1/warranties').set('Authorization', A.auth()).send({ unitId: u.id, customerId: customerA, periodMonths: 24 }).expect(201);
+      expect(await prisma.warranty.count({ where: { unitId: u.id } })).toBe(1); // issued on delivery
       const amc = await http().post('/api/v1/amc').set('Authorization', A.auth())
         .send({ unitId: u.id, customerId: customerA, planType: 'GOLD', months: 12, visitsIncluded: 3, price: 300000 }).expect(201);
       await http().post(`/api/v1/amc/${amc.body.id}/visits`).set('Authorization', A.auth()).send({ workDone: 'General service', amount: 0, coveredUnderAmc: true }).expect(201);

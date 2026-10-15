@@ -3,6 +3,7 @@ import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TEST_PASSWORD, TestCompany } from './support/e2e-company';
 import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 /**
@@ -12,12 +13,10 @@ import { seedRbac } from '../src/common/rbac/rbac-seed';
 describe('GET /auth/me effective permissions (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  const email = (process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in').toLowerCase();
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
+  let co: TestCompany;
   const stamp = Date.now().toString().slice(-8);
   const http = () => request(app.getHttpServer());
   const token: Record<string, string> = {};
-  const createdUserIds: string[] = [];
   let inactiveToken = '';
   let inactiveId = '';
 
@@ -29,42 +28,30 @@ describe('GET /auth/me effective permissions (e2e)', () => {
     app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email } });
-    const hash = await bcrypt.hash('Test@12345', 12);
-    for (const role of ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT'] as const) {
-      const u = await prisma.user.create({
-        data: { companyId: owner.companyId, name: `Me ${role}`, email: `me.${role.toLowerCase()}.${stamp}@e2e.test`, role, passwordHash: hash, isActive: true },
-      });
-      createdUserIds.push(u.id);
-    }
+    co = await createTestCompany(app, 'Me', { roles: ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT'] });
+    for (const role of ['OWNER', 'MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT'] as const) token[role] = co.user(role).token;
     const inactive = await prisma.user.create({
-      data: { companyId: owner.companyId, name: 'Me Inactive', email: `me.inactive.${stamp}@e2e.test`, role: 'MANAGER', passwordHash: hash, isActive: true },
+      data: { companyId: co.id, name: 'Me Inactive', email: `me.inactive.${stamp}.${co.tag}@e2e.test`.toLowerCase(), role: 'MANAGER', passwordHash: await bcrypt.hash(TEST_PASSWORD, 12), isActive: true },
     });
-    createdUserIds.push(inactive.id);
     inactiveId = inactive.id;
-
-    await seedRbac(prisma); // backfill roleId for the new users
-    token.OWNER = await login(email, password);
-    for (const role of ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT'] as const) {
-      token[role] = await login(`me.${role.toLowerCase()}.${stamp}@e2e.test`, 'Test@12345');
-    }
-    inactiveToken = await login(`me.inactive.${stamp}@e2e.test`, 'Test@12345');
+    await seedRbac(prisma, { companyIds: [co.id] }); // backfill the extra user's roleId
+    inactiveToken = await login(inactive.email, TEST_PASSWORD);
     await prisma.user.update({ where: { id: inactiveId }, data: { isActive: false } }); // deactivate after issuing the token
   }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await purgeTestCompany(prisma, co?.id);
     await app.close();
   }, E2E_HOOK_TIMEOUT);
 
   const perms = async (t: string): Promise<string[]> => (await me(t).expect(200)).body.permissions as string[];
 
   it('returns the exact effective permission count per role', async () => {
-    expect((await perms(token.OWNER!)).length).toBe(73);
-    expect((await perms(token.MANAGER!)).length).toBe(70);
+    expect((await perms(token.OWNER!)).length).toBe(76); // + rto.view / rto.generate / rto.edit
+    expect((await perms(token.MANAGER!)).length).toBe(72); // + rto.view / rto.generate (rto.edit is owner-only)
     expect((await perms(token.SALES_EXECUTIVE!)).length).toBe(27);
     expect((await perms(token.TECHNICIAN!)).length).toBe(15);
-    expect((await perms(token.ACCOUNTANT!)).length).toBe(10);
+    expect((await perms(token.ACCOUNTANT!)).length).toBe(11); // + rto.view
   });
 
   it('OWNER receives the full catalog including admin + inventory.export (no "*")', async () => {

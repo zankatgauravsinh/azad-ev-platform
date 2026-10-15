@@ -84,11 +84,11 @@ export function DashboardPage(): JSX.Element {
                 <ul className="space-y-1 text-sm">{data.service.technicianWorkload.map((t) => <li key={t.technicianId} className="flex justify-between"><span>{t.name}</span><span className="font-medium tabular-nums">{t.openJobs} open</span></li>)}</ul>
               )}
             </CardContent></Card>
-          <Card><CardHeader className="p-4 pb-2"><CardTitle className="text-sm">Upcoming Free Services</CardTitle></CardHeader>
+          <Card><CardHeader className="p-4 pb-2"><CardTitle className="text-sm">Free Services Due</CardTitle></CardHeader>
             <CardContent className="p-4 pt-0">
               {data.service.upcomingFreeServices.length === 0 ? <p className="text-sm text-muted-foreground">None due in the reminder window.</p> : (
                 <ul className="space-y-1 text-sm">{data.service.upcomingFreeServices.map((s, i) => (
-                  <li key={i} className="flex justify-between"><span>{s.customer} · <span className="font-mono text-xs">{s.vin}</span></span><span className="text-muted-foreground">{s.service} · {new Date(s.dueDate).toLocaleDateString('en-IN')}</span></li>
+                  <li key={i} className="flex justify-between"><span>{s.customer} · <span className="font-mono text-xs">{s.vin}</span></span><span className={s.overdue ? 'text-destructive' : 'text-muted-foreground'}>{s.service} · {s.overdue ? 'overdue since ' : ''}{new Date(s.dueDate).toLocaleDateString('en-IN')}</span></li>
                 ))}</ul>
               )}
             </CardContent></Card>

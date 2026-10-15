@@ -72,7 +72,7 @@ describe('GST configuration (e2e)', () => {
   beforeAll(async () => {
     app = await createE2eApp();
     prisma = app.get(PrismaService);
-    await seedRbac(prisma); // the permission catalogue the custom roles below link to
+    await seedRbac(prisma, { companyIds: [] }); // only the global permission catalogue the custom roles below link to — no company is touched
     passwordHash = await bcrypt.hash('Test@12345', 10);
 
     await setupCompany(A, 'a');

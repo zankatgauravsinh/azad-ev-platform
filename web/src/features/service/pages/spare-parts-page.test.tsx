@@ -20,8 +20,8 @@ const renderWith = (perms: string[]): void => { cleanup(); h.perms.current = new
 const q = {
   partRow: () => screen.queryByText('Brake Pad'),
   add: () => screen.queryByRole('button', { name: /Add part/ }),
-  plus: () => screen.queryByRole('button', { name: '+' }),
-  del: () => screen.queryAllByRole('button').find((b) => b.className.includes('text-destructive')) ?? null,
+  plus: () => screen.queryByRole('button', { name: 'Add one Brake Pad to stock' }),
+  del: () => screen.queryByRole('button', { name: 'Delete Brake Pad' }),
 };
 beforeEach(() => { h.perms.current = new Set(); });
 

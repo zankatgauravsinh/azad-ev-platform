@@ -3,7 +3,9 @@ import { Prisma } from '@prisma/client';
 import {
   ActivityAction,
   CustomerEventType,
+  BookingStatus,
   QuotationStatus,
+  quotationConversionBlocker,
   buildPageMeta,
   type ChangeQuotationStatusInput,
   type CreateQuotationInput,
@@ -19,13 +21,14 @@ import { SequenceService } from './sequence.service';
 import { SalesPdfService } from './sales-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { BookingsService } from './bookings.service';
+import { businessDateOf } from '../../common/utils/business-date';
 import { computeTotal, sumAccessories } from './pricing';
 
 const include = {
   customer: { select: { id: true, name: true, phone: true, address: true, city: true } },
   variant: { include: { model: true } },
   accessories: { include: { accessory: { select: { name: true } } } },
-  booking: { select: { id: true, code: true } },
+  booking: { select: { id: true, code: true, status: true } },
 } satisfies Prisma.QuotationInclude;
 
 @Injectable()
@@ -103,7 +106,7 @@ export class QuotationsService {
 
   async update(id: string, dto: UpdateQuotationInput, userId: string) {
     const existing = await this.getById(id);
-    if (existing.status === QuotationStatus.ACCEPTED || existing.booking) {
+    if (existing.status === QuotationStatus.ACCEPTED || (existing.booking && existing.booking.status !== BookingStatus.CANCELLED)) {
       throw new BadRequestException('An accepted / converted quotation cannot be edited');
     }
     return this.prisma.$transaction(async (tx) => {
@@ -195,7 +198,8 @@ export class QuotationsService {
 
   async convertToBooking(id: string, dto: ConvertQuotationInput, userId: string) {
     const quotation = await this.getById(id);
-    if (quotation.booking) throw new BadRequestException('This quotation is already converted to a booking');
+    const blocker = quotationConversionBlocker(quotation, businessDateOf(new Date(), await this.bookings.businessTimeZone()));
+    if (blocker) throw new BadRequestException(blocker);
     return this.bookings.createFromQuotation(quotation, dto, userId);
   }
 

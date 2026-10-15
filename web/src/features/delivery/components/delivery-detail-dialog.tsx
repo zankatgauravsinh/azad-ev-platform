@@ -50,7 +50,8 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
   const doComplete = async (): Promise<void> => {
     try {
       await complete.mutateAsync({ id: bookingId, body: { actualDelivery: deliveryDate, notes: notes || undefined, overrideReason: override || undefined, checklist: draft } });
-      toast.success('Vehicle delivered');
+      // The dialog stays open on purpose: it now shows the handover record, where photos and the signature go.
+      toast.success('Vehicle delivered — add the handover photos and the customer\'s signature below');
     } catch (e) { toast.error(apiErrorMessage(e)); }
   };
 
@@ -119,9 +120,9 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
                 </Section>
                 <div className="space-y-1"><Label>Notes</Label><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional handover notes" /></div>
                 <div className="space-y-1"><Label>Override reason (delivering with pending docs)</Label><Input value={override} onChange={(e) => setOverride(e.target.value)} placeholder="Optional" /></div>
-                <DeliveryDateField value={deliveryDate} onChange={setDeliveryDate} disabled={!canManage} />
+                <DeliveryDateField value={deliveryDate} onChange={setDeliveryDate} disabled={!canManage} notBefore={b.earliestDelivery} />
                 {canManage && (
-                  <Button onClick={doComplete} disabled={complete.isPending || deliveryDateError(deliveryDate) !== null}>
+                  <Button onClick={doComplete} disabled={complete.isPending || deliveryDateError(deliveryDate, b.earliestDelivery) !== null}>
                     <CheckCircle2 className="h-4 w-4" /> Complete delivery
                   </Button>
                 )}
@@ -140,7 +141,7 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
                     {d.photos.map((p) => (
                       <div key={p.id} className="group relative">
                         <a href={p.url} target="_blank" rel="noreferrer"><img src={p.url} alt={p.label ?? 'delivery'} className="h-20 w-20 rounded-md border object-cover" /></a>
-                        {canManage && <button type="button" onClick={() => removePhoto.mutate({ id: bookingId, photoId: p.id })} className="absolute -right-2 -top-2 rounded-full bg-background p-0.5 shadow"><Trash2 className="h-3.5 w-3.5 text-destructive" /></button>}
+                        {canManage && <button type="button" aria-label="Remove photo" onClick={() => removePhoto.mutate({ id: bookingId, photoId: p.id })} className="absolute -right-2 -top-2 rounded-full bg-background p-0.5 shadow"><Trash2 className="h-3.5 w-3.5 text-destructive" /></button>}
                       </div>
                     ))}
                     {canManage && (

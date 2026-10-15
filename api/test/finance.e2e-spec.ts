@@ -88,14 +88,18 @@ describe('Finance & Expenses (e2e)', () => {
     expect(vendor.body.outstanding).toBe('0');
   });
 
-  it('records income linked to a customer and appends to the timeline', async () => {
+  it('records income linked to a customer; only what the customer paid reaches their timeline', async () => {
     const res = await http().post('/api/v1/income').set('Authorization', auth(accountantToken))
       .send({ source: 'FINANCE_COMMISSION', amount: 250000, paymentMethod: 'CASH', customerId, referenceNumber: `ref${stamp}` }).expect(201);
     incomeId = res.body.id;
     expect(res.body.total).toBe('250000');
+    await http().post('/api/v1/income').set('Authorization', auth(accountantToken))
+      .send({ source: 'ACCESSORIES', amount: 120000, paymentMethod: 'CASH', customerId, referenceNumber: `acc${stamp}` }).expect(201);
     const timeline = await http().get(`/api/v1/customers/${customerId}/timeline`).set('Authorization', auth(ownerToken)).expect(200);
-    const entries = timeline.body.data ?? timeline.body;
-    expect(JSON.stringify(entries)).toContain('Finance commission');
+    const entries = JSON.stringify(timeline.body.data ?? timeline.body);
+    expect(entries).toContain('Accessory purchase');
+    // The dealer's commission from the lender is not something the customer did.
+    expect(entries).not.toContain('Finance commission');
   });
 
   it('records bank transactions', async () => {
@@ -229,5 +233,17 @@ describe('Finance & Expenses (e2e)', () => {
     // Anonymous blocked.
     await http().get('/api/v1/expenses').expect(401);
     await http().delete(`/api/v1/income/${incomeId}`).set('Authorization', auth(accountantToken)).expect(204);
+  });
+
+  // QA M10: an expense can be back-dated, not future-dated.
+  it('records an expense on an earlier day and refuses a future one', async () => {
+    const day = (offset: number): string => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    const create = (expenseDate: string) => http().post('/api/v1/expenses').set('Authorization', auth(ownerToken)).send({ categoryId, amount: 2500, expenseDate, description: `dated ${stamp}` });
+    expect((await create(day(2)).expect(400)).body.message).toBe('The expense date cannot be in the future');
+    const res = (await create(day(-3)).expect(201)).body;
+    expect(res.expenseDate.slice(0, 10)).toBe(day(-3));
+    const created = await http().post('/api/v1/expenses').set('Authorization', auth(ownerToken)).send({ categoryId, amount: 2500, description: `undated ${stamp}` }).expect(201);
+    expect(Math.abs(Date.parse(created.body.expenseDate) - Date.now())).toBeLessThan(60_000);
+    expect((await http().patch(`/api/v1/expenses/${created.body.id}`).set('Authorization', auth(ownerToken)).send({ expenseDate: day(2) })).status).toBe(400);
   });
 });

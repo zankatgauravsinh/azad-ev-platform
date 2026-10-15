@@ -59,9 +59,9 @@ export function SparePartsPage(): JSX.Element {
       ? [{
           key: 'actions', header: '', render: (r: SparePartDto) => (
             <span className="flex items-center justify-end gap-1">
-              {canAdjust && <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => adjust(r.id, 1)}>+</Button>}
-              {canAdjust && <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => adjust(r.id, -1)}>−</Button>}
-              {canManage && <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => remove(r.id)}><Trash2 className="h-4 w-4" /></Button>}
+              {canAdjust && <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Add one ${r.name} to stock`} onClick={() => adjust(r.id, 1)}>+</Button>}
+              {canAdjust && <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`Take one ${r.name} from stock`} onClick={() => adjust(r.id, -1)}>−</Button>}
+              {canManage && <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" aria-label={`Delete ${r.name}`} onClick={() => remove(r.id)}><Trash2 className="h-4 w-4" /></Button>}
             </span>
           ),
         }]

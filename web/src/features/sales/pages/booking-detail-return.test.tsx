@@ -19,6 +19,8 @@ const booking = {
 };
 vi.mock('../hooks', () => ({ useBooking: () => ({ data: booking, isLoading: false }), useSalesInvalidate: () => () => {} }));
 vi.mock('../components/booking-dialogs', () => ({ PaymentDialog: () => null, FinanceDialog: () => null, InsuranceDialog: () => null, ScheduleDeliveryDialog: () => null, CancelBookingDialog: () => null }));
+vi.mock('@/features/rto-invoices/components/rto-invoice-detail-dialog', () => ({ RtoInvoiceDetailDialog: () => null }));
+vi.mock('@/features/rto-invoices/components/rto-invoice-form-dialog', () => ({ RtoInvoiceFormDialog: () => null }));
 vi.mock('../components/booking-form-dialog', () => ({ BookingFormDialog: () => null }));
 vi.mock('../components/vehicle-details-dialog', () => ({ VehicleDetailsDialog: () => null }));
 vi.mock('@/features/customers/components/customer-detail-dialog', () => ({ CustomerDetailDialog: () => null }));

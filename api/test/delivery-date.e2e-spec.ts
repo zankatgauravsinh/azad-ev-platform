@@ -59,8 +59,12 @@ describe('Delivery date (e2e)', () => {
     return (await http().post('/api/v1/auth/login').send({ email, password: 'Test@12345' }).expect(200)).body.accessToken;
   };
 
-  /** A booking that has been invoiced and is ready to hand over. */
-  const invoicedBooking = async (co: Co): Promise<string> => {
+  /**
+   * A booking that has been invoiced and is ready to hand over. A delivery may not be dated before the booking
+   * (or the scooter's purchase), so the booking is back-dated `bookedDaysAgo` days — by default far enough for
+   * every back-dated delivery below. `purchaseDate` sets the scooter's purchase date ('YYYY-MM-DD').
+   */
+  const invoicedBooking = async (co: Co, { bookedDaysAgo = 60, purchaseDate }: { bookedDaysAgo?: number; purchaseDate?: string } = {}): Promise<string> => {
     const n = serial++;
     const unit = await http()
       .post('/api/v1/inventory/units')
@@ -69,6 +73,9 @@ describe('Delivery date (e2e)', () => {
       .expect(201);
     const booking = await http().post('/api/v1/bookings').set('Authorization', auth(co.token)).send({ customerId: co.customerId, unitId: unit.body.id, exShowroom: 1_000_000 }).expect(201);
     await http().post(`/api/v1/bookings/${booking.body.id}/invoice`).set('Authorization', auth(co.token)).expect(201);
+    // Raw SQL: the server sets createdAt, and the suite owns this company's rows.
+    await prisma.$executeRaw`UPDATE "Booking" SET "createdAt" = ${new Date(Date.now() - bookedDaysAgo * 86_400_000)} WHERE id = ${booking.body.id}`;
+    if (purchaseDate) await prisma.$executeRaw`UPDATE "InventoryUnit" SET "purchaseDate" = ${new Date(`${purchaseDate}T00:00:00.000Z`)} WHERE id = ${unit.body.id}`;
     return booking.body.id;
   };
 
@@ -212,10 +219,44 @@ describe('Delivery date (e2e)', () => {
     expect(a.actualDelivery).toEqual(a.deliveredAt);
   });
 
-  it('there is no limit on how far back a delivery may be dated', async () => {
-    const id = await invoicedBooking(A);
-    await viaDelivery(A.token, id, { actualDelivery: '2015-06-15' }).expect(201);
-    expect((await stored(id)).actualDelivery!.toISOString()).toBe('2015-06-15T06:30:00.000Z');
+  // ───────────────────────── Lower bound: booking / purchase date ─────────────────────────
+  const display = (date: string): string => date.split('-').reverse().join('/');
+
+  describe.each(ENTRY_POINTS)('lower bound — %s', (_name, deliver) => {
+    it('a delivery cannot be dated before the booking date', async () => {
+      const id = await invoicedBooking(A, { bookedDaysAgo: 10 });
+      const booked = businessDateOf(new Date(Date.now() - 10 * 86_400_000), 'Asia/Kolkata');
+      for (const date of [shift(booked, -1), '2015-06-15']) {
+        const res = await deliver(A.token, id, { actualDelivery: date }).expect(400);
+        expect(res.body.message).toBe(`Delivery date cannot be before the booking date (${display(booked)})`);
+      }
+      await expectNotDelivered(id);
+      await deliver(A.token, id, { actualDelivery: booked }).expect(201);
+      expect((await stored(id)).actualDelivery).toEqual(noonOf(booked, 'Asia/Kolkata'));
+    });
+
+    it('nor before the purchase date, when the scooter was bought after it was booked', async () => {
+      const purchased = shift(today(A), -5);
+      const id = await invoicedBooking(A, { bookedDaysAgo: 10, purchaseDate: purchased });
+      const res = await deliver(A.token, id, { actualDelivery: shift(purchased, -1) }).expect(400);
+      expect(res.body.message).toBe(`Delivery date cannot be before the scooter's purchase date (${display(purchased)})`);
+      await expectNotDelivered(id);
+      await deliver(A.token, id, { actualDelivery: purchased }).expect(201);
+    });
+
+    it('today is always accepted, even when the purchase date was entered in the future', async () => {
+      const id = await invoicedBooking(A, { bookedDaysAgo: 10, purchaseDate: shift(today(A), 3) });
+      await deliver(A.token, id, { actualDelivery: shift(today(A), -1) }).expect(400);
+      await deliver(A.token, id, { actualDelivery: today(A) }).expect(201);
+    });
+  });
+
+  it('the booking and the delivery detail tell the client the earliest delivery date', async () => {
+    const purchased = shift(today(A), -4);
+    const id = await invoicedBooking(A, { bookedDaysAgo: 10, purchaseDate: purchased });
+    const expected = { date: purchased, label: "scooter's purchase date" };
+    expect((await http().get(`/api/v1/bookings/${id}`).set('Authorization', auth(A.token)).expect(200)).body.earliestDelivery).toEqual(expected);
+    expect((await http().get(`/api/v1/deliveries/${id}`).set('Authorization', auth(A.token)).expect(200)).body.booking.earliestDelivery).toEqual(expected);
   });
 
   // ───────────────────────── What the client gets back ─────────────────────────

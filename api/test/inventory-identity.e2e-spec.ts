@@ -284,7 +284,7 @@ describe('Inventory identity guard (e2e)', () => {
   it("a DELIVERED unit's warranty certificate and delivery note keep their numbers after a refused change", async () => {
     const u = await newUnit(A);
     const bookingId = await book(A, u.id, true);
-    const warranty = (await http().post('/api/v1/warranties').set('Authorization', auth(A.owner)).send({ unitId: u.id, customerId: A.customerId, periodMonths: 12 }).expect(201)).body.warranty;
+    const warranty = await prisma.warranty.findFirstOrThrow({ where: { unitId: u.id } }); // issued on delivery
     const pdf = async (url: string) => readPdfText((await http().get(url).set('Authorization', auth(A.owner)).buffer().parse(binaryParser).expect(200)).body as Buffer);
     const certBefore = (await pdf(`/api/v1/warranties/${warranty.id}/certificate.pdf`)).strings;
     const noteBefore = (await pdf(`/api/v1/deliveries/${bookingId}/note.pdf`)).strings;
@@ -301,7 +301,7 @@ describe('Inventory identity guard (e2e)', () => {
       const u = await newUnit(A);
       const bookingId = await book(A, u.id, true);
       const post = (url: string, body: object) => http().post(url).set('Authorization', auth(A.owner)).send(body);
-      const warranty = (await post('/api/v1/warranties', { unitId: u.id, customerId: A.customerId, periodMonths: 24 }).expect(201)).body.warranty;
+      const warranty = await prisma.warranty.findFirstOrThrow({ where: { unitId: u.id } }); // issued on delivery
       const amc = (await post('/api/v1/amc', { unitId: u.id, customerId: A.customerId, planType: 'GOLD', months: 12, visitsIncluded: 3, price: 300000 }).expect(201)).body;
       const job = (await post('/api/v1/service/jobs', { customerId: A.customerId, unitId: u.id, type: 'PAID', complaints: [{ description: 'Noise', priority: 'LOW' }] }).expect(201)).body;
       const get = (url: string) => http().get(url).set('Authorization', auth(A.owner)).expect(200);

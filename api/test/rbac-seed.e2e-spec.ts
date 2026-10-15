@@ -2,45 +2,47 @@ import { INestApplication } from '@nestjs/common';
 import { SYSTEM_ROLES, SYSTEM_ROLE_PERMISSIONS, Role } from '@azad/shared';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 /**
  * Group 2 — proves the idempotent RBAC seed + tenant-safe User.roleId backfill. Authorization is
  * NOT switched to RBAC here; the existing authorization e2e suite proves behavior is unchanged.
+ * Everything runs on two throwaway companies with the seed scoped to them (companyIds), so no other
+ * company — the seeded dev company included — is ever written; the unscoped default is unit-tested.
  */
 describe('RBAC seed & backfill (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  const email = (process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in').toLowerCase();
+  let A: TestCompany;
+  let B: TestCompany;
   const stamp = Date.now().toString().slice(-8);
   let companyAId = '';
   const EXPECTED_COUNTS: Record<string, number> = {
-    OWNER: 73, MANAGER: 70, SALES_EXECUTIVE: 27, TECHNICIAN: 15, ACCOUNTANT: 10,
+    OWNER: 76, MANAGER: 72, SALES_EXECUTIVE: 27, TECHNICIAN: 15, ACCOUNTANT: 11,
   };
-  const cleanup = { companyBId: '', userBId: '' };
+  const seedA = () => seedRbac(prisma, { companyIds: [companyAId] });
 
   beforeAll(async () => {
     app = await createE2eApp();
     prisma = app.get(PrismaService);
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email } });
-    companyAId = owner.companyId;
+    A = await createTestCompany(app, 'RbacA');
+    companyAId = A.id;
   }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    if (cleanup.userBId) await prisma.user.deleteMany({ where: { id: cleanup.userBId } });
-    if (cleanup.companyBId) {
-      await prisma.appRole.deleteMany({ where: { companyId: cleanup.companyBId } }); // cascades RolePermission
-      await prisma.company.deleteMany({ where: { id: cleanup.companyBId } });
-    }
+    await purgeTestCompany(prisma, A?.id); // users, roles (RolePermission cascades) and the company
+    await purgeTestCompany(prisma, B?.id);
     await app.close();
   }, E2E_HOOK_TIMEOUT);
 
-  it('seeds the 73-permission global catalog and is idempotent', async () => {
-    const r1 = await seedRbac(prisma);
-    expect(r1.permissions).toBe(73);
-    expect(await prisma.permission.count()).toBe(73);
-    const r2 = await seedRbac(prisma); // second run
-    expect(await prisma.permission.count()).toBe(73); // no duplicates
+  it('seeds the 76-permission global catalog and is idempotent', async () => {
+    const r1 = await seedA();
+    expect(r1.permissions).toBe(76);
+    expect(r1.companies).toBe(1);
+    expect(await prisma.permission.count()).toBe(76);
+    const r2 = await seedA(); // second run
+    expect(await prisma.permission.count()).toBe(76); // no duplicates
     expect(r2.usersBackfilled).toBe(0); // existing users already backfilled
   });
 
@@ -50,7 +52,7 @@ describe('RBAC seed & backfill (e2e)', () => {
       users: await prisma.user.count(),
       customers: await prisma.customer.count(),
     };
-    await seedRbac(prisma); // a pure re-run: only RBAC rows + roleId backfill, never business data
+    await seedA(); // a pure re-run: only RBAC rows + roleId backfill, never business data
     expect(await prisma.company.count()).toBe(before.companies);
     expect(await prisma.user.count()).toBe(before.users);
     expect(await prisma.customer.count()).toBe(before.customers);
@@ -115,14 +117,14 @@ describe('RBAC seed & backfill (e2e)', () => {
   });
 
   it('backfills the existing owner to the company OWNER role without changing the enum', async () => {
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email } });
+    const owner = await prisma.user.findUniqueOrThrow({ where: { id: A.user().id } });
     const ownerRole = await prisma.appRole.findFirstOrThrow({ where: { companyId: companyAId, key: 'OWNER' } });
     expect(owner.roleId).toBe(ownerRole.id);
     expect(owner.role).toBe('OWNER'); // legacy enum untouched
   });
 
   it('backfills only NULL roleId and never overwrites a non-null (system or custom) assignment — F1 regression', async () => {
-    await seedRbac(prisma); // ensure company A system roles exist
+    await seedA(); // ensure company A system roles exist
     const managerRole = await prisma.appRole.findFirstOrThrow({ where: { companyId: companyAId, key: 'MANAGER' } });
 
     // (A) legacy user with roleId NULL → should be backfilled to the enum's system role.
@@ -142,7 +144,7 @@ describe('RBAC seed & backfill (e2e)', () => {
     });
 
     try {
-      await seedRbac(prisma); // a deploy re-run
+      await seedA(); // a deploy re-run
 
       // (A) NULL → matching system role.
       expect((await prisma.user.findUniqueOrThrow({ where: { id: legacyNull.id } })).roleId).toBe(managerRole.id);
@@ -164,15 +166,18 @@ describe('RBAC seed & backfill (e2e)', () => {
   });
 
   it('is tenant-safe: a second company gets its OWN roles, never company A’s', async () => {
-    const companyB = await prisma.company.create({ data: { name: `RBAC B ${stamp}`, slug: `rbac-b-${stamp}` } });
-    cleanup.companyBId = companyB.id;
+    B = await createTestCompany(app, 'RbacB');
+    const companyB = { id: B.id };
     const userB = await prisma.user.create({
-      data: { companyId: companyB.id, name: 'B Manager', email: `rbac.b.${stamp}@e2e.test`, role: 'MANAGER', passwordHash: 'seed-test-hash', isActive: true },
+      data: { companyId: companyB.id, name: 'B Manager', email: `rbac.b.${stamp}.${B.tag}@e2e.test`, role: 'MANAGER', passwordHash: 'seed-test-hash', isActive: true },
     });
-    cleanup.userBId = userB.id;
+    const aRolesBefore = await prisma.appRole.findMany({ where: { companyId: companyAId }, orderBy: { id: 'asc' } });
 
-    const res = await seedRbac(prisma);
-    expect(res.usersBackfilled).toBeGreaterThanOrEqual(1); // at least userB
+    const res = await seedRbac(prisma, { companyIds: [companyB.id] }); // seed company B ONLY
+    expect(res.companies).toBe(1);
+    expect(res.usersBackfilled).toBe(1); // userB
+    // Scoping: company A's role rows were not written at all (updatedAt unchanged).
+    expect(await prisma.appRole.findMany({ where: { companyId: companyAId }, orderBy: { id: 'asc' } })).toEqual(aRolesBefore);
 
     const bRoles = await prisma.appRole.findMany({ where: { companyId: companyB.id } });
     expect(bRoles.length).toBe(5);
@@ -182,7 +187,7 @@ describe('RBAC seed & backfill (e2e)', () => {
     expect(bManager.companyId).toBe(companyB.id); // not company A
 
     // Company A owner assignment is unaffected by seeding company B.
-    const ownerA = await prisma.user.findUniqueOrThrow({ where: { email } });
+    const ownerA = await prisma.user.findUniqueOrThrow({ where: { id: A.user().id } });
     const aOwnerRole = await prisma.appRole.findFirstOrThrow({ where: { companyId: companyAId, key: 'OWNER' } });
     expect(ownerA.roleId).toBe(aOwnerRole.id);
     // userB must NOT have been assigned any company-A role.

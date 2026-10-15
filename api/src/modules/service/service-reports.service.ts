@@ -56,6 +56,10 @@ export class ServiceReportsService {
     const totalMap = new Map(totals.map((t) => [t.technicianId, t._count._all]));
     const delMap = new Map(delivered.map((d) => [d.technicianId, d]));
     const rateMap = new Map(ratings.map((r) => [r.technicianId, r._avg.feedbackRating]));
+    // Owners and managers can be assigned jobs too: anyone who has had a job belongs in the report.
+    const listed = new Set(techs.map((t) => t.id));
+    const others = [...totalMap.keys()].filter((id): id is string => !!id && !listed.has(id));
+    if (others.length) techs.push(...(await this.prisma.user.findMany({ where: { id: { in: others } }, select: { id: true, name: true } })));
     return techs.map((t) => ({
       technicianId: t.id,
       name: t.name,

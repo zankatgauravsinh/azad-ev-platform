@@ -16,6 +16,7 @@ import type {
   ServiceJobDto,
   ServicePaymentInput,
   ServiceReports,
+  ServiceVehicleOption,
   SparePartDto,
   UpdateSparePartInput,
 } from '@azad/shared';
@@ -30,9 +31,10 @@ export const serviceApi = {
   // Job cards
   list: async (q: Partial<ListServiceJobsQuery>): Promise<Paginated<ServiceJobDto>> => (await apiClient.get('/service/jobs', { params: params(q) })).data,
   technicians: async (): Promise<{ id: string; name: string }[]> => (await apiClient.get('/service/jobs/technicians')).data,
+  customerVehicles: async (customerId: string): Promise<ServiceVehicleOption[]> => (await apiClient.get('/service/jobs/customer-vehicles', { params: { customerId } })).data,
   get: async (id: string): Promise<ServiceJobDto> => (await apiClient.get(`/service/jobs/${id}`)).data,
   create: async (input: CreateServiceJobInput): Promise<ServiceJobDto> => (await apiClient.post('/service/jobs', input)).data,
-  changeStatus: async (id: string, status: string): Promise<ServiceJobDto> => (await apiClient.post(`/service/jobs/${id}/status`, { status })).data,
+  changeStatus: async (id: string, status: string, reason?: string): Promise<ServiceJobDto> => (await apiClient.post(`/service/jobs/${id}/status`, { status, reason })).data,
   assign: async (id: string, input: AssignTechnicianInput): Promise<ServiceJobDto> => (await apiClient.post(`/service/jobs/${id}/technician`, input)).data,
   addComplaint: async (id: string, input: AddComplaintInput): Promise<ServiceJobDto> => (await apiClient.post(`/service/jobs/${id}/complaints`, input)).data,
   resolveComplaint: async (id: string, complaintId: string): Promise<ServiceJobDto> => (await apiClient.post(`/service/jobs/${id}/complaints/${complaintId}/resolve`, {})).data,

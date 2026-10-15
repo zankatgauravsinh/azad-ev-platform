@@ -1,9 +1,8 @@
 import { INestApplication } from '@nestjs/common';
-import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
-import { seedRbac } from '../src/common/rbac/rbac-seed';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 /**
  * Group 3B — HTTP role management (OWNER-only). Proves CRUD, permission replacement, system-role
@@ -13,13 +12,11 @@ import { seedRbac } from '../src/common/rbac/rbac-seed';
 describe('Role management (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  const email = (process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in').toLowerCase();
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
+  let A: TestCompany;
+  let B: TestCompany;
   const stamp = Date.now().toString().slice(-8);
   const http = () => request(app.getHttpServer());
   const auth = (t: string): string => `Bearer ${t}`;
-  const login = async (mail: string, pass: string): Promise<string> =>
-    (await http().post('/api/v1/auth/login').send({ email: mail, password: pass }).expect(200)).body.accessToken;
 
   let ownerToken = '';
   let managerToken = '';
@@ -35,34 +32,27 @@ describe('Role management (e2e)', () => {
     app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    await seedRbac(prisma); // ensure system roles exist for the seeded company (idempotent)
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email } });
-    companyAId = owner.companyId;
-    ownerToken = await login(email, password);
-
-    const hash = await bcrypt.hash('Test@12345', 12);
-    const mgr = await prisma.user.create({
-      data: { companyId: companyAId, name: 'Roles Mgr', email: `roles.mgr.${stamp}@e2e.test`, role: 'MANAGER', passwordHash: hash, isActive: true },
-    });
-    createdUserIds.push(mgr.id);
-    managerToken = await login(mgr.email, 'Test@12345');
+    // Company A: a throwaway company with an OWNER and a MANAGER (system roles seeded for it alone).
+    A = await createTestCompany(app, 'Roles', { roles: ['MANAGER'] });
+    companyAId = A.id;
+    ownerToken = A.user().token;
+    managerToken = A.user('MANAGER').token;
+    createdUserIds.push(A.user('MANAGER').id); // the user a custom role is temporarily assigned to
 
     const aRoles = await prisma.appRole.findMany({ where: { companyId: companyAId } });
     ownerRoleId = aRoles.find((r) => r.key === 'OWNER')!.id;
     managerRoleId = aRoles.find((r) => r.key === 'MANAGER')!.id;
 
-    // A second company with one custom role, for tenant-isolation checks.
-    const companyB = await prisma.company.create({ data: { name: `Roles B ${stamp}`, slug: `roles-b-${stamp}` } });
-    companyBId = companyB.id;
-    const bRole = await prisma.appRole.create({ data: { companyId: companyB.id, name: 'B Custom', isSystem: false, isProtected: false } });
+    // A second throwaway company with one custom role, for tenant-isolation checks.
+    B = await createTestCompany(app, 'RolesB');
+    companyBId = B.id;
+    const bRole = await prisma.appRole.create({ data: { companyId: companyBId, name: 'B Custom', isSystem: false, isProtected: false } });
     bRoleId = bRole.id;
   }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } }); // frees roleId references
-    await prisma.appRole.deleteMany({ where: { id: { in: createdRoleIds } } });
-    await prisma.appRole.deleteMany({ where: { companyId: companyBId } });
-    await prisma.company.deleteMany({ where: { id: companyBId } });
+    await purgeTestCompany(prisma, A?.id); // its users, system and custom roles go with it
+    await purgeTestCompany(prisma, B?.id);
     await app.close();
   }, E2E_HOOK_TIMEOUT);
 
@@ -78,7 +68,7 @@ describe('Role management (e2e)', () => {
     const res = await http().get('/api/v1/roles?pageSize=100').set('Authorization', auth(ownerToken)).expect(200);
     const mgr = res.body.data.find((r: { id: string }) => r.id === managerRoleId);
     expect(mgr.isSystem).toBe(true);
-    expect(mgr.permissionCount).toBe(70);
+    expect(mgr.permissionCount).toBe(72);
   });
 
   // ── create / get / update / permissions ──
@@ -142,7 +132,7 @@ describe('Role management (e2e)', () => {
     const dup = await http().post(`/api/v1/roles/${managerRoleId}/duplicate`).set('Authorization', auth(ownerToken)).send({ name: `Branch Manager ${stamp}` }).expect(201);
     createdRoleIds.push(dup.body.id);
     expect(dup.body.isSystem).toBe(false);
-    expect(dup.body.permissionKeys.length).toBe(70); // copied MANAGER permissions
+    expect(dup.body.permissionKeys.length).toBe(72); // copied MANAGER permissions
   });
 
   // ── delete + name reuse ──

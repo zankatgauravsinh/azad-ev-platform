@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, Banknote, Bike, CalendarClock, CheckCircle2, Eye, FileText, Pencil, Shield, Truck, Undo2, User } from 'lucide-react';
+import { ArrowLeft, Ban, Banknote, Bike, CalendarClock, CheckCircle2, Eye, FileBadge, FileText, Pencil, Shield, Truck, Undo2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookingStatus, PaymentStatus } from '@azad/shared';
 import { useCan } from '@/features/auth/auth-context';
@@ -17,6 +17,9 @@ import { BookingStatusBadge, DeliveryStatusBadge, FinanceStatusBadge, InsuranceS
 import { CancelBookingDialog, FinanceDialog, InsuranceDialog, PaymentDialog, ScheduleDeliveryDialog } from '../components/booking-dialogs';
 import { BookingFormDialog } from '../components/booking-form-dialog';
 import { DeliverDialog } from '../components/deliver-dialog';
+import { ConfirmDialog } from '@/components/common/confirm-dialog';
+import { RtoInvoiceDetailDialog } from '@/features/rto-invoices/components/rto-invoice-detail-dialog';
+import { RtoInvoiceFormDialog } from '@/features/rto-invoices/components/rto-invoice-form-dialog';
 import { DocumentActions } from '@/features/delivery/components/document-actions';
 import { VehicleDetailsDialog } from '../components/vehicle-details-dialog';
 import { CustomerDetailDialog } from '@/features/customers/components/customer-detail-dialog';
@@ -31,11 +34,16 @@ export function BookingDetailPage(): JSX.Element {
   const canUpdate = useCan('bookings.update');
   const canPayment = useCan('bookings.payment');
   const canInvoice = useCan('bookings.invoice');
+  const canViewRto = useCan('rto.view');
+  const canGenerateRto = useCan('rto.generate');
   const canCancel = useCan('bookings.cancel');
   const canRequestReturn = useCan('returns.create'); // POST /returns (Batch 6)
   const { data: b, isLoading } = useBooking(id);
   const [dialog, setDialog] = useState<'payment' | 'finance' | 'insurance' | 'schedule' | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [rtoId, setRtoId] = useState<string | null>(null);
+  const [rtoFormOpen, setRtoFormOpen] = useState(false);
   const [deliverOpen, setDeliverOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [vehicleOpen, setVehicleOpen] = useState(false);
@@ -84,8 +92,9 @@ export function BookingDetailPage(): JSX.Element {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight">{b.code}</h1>
             <BookingStatusBadge status={b.status} />
-            <DeliveryStatusBadge hasSale={Boolean(b.sale)} delivered={Boolean(b.actualDelivery)} />
-            <PaymentStatusBadge status={b.paymentSummary.status} />
+            {/* A cancelled booking has no delivery or payment to chase: its status badge says it all. */}
+            {b.status !== BookingStatus.CANCELLED && <DeliveryStatusBadge hasSale={Boolean(b.sale)} delivered={Boolean(b.actualDelivery)} />}
+            {b.status !== BookingStatus.CANCELLED && <PaymentStatusBadge status={b.paymentSummary.status} />}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             {b.unit.variant.model.name} {b.unit.variant.name} · {b.unit.variant.colour} · <span className="font-mono">{b.unit.vin}</span>
@@ -98,9 +107,9 @@ export function BookingDetailPage(): JSX.Element {
             {canPayment && !paid && <Button onClick={() => setDialog('payment')}><Banknote className="h-4 w-4" /> Take payment</Button>}
             {canUpdate && <Button variant="outline" onClick={() => setDialog('finance')}><Banknote className="h-4 w-4" /> Finance</Button>}
             {canUpdate && <Button variant="outline" onClick={() => setDialog('insurance')}><Shield className="h-4 w-4" /> Insurance</Button>}
-            {canUpdate && <Button variant="outline" onClick={() => setDialog('schedule')}><CalendarClock className="h-4 w-4" /> Schedule</Button>}
+            {canUpdate && !b.actualDelivery && <Button variant="outline" onClick={() => setDialog('schedule')}><CalendarClock className="h-4 w-4" /> Schedule</Button>}
             {!b.sale ? (
-              canInvoice && <Button variant="outline" onClick={() => run(() => salesApi.generateInvoice(b.id), 'Invoice generated')} disabled={busy}><FileText className="h-4 w-4" /> Generate invoice</Button>
+              canInvoice && <Button variant="outline" onClick={() => setInvoiceOpen(true)} disabled={busy}><FileText className="h-4 w-4" /> Generate invoice</Button>
             ) : (
               documents('default')
             )}
@@ -161,6 +170,20 @@ export function BookingDetailPage(): JSX.Element {
                 <div className="mt-2">{documents('sm')}</div>
               </div>
             )}
+            {(b.rtoInvoice ? canViewRto : canGenerateRto && b.status !== BookingStatus.CANCELLED) && (
+              <div>
+                <p className="mb-1 flex items-center gap-2 text-sm font-semibold"><FileBadge className="h-4 w-4" /> RTO invoice</p>
+                {b.rtoInvoice ? (
+                  <button type="button" onClick={() => setRtoId(b.rtoInvoice!.id)} aria-label={`Open RTO invoice ${b.rtoInvoice.invoiceNumber}`}
+                    className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <span className="font-mono">{b.rtoInvoice.invoiceNumber}{b.rtoInvoice.revision > 1 ? <span className="ml-1 font-sans text-xs text-muted-foreground">rev {b.rtoInvoice.revision}</span> : null}</span>
+                    <span className="font-semibold tabular-nums">{formatPaise(b.rtoInvoice.total)}</span>
+                  </button>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => setRtoFormOpen(true)}><FileBadge className="h-4 w-4" /> Generate RTO invoice</Button>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -211,7 +234,17 @@ export function BookingDetailPage(): JSX.Element {
       {dialog === 'insurance' && <InsuranceDialog open onOpenChange={() => setDialog(null)} booking={b} />}
       {dialog === 'schedule' && <ScheduleDeliveryDialog open onOpenChange={() => setDialog(null)} booking={b} />}
       <DeliverDialog open={deliverOpen} onOpenChange={setDeliverOpen} booking={b} />
+      <ConfirmDialog
+        open={invoiceOpen}
+        onOpenChange={setInvoiceOpen}
+        title={`Generate the invoice for ${b.code}?`}
+        description="The invoice number is permanent, and an invoiced booking can no longer be cancelled — any later correction goes through a vehicle return."
+        confirmLabel="Generate invoice"
+        onConfirm={() => run(() => salesApi.generateInvoice(b.id), 'Invoice generated')}
+      />
       <CustomerDetailDialog id={viewCustomer ? b.customer.id : null} onOpenChange={setViewCustomer} />
+      <RtoInvoiceDetailDialog id={rtoId} onOpenChange={(o) => { if (!o) setRtoId(null); }} />
+      {canGenerateRto && !b.rtoInvoice && <RtoInvoiceFormDialog open={rtoFormOpen} onOpenChange={setRtoFormOpen} preset={{ customerId: b.customer.id, bookingId: b.id }} onDone={(id) => setRtoId(id)} />}
       {b.sale && (
         <CreateReturnDialog
           open={returnOpen}

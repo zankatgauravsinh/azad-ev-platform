@@ -27,7 +27,7 @@ export const SYSTEM_ROLES: readonly SystemRoleDef[] = [
 ];
 
 /** OWNER-only capabilities — the only keys MANAGER does NOT receive. */
-const OWNER_ONLY = new Set<string>(['settings.manage', 'staff.manage', 'roles.manage']);
+const OWNER_ONLY = new Set<string>(['settings.manage', 'staff.manage', 'roles.manage', 'rto.edit']);
 
 // SALES_EXECUTIVE: full sales cycle + read-only Service + search/notifications (current behavior).
 const SALES_EXECUTIVE_PERMISSIONS: readonly string[] = [
@@ -55,9 +55,10 @@ const TECHNICIAN_PERMISSIONS: readonly string[] = [
   'settings.branding',
 ];
 
-// ACCOUNTANT: finance family only. No notifications/search/dashboard/inventory/returns/staff.
+// ACCOUNTANT: finance family (+ read-only RTO invoices). No notifications/search/dashboard/inventory/returns/staff.
 const ACCOUNTANT_PERMISSIONS: readonly string[] = [
   'finance.view', 'finance.manage',
+  'rto.view',
   'expenses.view', 'expenses.manage',
   'bank.view', 'bank.manage',
   'income.view', 'income.manage',

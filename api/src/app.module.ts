@@ -24,6 +24,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { WarrantyModule } from './modules/warranty/warranty.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { DeliveryModule } from './modules/delivery/delivery.module';
+import { RtoInvoicesModule } from './modules/rto-invoices/rto-invoices.module';
 import { CompanySettingsModule } from './modules/settings/company-settings.module';
 import { PdfBrandModule } from './common/pdf/pdf-brand.module';
 import { ReturnsModule } from './modules/returns/returns.module';
@@ -61,6 +62,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     WarrantyModule,
     FinanceModule,
     DeliveryModule,
+    RtoInvoicesModule,
     CompanySettingsModule,
     PdfBrandModule,
     ReturnsModule,

@@ -17,6 +17,7 @@
     "db:down": "docker compose down",
     "prisma:migrate": "npm run prisma:migrate --workspace api",
     "prisma:seed": "npm run prisma:seed --workspace api",
+    "seed:demo": "npm run seed:demo --workspace api",
     "prisma:studio": "npm run prisma:studio --workspace api",
     "lint": "npm run lint --workspace api && npm run lint --workspace web",
     "test": "npm run test --workspace api"

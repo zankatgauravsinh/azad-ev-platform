@@ -20,7 +20,7 @@ export function Sidebar({ role, onNavigate }: { role: Role; onNavigate?: () => v
     <div className="flex h-full flex-col gap-2">
       <div className="flex items-center gap-2 px-4 py-4">
         {logoSrc ? (
-          <img src={logoSrc} alt="Logo" className="h-8 w-8 rounded object-contain" />
+          <img src={logoSrc} alt="Logo" className="h-8 w-8 rounded object-contain dark:bg-white dark:p-0.5" />
         ) : (
           <BrandMark className="h-8 w-8" />
         )}

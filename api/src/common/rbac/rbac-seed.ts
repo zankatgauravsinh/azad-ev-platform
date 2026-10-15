@@ -19,8 +19,11 @@ export interface RbacSeedResult {
  *
  * Does NOT change authorization behavior: User.role / @Roles / RolesGuard remain authoritative.
  * Safe to run repeatedly — a second run creates nothing new and backfills zero users.
+ *
+ * Steps 2–4 run for every company, or only for `options.companyIds` when given (the e2e suites seed
+ * just their own throwaway companies and never touch any other company's rows). Step 1 is global.
  */
-export async function seedRbac(prisma: PrismaClient): Promise<RbacSeedResult> {
+export async function seedRbac(prisma: PrismaClient, options: { companyIds?: string[] } = {}): Promise<RbacSeedResult> {
   // 1. Permission catalog (global, system-defined).
   for (let i = 0; i < PERMISSIONS.length; i++) {
     const p = PERMISSIONS[i]!;
@@ -31,7 +34,10 @@ export async function seedRbac(prisma: PrismaClient): Promise<RbacSeedResult> {
     (await prisma.permission.findMany({ select: { id: true, key: true } })).map((p) => [p.key, p.id]),
   );
 
-  const companies = await prisma.company.findMany({ select: { id: true } });
+  const companies = await prisma.company.findMany({
+    where: options.companyIds ? { id: { in: options.companyIds } } : undefined,
+    select: { id: true },
+  });
   let rolesUpserted = 0;
   let rolePermissions = 0;
   let usersBackfilled = 0;

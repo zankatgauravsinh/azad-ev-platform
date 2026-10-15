@@ -3,6 +3,7 @@ import {
   PERMISSION_KEYS,
   PERMISSION_KEY_SET,
   PERMISSION_MODULES,
+  SYSTEM_ROLE_PERMISSIONS,
   isPermissionKey,
   type PermissionModule,
 } from '@azad/shared';
@@ -26,8 +27,18 @@ describe('permission catalog', () => {
   });
 
   it('matches the approved catalog size (regression lock)', () => {
-    expect(PERMISSIONS.length).toBe(73);
-    expect(PERMISSION_MODULES.length).toBe(25);
+    expect(PERMISSIONS.length).toBe(76); // + rto.view / rto.generate / rto.edit (RTO invoice module)
+    expect(PERMISSION_MODULES.length).toBe(26);
+  });
+
+  it('RTO invoices: Owner and Manager generate, only the Owner edits, the Accountant views', () => {
+    expect(PERMISSIONS.filter((p) => p.module === 'rto').map((p) => p.key)).toEqual(['rto.view', 'rto.generate', 'rto.edit']);
+    expect(SYSTEM_ROLE_PERMISSIONS.OWNER).toEqual(expect.arrayContaining(['rto.view', 'rto.generate', 'rto.edit']));
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGER).toEqual(expect.arrayContaining(['rto.view', 'rto.generate']));
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGER).not.toContain('rto.edit');
+    expect(SYSTEM_ROLE_PERMISSIONS.ACCOUNTANT).toContain('rto.view');
+    expect(SYSTEM_ROLE_PERMISSIONS.ACCOUNTANT).not.toContain('rto.generate');
+    for (const role of ['SALES_EXECUTIVE', 'TECHNICIAN'] as const) expect(SYSTEM_ROLE_PERMISSIONS[role].filter((k) => k.startsWith('rto.'))).toEqual([]);
   });
 
   it('every module declares at least one permission', () => {

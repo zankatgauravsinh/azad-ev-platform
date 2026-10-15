@@ -6,8 +6,11 @@ import { businessDateOf, noonOf, type BusinessDate } from '../../common/utils/bu
  * reach it through BookingsService.markDelivered().
  *
  * INTERPRETATION
- *  The delivery date is a business calendar date in the company's time zone. It may be today or any
- *  past date; a future date is refused. No limit is placed on how far back it may be.
+ *  The delivery date is a business calendar date in the company's time zone. It may be today or a past
+ *  date; a future date is refused. A past date may not be earlier than `notBefore` — the later of the
+ *  booking date and the scooter's purchase date (a vehicle cannot be handed over before it was booked or
+ *  bought, and the warranty starts on this date). Today is always allowed, so a stray future purchase
+ *  date never blocks a real handover.
  *
  * STORAGE (Booking.actualDelivery and Delivery.deliveredAt are DateTime columns — unchanged)
  *  - today, or nothing sent → the current instant, exactly as before: the real handover time.
@@ -33,13 +36,40 @@ export class FutureDeliveryDateError extends Error {
   }
 }
 
-export function resolveDeliveryDate(input: string | Date | null | undefined, now: Date, timeZone: string): ResolvedDeliveryDate {
+export class EarlyDeliveryDateError extends Error {
+  constructor(readonly businessDate: BusinessDate, readonly earliest: DeliveryLowerBound) {
+    super(`Delivery date cannot be before the ${earliest.label} (${displayDate(earliest.date)})`);
+    this.name = 'EarlyDeliveryDateError';
+  }
+}
+
+/** The earliest permitted delivery date and what it is (e.g. "booking date"). */
+export interface DeliveryLowerBound {
+  date: BusinessDate;
+  label: string;
+}
+
+/**
+ * A booking's `notBefore`: the later of the day it was booked (in the company's time zone) and the scooter's
+ * purchase date (a calendar date, stored at midnight UTC).
+ */
+export function deliveryLowerBound(booking: { createdAt: Date; unit: { purchaseDate: Date | null } }, timeZone: string): DeliveryLowerBound {
+  const booked: DeliveryLowerBound = { date: businessDateOf(booking.createdAt, timeZone), label: 'booking date' };
+  const purchase = booking.unit.purchaseDate?.toISOString().slice(0, 10);
+  return purchase && purchase > booked.date ? { date: purchase, label: "scooter's purchase date" } : booked;
+}
+
+/** 'YYYY-MM-DD' → 'DD/MM/YYYY', the format the app shows dates in. */
+const displayDate = (d: BusinessDate): string => d.split('-').reverse().join('/');
+
+export function resolveDeliveryDate(input: string | Date | null | undefined, now: Date, timeZone: string, notBefore?: DeliveryLowerBound): ResolvedDeliveryDate {
   const today = businessDateOf(now, timeZone);
   if (input === null || input === undefined) return { businessDate: today, deliveredAt: now };
 
   const businessDate = typeof input === 'string' ? input : businessDateOf(input, timeZone);
   // 'YYYY-MM-DD' strings order chronologically.
   if (businessDate > today) throw new FutureDeliveryDateError(businessDate, today);
+  if (notBefore && businessDate < notBefore.date && businessDate < today) throw new EarlyDeliveryDateError(businessDate, notBefore);
 
   if (typeof input !== 'string') return { businessDate, deliveredAt: input };
   return { businessDate, deliveredAt: businessDate === today ? now : noonOf(businessDate, timeZone) };

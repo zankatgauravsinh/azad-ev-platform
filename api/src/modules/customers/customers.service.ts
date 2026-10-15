@@ -87,7 +87,7 @@ export class CustomersService {
 
   async create(dto: CreateCustomerInput, userId: string) {
     await this.assertPhoneAvailable(dto.phone);
-    const customer = await this.repo.create({
+    const customer = await this.phoneConflict(dto.phone, () => this.repo.create({
       name: dto.name,
       phone: dto.phone,
       altPhone: dto.altPhone ?? null,
@@ -98,6 +98,11 @@ export class CustomersService {
       pin: dto.pin ?? null,
       gstStateCode: dto.gstStateCode ?? null,
       village: dto.village ?? null,
+      tehsil: dto.tehsil ?? null,
+      district: dto.district ?? null,
+      aadhaarNumber: dto.aadhaarNumber ?? null,
+      panNumber: dto.panNumber ?? null,
+      gstin: dto.gstin ?? null,
       occupation: dto.occupation ?? null,
       dateOfBirth: dto.dateOfBirth ?? null,
       gender: dto.gender ?? null,
@@ -109,7 +114,7 @@ export class CustomersService {
       assignedToId: dto.assignedToId ?? null,
       createdById: userId,
       updatedById: userId,
-    });
+    }));
     await this.timeline.record({
       customerId: customer.id,
       type: CustomerEventType.LEAD_CREATED,
@@ -132,7 +137,7 @@ export class CustomersService {
     if (dto.phone && dto.phone !== existing.phone) {
       await this.assertPhoneAvailable(dto.phone);
     }
-    const customer = await this.repo.update(id, { ...this.toWriteData(dto), updatedById: userId });
+    const customer = await this.phoneConflict(dto.phone ?? existing.phone, () => this.repo.update(id, { ...this.toWriteData(dto), updatedById: userId }));
     await this.activityLog.record({
       actorId: userId,
       action: ActivityAction.UPDATE,
@@ -338,6 +343,21 @@ export class CustomersService {
     if (found) throw new ConflictException(`A customer with mobile ${phone} already exists`);
   }
 
+  /**
+   * The database keeps a mobile number unique within the company, deleted customers included (the check above
+   * sees only live ones) — and catches two saves racing. Either way, report it as a duplicate mobile.
+   */
+  private async phoneConflict<T>(phone: string, write: () => Promise<T>): Promise<T> {
+    try {
+      return await write();
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002' && String(e.meta?.target ?? '').includes('phone')) {
+        throw new ConflictException(`A customer with mobile ${phone} already exists (it may belong to a deleted customer)`);
+      }
+      throw e;
+    }
+  }
+
   private toWriteData(dto: Partial<CreateCustomerInput>): Prisma.CustomerUncheckedUpdateInput {
     const data: Prisma.CustomerUncheckedUpdateInput = {};
     const assign = <K extends keyof CreateCustomerInput>(key: K): void => {
@@ -355,6 +375,11 @@ export class CustomersService {
         'pin',
         'gstStateCode',
         'village',
+        'tehsil',
+        'district',
+        'aadhaarNumber',
+        'panNumber',
+        'gstin',
         'occupation',
         'dateOfBirth',
         'gender',

@@ -2,9 +2,9 @@ import { INestApplication } from '@nestjs/common';
 import { PERMISSION_KEYS, SYSTEM_ROLE_PERMISSIONS, Role } from '@azad/shared';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 import { PermissionResolver } from '../src/common/rbac/permission-resolver.service';
 import { RoleService, type RoleActor } from '../src/modules/roles/role.service';
-import { seedRbac } from '../src/common/rbac/rbac-seed';
 
 /**
  * Group 4 parity — the PermissionResolver (and the seeded data) reproduce the exact capability of
@@ -16,13 +16,11 @@ describe('Permission resolver parity (e2e)', () => {
   let prisma: PrismaService;
   let resolver: PermissionResolver;
   let roleService: RoleService;
-  const email = (process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in').toLowerCase();
+  let co: TestCompany;
   const stamp = Date.now().toString().slice(-8);
   let companyAId = '';
   let ownerId = '';
   let ownerActor: RoleActor;
-  const createdUserIds: string[] = [];
-  const createdRoleIds: string[] = [];
   const roleUserIds: Record<string, string> = {}; // enum role → a user's id (backfilled)
 
   beforeAll(async () => {
@@ -31,25 +29,16 @@ describe('Permission resolver parity (e2e)', () => {
     resolver = app.get(PermissionResolver);
     roleService = app.get(RoleService);
 
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email } });
-    companyAId = owner.companyId;
-    ownerId = owner.id;
-    ownerActor = { id: owner.id, role: Role.OWNER, companyId: companyAId };
-
-    // One user per non-owner system role, then seed to backfill their roleId.
-    for (const role of ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT'] as const) {
-      const u = await prisma.user.create({
-        data: { companyId: companyAId, name: `Parity ${role}`, email: `parity.${role.toLowerCase()}.${stamp}@e2e.test`, role, passwordHash: 'parity-hash', isActive: true },
-      });
-      createdUserIds.push(u.id);
-      roleUserIds[role] = u.id;
-    }
-    await seedRbac(prisma); // creates the two inventory perms + backfills the new users' roleId
+    // A throwaway company with one user per system role (roleId backfilled by the helper's scoped seed).
+    co = await createTestCompany(app, 'Parity', { roles: ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT'] });
+    companyAId = co.id;
+    ownerId = co.user().id;
+    ownerActor = { id: ownerId, role: Role.OWNER, companyId: companyAId };
+    for (const role of ['MANAGER', 'SALES_EXECUTIVE', 'TECHNICIAN', 'ACCOUNTANT'] as const) roleUserIds[role] = co.user(role as Role).id;
   }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
-    await prisma.appRole.deleteMany({ where: { id: { in: createdRoleIds } } });
+    await purgeTestCompany(prisma, co?.id); // its users and (custom) roles go with it
     await app.close();
   }, E2E_HOOK_TIMEOUT);
 
@@ -65,10 +54,10 @@ describe('Permission resolver parity (e2e)', () => {
     }
   });
 
-  it('OWNER is allow-all (the full 73-key catalog)', async () => {
+  it('OWNER is allow-all (the full 76-key catalog)', async () => {
     const owner = await resolver.resolve({ id: ownerId, role: Role.OWNER });
     expect(owner.size).toBe(PERMISSION_KEYS.length);
-    expect(owner.size).toBe(73);
+    expect(owner.size).toBe(76);
   });
 
   it('enforces the inventory.view / dashboard / export boundary (Sales denied dashboard+export)', async () => {
@@ -90,11 +79,9 @@ describe('Permission resolver parity (e2e)', () => {
     const empty = await roleService.create(ownerActor, { name: `Empty ${stamp}`, permissionKeys: [] });
     const one = await roleService.create(ownerActor, { name: `One ${stamp}`, permissionKeys: ['customers.view'] });
     const many = await roleService.create(ownerActor, { name: `Many ${stamp}`, permissionKeys: ['customers.view', 'bookings.view', 'service.view'] });
-    createdRoleIds.push(empty.id, one.id, many.id);
 
     // A user whose enum role is MANAGER but whose roleId is a custom role → resolves the CUSTOM set.
     const u = await prisma.user.create({ data: { companyId: companyAId, name: 'Custom U', email: `parity.custom.${stamp}@e2e.test`, role: 'MANAGER', passwordHash: 'h', isActive: true, roleId: one.id } });
-    createdUserIds.push(u.id);
 
     expect((await resolver.permissionsForRole(empty.id)).size).toBe(0);
     expect(sorted(await resolver.resolve({ id: u.id, role: Role.MANAGER }))).toEqual(['customers.view']);
@@ -103,7 +90,6 @@ describe('Permission resolver parity (e2e)', () => {
 
   it('refreshes the effective set after a role permission change (cache invalidation)', async () => {
     const role = await roleService.create(ownerActor, { name: `Mutable ${stamp}`, permissionKeys: ['customers.view'] });
-    createdRoleIds.push(role.id);
     expect(sorted(await resolver.permissionsForRole(role.id))).toEqual(['customers.view']); // caches
 
     await roleService.updatePermissions(ownerActor, role.id, ['bookings.view', 'service.view']); // invalidates

@@ -20,10 +20,12 @@ import { MonthlyClosingService } from './monthly-closing.service';
 const incomeInclude = { customer: { select: { name: true } } } satisfies Prisma.IncomeInclude;
 type IncomeRow = Prisma.IncomeGetPayload<{ include: typeof incomeInclude }>;
 
-/** Sources that append to the customer timeline, with the timeline event type they map to. */
+/**
+ * Sources that append to the customer timeline, with the timeline event type they map to. Only money the customer
+ * paid belongs there: a finance or insurance commission is the dealer's income from the lender or insurer, so it
+ * stays in Finance and is not shown as an event in the customer's history.
+ */
 const TIMELINE_EVENT: Partial<Record<IncomeSource, { type: CustomerEventType; label: string }>> = {
-  FINANCE_COMMISSION: { type: 'FINANCE_APPROVED', label: 'Finance commission' },
-  INSURANCE_COMMISSION: { type: 'INSURANCE_ADDED', label: 'Insurance commission' },
   ACCESSORIES: { type: 'NOTE_ADDED', label: 'Accessory purchase' },
   AMC: { type: 'WARRANTY', label: 'AMC income' },
   WARRANTY_RECOVERY: { type: 'WARRANTY', label: 'Warranty recovery' },

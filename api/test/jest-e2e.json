@@ -1,11 +1,19 @@
 {
-  "moduleFileExtensions": ["js", "json", "ts"],
+  "moduleFileExtensions": [
+    "js",
+    "json",
+    "ts"
+  ],
   "rootDir": ".",
   "testEnvironment": "node",
   "maxWorkers": 1,
   "testRegex": ".e2e-spec.ts$",
-  "transform": { "^.+\\.(t|j)s$": "ts-jest" },
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
   "moduleNameMapper": {
     "^@azad/shared$": "<rootDir>/../../packages/shared/src/index.ts"
-  }
+  },
+  "globalSetup": "<rootDir>/support/global-setup.ts",
+  "globalTeardown": "<rootDir>/support/global-teardown.ts"
 }

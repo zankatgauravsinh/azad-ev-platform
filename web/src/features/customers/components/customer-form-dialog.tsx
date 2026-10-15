@@ -3,13 +3,16 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { GENDERS, LEAD_STATUSES, Gender, LeadStatus, type CustomerDto } from '@azad/shared';
+import { GENDERS, LEAD_STATUSES, Gender, LeadStatus, formatAadhaar, isValidAadhaar, isValidGstin, isValidPan, type CustomerDto } from '@azad/shared';
+
+/** The value as the server stores it: spaces and dashes removed, upper-case. */
+const compact = (v: string): string => v.replace(/[\s-]/g, '').toUpperCase();
 import { apiErrorMessage } from '@/lib/api-client';
 import { leadStatusLabel } from '@/lib/labels';
 import { useModels } from '@/features/inventory/hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { FormField } from '@/components/common/form-field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog,
@@ -31,6 +34,13 @@ const schema = z.object({
   state: z.string().optional(),
   pin: z.string().trim().regex(/^\d{6}$/, 'PIN must be 6 digits').or(z.literal('')).optional(),
   gstStateCode: z.string().trim().regex(/^\d{2}$/, 'GST state code must be two digits').or(z.literal('')).optional(),
+  village: z.string().optional(),
+  tehsil: z.string().optional(),
+  district: z.string().optional(),
+  // Printed on the RTO invoice. Spaces and dashes are ignored; the server applies the same checks.
+  aadhaarNumber: z.string().optional().refine((v) => !v || isValidAadhaar(compact(v)), 'Enter a valid 12-digit Aadhaar number'),
+  panNumber: z.string().optional().refine((v) => !v || isValidPan(compact(v)), 'Enter a valid PAN (e.g. ABCDE1234F)'),
+  gstin: z.string().optional().refine((v) => !v || isValidGstin(compact(v)), 'Enter a valid 15-character GSTIN'),
   occupation: z.string().optional(),
   dateOfBirth: z.string().optional(),
   gender: z.enum(GENDERS as [Gender, ...Gender[]]).or(z.literal('')).optional(),
@@ -44,6 +54,7 @@ type FormValues = z.infer<typeof schema>;
 
 const empty: FormValues = {
   name: '', phone: '', altPhone: '', email: '', address: '', city: '', state: 'Gujarat', pin: '', gstStateCode: '',
+  village: '', tehsil: '', district: '', aadhaarNumber: '', panNumber: '', gstin: '',
   occupation: '', dateOfBirth: '', gender: '', leadStatus: LeadStatus.NEW, source: '',
   preferredModelId: '', preferredColour: '', preferredFinanceOption: '',
 };
@@ -83,6 +94,12 @@ export function CustomerFormDialog({
             state: customer.state ?? '',
             pin: customer.pin ?? '',
             gstStateCode: customer.gstStateCode ?? '',
+            village: customer.village ?? '',
+            tehsil: customer.tehsil ?? '',
+            district: customer.district ?? '',
+            aadhaarNumber: customer.aadhaarNumber ? formatAadhaar(customer.aadhaarNumber) : '',
+            panNumber: customer.panNumber ?? '',
+            gstin: customer.gstin ?? '',
             occupation: customer.occupation ?? '',
             dateOfBirth: customer.dateOfBirth ? customer.dateOfBirth.slice(0, 10) : '',
             gender: customer.gender ?? '',
@@ -108,6 +125,13 @@ export function CustomerFormDialog({
       pin: v.pin || undefined,
       // Sent even when empty so an existing code can be cleared; never derived from the state above.
       gstStateCode: v.gstStateCode ?? '',
+      village: v.village || undefined,
+      tehsil: v.tehsil || undefined,
+      district: v.district || undefined,
+      // Sent even when empty, so a stored number can be removed.
+      aadhaarNumber: v.aadhaarNumber ?? '',
+      panNumber: v.panNumber ?? '',
+      gstin: v.gstin ?? '',
       occupation: v.occupation || undefined,
       dateOfBirth: v.dateOfBirth ? new Date(v.dateOfBirth) : undefined,
       gender: v.gender || undefined,
@@ -147,6 +171,16 @@ export function CustomerFormDialog({
           <Field label="State"><Input {...register('state')} /></Field>
           <Field label="PIN" error={errors.pin?.message}><Input inputMode="numeric" {...register('pin')} /></Field>
           <Field label="GST state code (optional)" error={errors.gstStateCode?.message}><Input inputMode="numeric" maxLength={2} placeholder="Two digits" {...register('gstStateCode')} /></Field>
+          <Field label="Village"><Input {...register('village')} /></Field>
+          <Field label="Tehsil"><Input {...register('tehsil')} /></Field>
+          <Field label="District"><Input {...register('district')} /></Field>
+          <div className="sm:col-span-2">
+            <p className="text-sm font-semibold">Registration (RTO) details</p>
+            <p className="text-xs text-muted-foreground">Optional — printed on the RTO invoice.</p>
+          </div>
+          <Field label="Aadhaar number" error={errors.aadhaarNumber?.message}><Input inputMode="numeric" autoComplete="off" placeholder="1234 5678 9012" {...register('aadhaarNumber')} /></Field>
+          <Field label="PAN" error={errors.panNumber?.message}><Input autoComplete="off" className="uppercase" placeholder="ABCDE1234F" {...register('panNumber')} /></Field>
+          <Field label="GSTIN (business customers)" error={errors.gstin?.message}><Input autoComplete="off" className="uppercase" placeholder="15 characters" {...register('gstin')} /></Field>
           <Field label="Occupation"><Input {...register('occupation')} /></Field>
           <Field label="Date of birth"><Input type="date" {...register('dateOfBirth')} /></Field>
           <Field label="Gender">
@@ -188,12 +222,4 @@ export function CustomerFormDialog({
   );
 }
 
-function Field({ label, error, className, children }: { label: string; error?: string; className?: string; children: React.ReactNode }): JSX.Element {
-  return (
-    <div className={`space-y-1.5 ${className ?? ''}`}>
-      <Label>{label}</Label>
-      {children}
-      {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
-  );
-}
+const Field = FormField;

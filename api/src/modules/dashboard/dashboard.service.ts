@@ -89,9 +89,14 @@ export class DashboardService {
       this.prisma.serviceJob.count({ where: { status: 'QUALITY_CHECK' } }),
       this.prisma.$queryRaw<{ count: number }[]>`SELECT COUNT(*)::int AS count FROM "SparePart" WHERE "deletedAt" IS NULL AND "companyId" = ${company} AND quantity <= "minStock"`,
       this.prisma.serviceJob.groupBy({ by: ['technicianId'], where: { status: OPEN, technicianId: { not: null } }, _count: { _all: true } }),
-      this.prisma.user.findMany({ where: { role: 'TECHNICIAN' }, select: { id: true, name: true } }),
+      this.prisma.user.findMany({ where: { role: 'TECHNICIAN', isActive: true }, select: { id: true, name: true } }),
     ]);
     const loadMap = new Map(workload.map((w) => [w.technicianId, w._count._all]));
+    // Jobs may be assigned to owners and managers too (see ServiceJobsService.assertTechnician): whoever holds
+    // open jobs belongs in the workload, whatever their role.
+    const listed = new Set(techs.map((t) => t.id));
+    const others = [...loadMap.keys()].filter((id): id is string => !!id && !listed.has(id));
+    if (others.length) techs.push(...(await this.prisma.user.findMany({ where: { id: { in: others } }, select: { id: true, name: true } })));
     return {
       todaysServices,
       overdueServices,
@@ -106,7 +111,10 @@ export class DashboardService {
   /**
    * Free-service reminders: for each delivered vehicle, the next free service
    * (1st/2nd/3rd) that has not yet been done and whose due date (delivery +
-   * configured interval days) falls within the reminder window.
+   * configured interval days) falls within the reminder window — or has passed,
+   * flagged `overdue`. A free service is done when a job card of that type exists
+   * that was not cancelled, or the warranty's free-service record is closed
+   * (completed or marked missed).
    */
   private async upcomingFreeServices(): Promise<UpcomingFreeService[]> {
     const settings = await this.prisma.companySetting.findFirst();
@@ -124,7 +132,14 @@ export class DashboardService {
       select: {
         actualDelivery: true,
         customer: { select: { id: true, name: true } },
-        unit: { select: { id: true, vin: true, serviceJobs: { select: { type: true } } } },
+        unit: {
+          select: {
+            id: true,
+            vin: true,
+            serviceJobs: { where: { status: { not: 'CANCELLED' } }, select: { type: true } },
+            warranties: { where: { status: { not: 'CANCELLED' } }, select: { freeServices: { where: { status: { not: 'PENDING' } }, select: { serviceNumber: true } } } },
+          },
+        },
       },
       orderBy: { actualDelivery: 'desc' },
       take: 200,
@@ -132,12 +147,13 @@ export class DashboardService {
     const out: UpcomingFreeService[] = [];
     for (const b of delivered) {
       if (!b.actualDelivery) continue;
-      const doneTypes = new Set(b.unit.serviceJobs.map((s) => s.type));
+      const doneTypes = new Set<string>(b.unit.serviceJobs.map((s) => s.type));
+      for (const w of b.unit.warranties) for (const f of w.freeServices) doneTypes.add(`FREE_${f.serviceNumber}`);
       const next = intervals.find((i) => !doneTypes.has(i.type));
       if (!next) continue;
       const due = b.actualDelivery.getTime() + next.days * 86_400_000;
       if (due <= horizon) {
-        out.push({ customerId: b.customer.id, customer: b.customer.name, vin: b.unit.vin, service: next.label, dueDate: new Date(due).toISOString() });
+        out.push({ customerId: b.customer.id, customer: b.customer.name, vin: b.unit.vin, service: next.label, dueDate: new Date(due).toISOString(), overdue: due < now });
       }
     }
     return out.sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 10);
@@ -187,7 +203,8 @@ export class DashboardService {
 
   // ── Reminders (from real data) ──────────────────────────
   private async reminders(todayStart: Date, company: string): Promise<DashboardReminders> {
-    const [upcoming, followUps, docs, balances] = await Promise.all([
+    const tomorrowStart = new Date(todayStart.getTime() + 86_400_000);
+    const [upcoming, followUps, docs, balances, serviceDue] = await Promise.all([
       this.prisma.booking.findMany({
         where: { status: { not: 'CANCELLED' }, actualDelivery: null, expectedDelivery: { gte: todayStart } },
         orderBy: { expectedDelivery: 'asc' },
@@ -213,6 +230,13 @@ export class DashboardService {
         LEFT JOIN (SELECT "bookingId", SUM(amount) paid FROM "Payment" GROUP BY "bookingId") p ON p."bookingId" = b.id
         WHERE b."deletedAt" IS NULL AND b."companyId" = ${company} AND b.status <> 'CANCELLED' AND (b.total - COALESCE(p.paid, 0)) > 0
         ORDER BY balance DESC LIMIT 5`,
+      // Job cards booked for today or an earlier day whose vehicle has not been checked in yet.
+      this.prisma.serviceJob.findMany({
+        where: { status: 'BOOKED', scheduledDate: { lt: tomorrowStart } },
+        orderBy: { scheduledDate: 'asc' },
+        take: 5,
+        select: { id: true, code: true, scheduledDate: true, customer: { select: { name: true } }, unit: { select: { vin: true } } },
+      }),
     ]);
 
     return {
@@ -244,7 +268,13 @@ export class DashboardService {
         date: null,
         href: `/bookings/${b.id}`,
       })).map((r, i) => ({ ...r, sub: `${r.sub} · ₹${(Number(balances[i]!.balance) / 100).toLocaleString('en-IN')}` })),
-      serviceDue: [],
+      serviceDue: serviceDue.map((j): ReminderItem => ({
+        id: j.id,
+        label: j.customer.name,
+        sub: `${j.code} · ${j.unit.vin}`,
+        date: j.scheduledDate?.toISOString() ?? null,
+        href: `/service/${j.id}`,
+      })),
     };
   }
 

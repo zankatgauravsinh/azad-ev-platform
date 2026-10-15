@@ -2,7 +2,9 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 // 1×1 transparent PNG
 const PNG_1PX = Buffer.from(
@@ -12,40 +14,33 @@ const PNG_1PX = Buffer.from(
 const uploadPath = (key: string): string => resolve(process.cwd(), 'uploads', key);
 
 /**
- * Inventory integration/API tests. Requires Postgres up + migrated + seeded.
- * Run with: npm run test:e2e
+ * Inventory integration/API tests, inside a throwaway company (never the seeded dev company).
+ * Requires a migrated local Postgres. Run with: npm run test:e2e
  */
 describe('Inventory (e2e)', () => {
   let app: INestApplication;
+  let co: TestCompany;
   let token: string;
   let modelId: string;
   let unitId: string;
   const vin = `E2E${Date.now()}`;
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
 
   beforeAll(async () => {
     app = await createE2eApp();
-
-    const login = await request(app.getHttpServer())
-      .post('/api/v1/auth/login')
-      .send({ email, password })
-      .expect(200);
-    token = login.body.accessToken;
+    co = await createTestCompany(app, 'Inv');
+    token = co.user().token;
 
     const models = await request(app.getHttpServer())
       .get('/api/v1/inventory/models')
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     modelId = models.body[0].id;
+    expect(modelId).toBe(co.modelId); // the throwaway company's own (only) model
   }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    if (unitId) {
-      await request(app.getHttpServer())
-        .delete(`/api/v1/inventory/units/${unitId}`)
-        .set('Authorization', `Bearer ${token}`);
-    }
+    // Hard delete: the API's DELETE is a soft delete, which used to leave units behind.
+    await purgeTestCompany(app.get(PrismaService), co?.id);
     await app.close();
   }, E2E_HOOK_TIMEOUT);
 
@@ -231,5 +226,17 @@ describe('Inventory (e2e)', () => {
       .delete(`/api/v1/inventory/units/${unitId}/events`)
       .set('Authorization', bearer())
       .expect(404);
+  });
+
+  // The key number is printed on the RTO invoice; it is not part of the locked identity.
+  it('records a key number, upper-cased, even on a delivered scooter', async () => {
+    const http = () => request(app.getHttpServer());
+    const prisma = app.get(PrismaService);
+    const unit = await prisma.inventoryUnit.findFirstOrThrow({ where: { companyId: co.id, deletedAt: null }, orderBy: { createdAt: 'asc' } });
+    await prisma.inventoryUnit.update({ where: { id: unit.id }, data: { status: 'DELIVERED' } });
+    const res = await http().patch(`/api/v1/inventory/units/${unit.id}`).set('Authorization', co.auth()).send({ keyNumber: 'pb51' }).expect(200);
+    expect(res.body.keyNumber).toBe('PB51');
+    expect((await http().patch(`/api/v1/inventory/units/${unit.id}`).set('Authorization', co.auth()).send({ keyNumber: '' }).expect(200)).body.keyNumber).toBeNull();
+    await prisma.inventoryUnit.update({ where: { id: unit.id }, data: { status: unit.status } });
   });
 });

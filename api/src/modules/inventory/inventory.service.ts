@@ -327,6 +327,7 @@ export class InventoryService {
           sellingPrice,
           supplier: dto.supplier ?? null,
           location: dto.location ?? null,
+          keyNumber: dto.keyNumber ?? null,
           notes: dto.notes ?? null,
           createdById: userId,
           updatedById: userId,
@@ -416,6 +417,8 @@ export class InventoryService {
       if (dto.sellingPrice !== undefined) data.sellingPrice = BigInt(dto.sellingPrice);
       if (dto.supplier !== undefined) data.supplier = dto.supplier ?? null;
       if (dto.location !== undefined) data.location = dto.location ?? null;
+      // Not part of the locked identity: editable whatever the status (keys are often numbered at delivery).
+      if (dto.keyNumber !== undefined) data.keyNumber = dto.keyNumber;
       if (dto.notes !== undefined) data.notes = dto.notes ?? null;
 
       return this.repo.updateUnit(id, data, tx);

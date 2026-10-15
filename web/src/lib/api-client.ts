@@ -18,7 +18,8 @@ apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 // ── Single-flight refresh on 401 ──────────────────────────
 let refreshing: Promise<string | null> | null = null;
 
-async function refreshAccessToken(): Promise<string | null> {
+async function refreshOnce(): Promise<string | null> {
+  // Read inside the lock: another tab may have rotated the refresh token while this one waited.
   const refreshToken = tokenStore.getRefresh();
   if (!refreshToken) return null;
   try {
@@ -29,6 +30,15 @@ async function refreshAccessToken(): Promise<string | null> {
     tokenStore.clear();
     return null;
   }
+}
+
+/**
+ * Trade the refresh token for a new pair. Each refresh rotates the token and the server keeps only the latest,
+ * so tabs refreshing at the same moment would invalidate each other: a cross-tab lock runs them one at a time.
+ */
+async function refreshAccessToken(): Promise<string | null> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  return locks ? locks.request('azad-token-refresh', refreshOnce) : refreshOnce();
 }
 
 apiClient.interceptors.response.use(

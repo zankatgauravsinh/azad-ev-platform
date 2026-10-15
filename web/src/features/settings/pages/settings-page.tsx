@@ -56,6 +56,9 @@ export function SettingsPage(): JSX.Element {
         taxPercentage: Number(settings.taxPercentage),
         invoicePrefix: settings.invoicePrefix, bookingPrefix: settings.bookingPrefix, quotationPrefix: settings.quotationPrefix,
         receiptPrefix: settings.receiptPrefix, jobCardPrefix: settings.jobCardPrefix,
+        rtoInvoicePrefix: settings.rtoInvoicePrefix, warrantyPrefix: settings.warrantyPrefix, amcPrefix: settings.amcPrefix,
+        claimPrefix: settings.claimPrefix, returnPrefix: settings.returnPrefix, creditNotePrefix: settings.creditNotePrefix,
+        refundPrefix: settings.refundPrefix,
         defaultWarrantyMonths: settings.defaultWarrantyMonths, serviceReminderDays: settings.serviceReminderDays,
         warrantyEnabled: settings.warrantyEnabled, amcEnabled: settings.amcEnabled, warrantyReminderDays: settings.warrantyReminderDays,
         financeEnabled: settings.financeEnabled, expensePrefix: settings.expensePrefix, vendorPrefix: settings.vendorPrefix,
@@ -201,6 +204,12 @@ export function SettingsPage(): JSX.Element {
                   <Field label="Quotation prefix" error={errors.quotationPrefix?.message}><Input {...register('quotationPrefix')} /></Field>
                   <Field label="Receipt prefix" error={errors.receiptPrefix?.message}><Input {...register('receiptPrefix')} /></Field>
                 </Grid>
+                <p className="mt-5 mb-2 text-sm font-semibold">Vehicle returns</p>
+                <Grid>
+                  <Field label="Return prefix" error={errors.returnPrefix?.message}><Input {...register('returnPrefix')} /></Field>
+                  <Field label="Credit note prefix" error={errors.creditNotePrefix?.message}><Input {...register('creditNotePrefix')} /></Field>
+                  <Field label="Refund prefix" error={errors.refundPrefix?.message}><Input {...register('refundPrefix')} /></Field>
+                </Grid>
               </Panel>
             </TabsContent>
 
@@ -208,6 +217,8 @@ export function SettingsPage(): JSX.Element {
               <Panel>
                 <Grid>
                   <Field label="Invoice prefix" error={errors.invoicePrefix?.message}><Input {...register('invoicePrefix')} /></Field>
+                  <Field label="RTO invoice prefix" error={errors.rtoInvoicePrefix?.message}><Input {...register('rtoInvoicePrefix')} /></Field>
+                  <p className="text-xs text-muted-foreground sm:col-span-2">A new prefix applies to documents created after saving; existing numbers never change.</p>
                   <p className="text-sm text-muted-foreground sm:col-span-2">
                     GST registration ({settings.gstEnabled ? 'enabled' : 'disabled'}) is managed in{' '}
                     <Link to="/settings/gst" className="font-medium text-accent underline-offset-4 hover:underline">GST Management</Link>.
@@ -243,6 +254,9 @@ export function SettingsPage(): JSX.Element {
                 <p className="mt-5 mb-2 text-sm font-semibold">Warranty &amp; AMC</p>
                 <Grid>
                   <Field label="Warranty reminder (days before expiry)" error={errors.warrantyReminderDays?.message}><Input type="number" min={1} {...register('warrantyReminderDays', { valueAsNumber: true })} /></Field>
+                  <Field label="Warranty prefix" error={errors.warrantyPrefix?.message}><Input {...register('warrantyPrefix')} /></Field>
+                  <Field label="AMC prefix" error={errors.amcPrefix?.message}><Input {...register('amcPrefix')} /></Field>
+                  <Field label="Claim prefix" error={errors.claimPrefix?.message}><Input {...register('claimPrefix')} /></Field>
                 </Grid>
                 <div className="mt-3 space-y-1">
                   <SwitchRow control={control} name="warrantyEnabled" label="Warranty module" hint="Track warranties, coverage, claims and free services." />

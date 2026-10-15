@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidAadhaar, isValidGstin, isValidPan, optionalIdentity } from './identity';
 import { GST_STATE_CODE_PATTERN } from './tax';
 import {
   CustomerEventType,
@@ -57,6 +58,12 @@ export const createCustomerSchema = z.object({
     .optional()
     .transform((v) => (v === '' ? null : v)),
   village: optionalText(80),
+  tehsil: optionalText(80),
+  district: optionalText(80),
+  // Identity numbers for the RTO invoice. Normalised; '' or null clears the stored value.
+  aadhaarNumber: optionalIdentity(isValidAadhaar, 'Enter a valid 12-digit Aadhaar number'),
+  panNumber: optionalIdentity(isValidPan, 'Enter a valid PAN (e.g. ABCDE1234F)'),
+  gstin: optionalIdentity(isValidGstin, 'Enter a valid 15-character GSTIN'),
   occupation: optionalText(80),
   dateOfBirth: z.coerce.date().optional(),
   gender: z.enum(GENDERS as [Gender, ...Gender[]]).optional(),
@@ -141,6 +148,11 @@ export interface CustomerDto {
   pin: string | null;
   gstStateCode: string | null;
   village: string | null;
+  tehsil: string | null;
+  district: string | null;
+  aadhaarNumber: string | null;
+  panNumber: string | null;
+  gstin: string | null;
   occupation: string | null;
   dateOfBirth: string | null;
   gender: Gender | null;

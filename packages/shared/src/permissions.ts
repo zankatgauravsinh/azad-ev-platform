@@ -30,6 +30,7 @@ export const PERMISSION_MODULES = [
   'inventory',
   'quotations',
   'bookings',
+  'rto',
   'delivery',
   'returns',
   'service',
@@ -86,6 +87,11 @@ const MODULE_ROWS: Record<PermissionModule, Row[]> = {
     ['cancel', 'Cancel bookings', true],
     ['payment', 'Record booking payment', true],
     ['invoice', 'Generate invoice'],
+  ],
+  rto: [
+    ['view', 'View RTO invoices'],
+    ['generate', 'Generate RTO invoice'],
+    ['edit', 'Edit & regenerate RTO invoice', true],
   ],
   delivery: [
     ['view', 'View deliveries'],

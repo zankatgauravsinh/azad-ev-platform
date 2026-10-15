@@ -38,6 +38,15 @@ export function businessDateOf(instant: Date, timeZone: string): BusinessDate {
 }
 
 /**
+ * Whether a day the user picked is after today in `timeZone`. A date input reaches the API as 'YYYY-MM-DD'
+ * and is parsed to midnight UTC, so its calendar day is its UTC date — read that way, a picked "today" is
+ * never in the future, at any hour.
+ */
+export function isAfterBusinessToday(picked: Date, now: Date, timeZone: string): boolean {
+  return picked.toISOString().slice(0, 10) > businessDateOf(now, timeZone);
+}
+
+/**
  * The instant at which it is 12:00 noon on `date` in `timeZone`.
  *
  * Noon is the anchor for a date whose time of day is unknown: it is the same calendar date in the

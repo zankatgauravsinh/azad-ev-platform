@@ -248,4 +248,110 @@ describe('Sales domain (e2e)', () => {
     expect((await http().get(`/api/v1/bookings/${booking.body.id}`).set('Authorization', auth())).body.status).toBe('CONVERTED');
     expect((await http().get(`/api/v1/inventory/units/${unit.body.id}`).set('Authorization', auth())).body.status).toBe('BOOKED');
   });
+
+  it('a quotation converts only with a scooter of the quoted variant', async () => {
+    const quote = (await http().post('/api/v1/quotations').set('Authorization', auth()).send({ customerId, variantId, exShowroom: 10000000 }).expect(201)).body;
+    const unitOf = async (colour: string, tag: string) => (await http().post('/api/v1/inventory/units').set('Authorization', auth())
+      .send({ modelId, variant: `E2E-${stamp}`, colour, vin: `${tag}${stamp}`, motorNumber: `${tag}M${stamp}`, batteryNumber: `${tag}B${stamp}` }).expect(201)).body;
+    const wrong = await unitOf('Red', 'QVW');
+    expect(wrong.variant.id).not.toBe(variantId);
+    const convert = (unit: string, advanceAmount = 0) => http().post(`/api/v1/quotations/${quote.id}/convert`).set('Authorization', auth()).send({ unitId: unit, advanceAmount });
+
+    const refused = await convert(wrong.id).expect(400);
+    expect(refused.body.message).toContain(`Scooter QVW${stamp} is a`);
+    expect(refused.body.message).toContain('allocate a scooter of the quoted variant');
+    expect((await http().get(`/api/v1/inventory/units/${wrong.id}`).set('Authorization', auth())).body.status).toBe('AVAILABLE');
+    expect(await prisma.booking.count({ where: { quotationId: quote.id } })).toBe(0);
+
+    const right = await unitOf('Blue', 'QVR');
+    expect(right.variant.id).toBe(variantId);
+    expect((await convert(right.id, Number(quote.total) + 1).expect(400)).body.message).toBe('The advance cannot exceed the on-road total');
+    await convert(right.id, 500000).expect(201);
+  });
+
+  it('never accepts more than is owed: advance and payments are capped at the balance', async () => {
+    const unit = await http().post('/api/v1/inventory/units').set('Authorization', auth())
+      .send({ modelId, variant: `E2E-pay-${stamp}`, colour: 'White', vin: `OVERP${stamp}`, motorNumber: `OPM${stamp}`, batteryNumber: `OPB${stamp}` }).expect(201);
+    const create = (advanceAmount: number) => http().post('/api/v1/bookings').set('Authorization', auth()).send({ customerId, unitId: unit.body.id, exShowroom: 1000000, rto: 50000, advanceAmount });
+    expect((await create(1050001).expect(400)).body.message).toBe('The advance cannot exceed the on-road total');
+    expect((await http().get(`/api/v1/inventory/units/${unit.body.id}`).set('Authorization', auth())).body.status).toBe('AVAILABLE');
+    const booking = (await create(50000).expect(201)).body; // balance ₹10,000.00
+    const pay = (amount: number) => http().post(`/api/v1/bookings/${booking.id}/payments`).set('Authorization', auth()).send({ amount, mode: 'CASH' });
+
+    expect((await pay(1000001).expect(400)).body.message).toBe('The payment exceeds the balance due of ₹10,000.00');
+    // Two payments of the full balance at the same moment: exactly one is recorded.
+    const results = await Promise.all([pay(1000000), pay(1000000)]);
+    expect(results.map((r) => r.status).sort()).toEqual([201, 400]);
+    const after = (await http().get(`/api/v1/bookings/${booking.id}`).set('Authorization', auth()).expect(200)).body;
+    expect(after.paymentSummary).toMatchObject({ paid: '1050000', balance: '0', status: 'PAID' });
+    expect((await pay(100).expect(400)).body.message).toBe('This booking is already fully paid');
+  });
+
+  // ───────────────────────── QA M3: which quotations convert ─────────────────────────
+  it('only a live quotation converts; cancelling its booking reopens it for a new conversion', async () => {
+    const unitOf = async (tag: string) => (await http().post('/api/v1/inventory/units').set('Authorization', auth())
+      .send({ modelId, variant: `E2E-${stamp}`, colour: 'Blue', vin: `${tag}${stamp}`, motorNumber: `${tag}M${stamp}`, batteryNumber: `${tag}B${stamp}` }).expect(201)).body;
+    const quote = async (extra: Record<string, unknown> = {}) => (await http().post('/api/v1/quotations').set('Authorization', auth()).send({ customerId, variantId, exShowroom: 10000000, ...extra }).expect(201)).body;
+    const convert = (id: string, unit: string) => http().post(`/api/v1/quotations/${id}/convert`).set('Authorization', auth()).send({ unitId: unit, advanceAmount: 0 });
+    const setQuoteStatus = (id: string, status: string) => http().patch(`/api/v1/quotations/${id}/status`).set('Authorization', auth()).send({ status });
+    const u1 = await unitOf('QL1');
+
+    const expired = await quote();
+    await setQuoteStatus(expired.id, 'EXPIRED').expect(200);
+    expect((await convert(expired.id, u1.id).expect(400)).body.message).toBe('This quotation has expired — duplicate it to quote again');
+    const cancelled = await quote();
+    await setQuoteStatus(cancelled.id, 'CANCELLED').expect(200);
+    expect((await convert(cancelled.id, u1.id).expect(400)).body.message).toBe('This quotation is cancelled — duplicate it to quote again');
+    const lapsed = await quote({ validUntil: '2020-01-31' });
+    expect((await convert(lapsed.id, u1.id).expect(400)).body.message).toBe('This quotation expired on 31/01/2020 — duplicate it to quote again');
+    expect((await http().get(`/api/v1/inventory/units/${u1.id}`).set('Authorization', auth())).body.status).toBe('AVAILABLE');
+
+    const live = await quote({ validUntil: '2099-12-31' });
+    const first = (await convert(live.id, u1.id).expect(201)).body;
+    expect((await http().get(`/api/v1/quotations/${live.id}`).set('Authorization', auth())).body.status).toBe('ACCEPTED');
+    expect((await convert(live.id, u1.id).expect(400)).body.message).toBe('This quotation is already converted to a booking');
+
+    await http().post(`/api/v1/bookings/${first.id}/cancel`).set('Authorization', auth()).send({ reason: 'changed mind' }).expect(201);
+    const reopened = (await http().get(`/api/v1/quotations/${live.id}`).set('Authorization', auth())).body;
+    expect(reopened.status).toBe('SENT');
+    const u2 = await unitOf('QL2');
+    const second = (await convert(live.id, u2.id).expect(201)).body;
+    expect(second.quotationId).toBe(live.id);
+    expect((await http().get(`/api/v1/quotations/${live.id}`).set('Authorization', auth())).body.booking.id).toBe(second.id);
+    // The cancelled booking keeps its own terms; only the link moved.
+    expect((await http().get(`/api/v1/bookings/${first.id}`).set('Authorization', auth())).body).toMatchObject({ status: 'CANCELLED', total: first.total, quotationId: null });
+  });
+
+  // ───────────────────────── QA M5, M10, M9 ─────────────────────────
+  it('insurance dates, back-dated payments and the warranty issued on delivery', async () => {
+    const unit = await http().post('/api/v1/inventory/units').set('Authorization', auth())
+      .send({ modelId, variant: `E2E-${stamp}`, colour: 'Blue', vin: `QMX${stamp}`, motorNumber: `QMXM${stamp}`, batteryNumber: `QMXB${stamp}` }).expect(201);
+    const booking = (await http().post('/api/v1/bookings').set('Authorization', auth()).send({ customerId, unitId: unit.body.id, exShowroom: 1000000 }).expect(201)).body;
+
+    // M5: a policy cannot end before (or on) the day it starts.
+    const insure = (startDate: string, endDate: string) => http().post(`/api/v1/bookings/${booking.id}/insurance`).set('Authorization', auth()).send({ provider: 'Acko', premium: 150000, startDate, endDate });
+    const reversed = await insure('2026-10-10', '2026-01-01').expect(400);
+    expect(JSON.stringify(reversed.body)).toContain('The policy end date must be after its start date');
+    await insure('2026-10-10', '2026-10-10').expect(400);
+    await insure('2026-10-10', '2027-10-09').expect(201);
+
+    // M10: a payment may be back-dated, not future-dated.
+    const pay = (paidAt: string) => http().post(`/api/v1/bookings/${booking.id}/payments`).set('Authorization', auth()).send({ amount: 100000, mode: 'UPI', paidAt });
+    const tomorrow = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    expect((await pay(tomorrow).expect(400)).body.message).toBe('The payment date cannot be in the future');
+    const lastWeek = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+    const paid = (await pay(lastWeek).expect(201)).body;
+    expect(paid.paidAt.slice(0, 10)).toBe(lastWeek);
+
+    // M9: delivering issues the warranty, starting on the delivery date, with its free services.
+    await http().post(`/api/v1/bookings/${booking.id}/invoice`).set('Authorization', auth()).expect(201);
+    const day = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    await prisma.$executeRaw`UPDATE "Booking" SET "createdAt" = ${new Date(Date.now() - 10 * 86_400_000)} WHERE id = ${booking.id}`;
+    await http().post(`/api/v1/bookings/${booking.id}/deliver`).set('Authorization', auth()).send({ actualDelivery: day }).expect(201);
+    const warranties = await prisma.warranty.findMany({ where: { unitId: unit.body.id }, include: { freeServices: true } });
+    expect(warranties).toHaveLength(1);
+    const delivered = (await prisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).actualDelivery!;
+    expect(warranties[0]).toMatchObject({ customerId, bookingId: booking.id, status: 'ACTIVE', startDate: delivered, purchaseDate: delivered });
+    expect(warranties[0]!.freeServices).toHaveLength(3);
+  });
 });

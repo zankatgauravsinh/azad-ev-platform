@@ -9,5 +9,7 @@ User=azad
 WorkingDirectory=/opt/azad-ev/app
 EnvironmentFile=/opt/azad-ev/app/.env
 Environment=BACKUP_DIR=/opt/azad-ev/backups
+# Opt-in pruning: removes only complete sets of this database on this server older than 14 days, never a
+# set with a <base>.keep file (mark release backups so). Remove this line to keep every backup.
 Environment=RETENTION_DAYS=14
 ExecStart=/opt/azad-ev/app/scripts/backup.sh

@@ -12,12 +12,26 @@ import { PrismaService } from '../../src/prisma/prisma.service';
  * A suite that works inside its own company never depends on (or grows) the seeded dev company, and
  * every assertion about counts or totals can be exact for that company alone. `purgeTestCompany`
  * hard-deletes everything the company owns, so no debris is left for later suites.
+ *
+ * Identification is threefold, and purge requires all three:
+ *  - the slug starts with `e2e-` (the long-standing convention, kept),
+ *  - the slug ends with this test run's id (E2E_RUN_ID, set by test/support/global-setup.ts),
+ *  - this test FILE created the company in this process (an in-memory registry: every e2e file gets its
+ *    own module instance, so one suite can never purge another suite's companies).
+ * The seeded company, any company created outside these helpers and any earlier run's leftovers fail at
+ * least one check, so purge refuses them before deleting anything.
  */
 
 export const TEST_PASSWORD = 'Test@12345';
 
-/** Every throwaway company's slug starts with this; `purgeTestCompany` refuses anything else. */
-const SLUG_PREFIX = 'e2e-';
+/** Every throwaway company's slug starts with this. */
+export const SLUG_PREFIX = 'e2e-';
+
+/** Identifies this test run; global-setup.ts sets it once for all suites (a fallback keeps a lone run unique). */
+export const E2E_RUN_ID: string = (process.env.E2E_RUN_ID ??= randomBytes(4).toString('hex'));
+
+/** Companies this test file created in this run: id → slug. */
+const createdByThisFile = new Map<string, string>();
 
 /**
  * Every document-number prefix with its production default. Generated numbers (prefix + counter) are
@@ -27,7 +41,7 @@ const SLUG_PREFIX = 'e2e-';
 const DEFAULT_PREFIXES = {
   invoicePrefix: 'INV', bookingPrefix: 'BK', quotationPrefix: 'QT', receiptPrefix: 'RC', jobCardPrefix: 'JC', warrantyPrefix: 'WR',
   amcPrefix: 'AMC', claimPrefix: 'CLM', expensePrefix: 'EXP', vendorPrefix: 'VND', incomePrefix: 'INC', bankPrefix: 'BNK',
-  returnPrefix: 'RET', creditNotePrefix: 'CN', refundPrefix: 'RF',
+  returnPrefix: 'RET', creditNotePrefix: 'CN', refundPrefix: 'RF', rtoInvoicePrefix: 'RTO',
 } as const;
 
 export interface TestUser {
@@ -62,7 +76,8 @@ export async function createTestCompany(app: INestApplication, label: string, op
   const prisma = app.get(PrismaService);
   const rand = randomBytes(3).toString('hex');
   const tag = `${label}${rand}`;
-  const company = await prisma.company.create({ data: { name: `E2E ${label} ${rand}`, slug: `${SLUG_PREFIX}${label.toLowerCase()}-${rand}` } });
+  const company = await prisma.company.create({ data: { name: `E2E ${label} ${rand}`, slug: `${SLUG_PREFIX}${label.toLowerCase()}-${rand}-${E2E_RUN_ID}` } });
+  createdByThisFile.set(company.id, company.slug); // registered first, so a half-built company can still be purged
   await prisma.branch.create({ data: { companyId: company.id, name: 'HQ', isPrimary: true } });
   const prefixes = Object.fromEntries(Object.entries(DEFAULT_PREFIXES).map(([field, value]) => [field, `${value}${tag.toUpperCase()}-`]));
   await prisma.companySetting.create({ data: { companyId: company.id, ...prefixes } });
@@ -77,8 +92,8 @@ export async function createTestCompany(app: INestApplication, label: string, op
     const user = await prisma.user.create({ data: { companyId: company.id, name: `${label} ${role}`, email, role, passwordHash } });
     created.push({ role, id: user.id, email });
   }
-  // System roles + roleId backfill, as every production user has them.
-  await seedRbac(prisma);
+  // System roles + roleId backfill, as every production user has them — for THIS company only.
+  await seedRbac(prisma, { companyIds: [company.id] });
 
   const users: Partial<Record<Role, TestUser>> = {};
   for (const { role, id, email } of created) {
@@ -131,16 +146,31 @@ async function companyTablesInDeleteOrder(prisma: PrismaService): Promise<string
   return order;
 }
 
+/** Why purgeTestCompany would refuse this company, or null when it is this file's own throwaway company. */
+export function purgeRefusal(companyId: string, slug: string): string | null {
+  if (!slug.startsWith(SLUG_PREFIX)) return 'not an e2e throwaway company';
+  if (!slug.endsWith(`-${E2E_RUN_ID}`)) return 'not created by this test run';
+  if (createdByThisFile.get(companyId) !== slug) return 'not created by this test file';
+  return null;
+}
+
 /**
  * Hard-deletes a throwaway company and every row it owns. Raw SQL on purpose: several models are
  * soft-delete aware or write-once through the Prisma client. Rows of tables without a companyId all
  * hang off a company-scoped parent and go with it (cascade), or are released once it is gone.
+ *
+ * A missing id (setup failed before the company existed) or an already-deleted company is a no-op —
+ * never a broader delete. Every statement is scoped to the one verified company id.
  */
 export async function purgeTestCompany(prisma: PrismaService, companyId: string | undefined): Promise<void> {
   if (!companyId) return;
   const company = await prisma.company.findUnique({ where: { id: companyId }, select: { slug: true } });
-  if (!company) return;
-  if (!company.slug.startsWith(SLUG_PREFIX)) throw new Error(`Refusing to purge company ${companyId}: not an e2e throwaway company`);
+  if (!company) {
+    createdByThisFile.delete(companyId);
+    return;
+  }
+  const refusal = purgeRefusal(companyId, company.slug);
+  if (refusal) throw new Error(`Refusing to purge company ${companyId}: ${refusal}`);
 
   let pending = await companyTablesInDeleteOrder(prisma);
   for (let pass = 0; pending.length > 0; pass += 1) {
@@ -159,4 +189,5 @@ export async function purgeTestCompany(prisma: PrismaService, companyId: string 
     pending = failed.map((f) => f.table);
   }
   await prisma.$executeRawUnsafe('DELETE FROM "Company" WHERE id = $1', companyId);
+  createdByThisFile.delete(companyId);
 }

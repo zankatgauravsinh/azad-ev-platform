@@ -165,7 +165,7 @@ describe('ReturnDetailDialog — financial outcome shows the credit note GST', (
     show(completed({ amount: '952381', gstAmount: '47619', total: '1000000' }));
     expect(value('Deduction')).toBe('₹300');
     expect(value('Deduction reason')).toBe('Scratched panel');
-    expect(value('Refund RF0001')).toBe('₹9,700 · Upi');
+    expect(value('Refund RF0001')).toBe('₹9,700 · UPI');
   });
 
   it('shows no credit-note figures while there is no credit note', () => {

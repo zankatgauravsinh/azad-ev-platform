@@ -26,6 +26,7 @@ import { WarrantyPage } from '@/features/warranty/pages/warranty-page';
 import { FinancePage } from '@/features/finance/pages/finance-page';
 import { DeliveryPage } from '@/features/delivery/pages/delivery-page';
 import { ReturnsListPage } from '@/features/returns/pages/returns-list-page';
+import { RtoInvoicesPage } from '@/features/rto-invoices/pages/rto-invoices-page';
 import { StaffListPage } from '@/features/staff/pages/staff-list-page';
 
 export const router = createBrowserRouter([
@@ -57,6 +58,7 @@ export const router = createBrowserRouter([
           { path: '/warranty', element: <WarrantyPage /> },
           { path: '/delivery', element: <DeliveryPage /> },
           { path: '/returns', element: <ReturnsListPage /> },
+          { path: '/rto-invoices', element: <RtoInvoicesPage /> },
           { path: '/finance', element: <FinancePage /> },
           { path: '/reports', element: <ReportsPage /> },
           { path: '/settings', element: <SettingsPage /> },

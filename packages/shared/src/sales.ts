@@ -72,6 +72,25 @@ export const convertQuotationSchema = z.object({
 });
 export type ConvertQuotationInput = z.infer<typeof convertQuotationSchema>;
 
+/**
+ * Why a quotation cannot be converted into a booking now, or null when it can. One rule for the API (which
+ * enforces it) and the UI (which hides the action). `today` is a 'YYYY-MM-DD' business date; a quotation is
+ * still valid on its `validUntil` day. A quotation whose booking was cancelled can be converted again.
+ */
+export function quotationConversionBlocker(
+  q: { status: QuotationStatus; validUntil: string | Date | null; booking: { status: BookingStatus } | null },
+  today: string,
+): string | null {
+  if (q.booking && q.booking.status !== BookingStatus.CANCELLED) return 'This quotation is already converted to a booking';
+  if (q.status === QuotationStatus.CANCELLED) return 'This quotation is cancelled — duplicate it to quote again';
+  if (q.status === QuotationStatus.EXPIRED) return 'This quotation has expired — duplicate it to quote again';
+  if (q.validUntil) {
+    const until = (typeof q.validUntil === 'string' ? q.validUntil : q.validUntil.toISOString()).slice(0, 10);
+    if (until < today) return `This quotation expired on ${until.split('-').reverse().join('/')} — duplicate it to quote again`;
+  }
+  return null;
+}
+
 // ── Bookings ──────────────────────────────────────────────
 export const createBookingSchema = z.object({
   customerId: z.string().uuid(),
@@ -140,7 +159,7 @@ export const upsertInsuranceSchema = z.object({
   startDate: z.coerce.date().optional(),
   endDate: z.coerce.date().optional(),
   status: z.enum(INSURANCE_STATUSES as [InsuranceStatus, ...InsuranceStatus[]]).default(InsuranceStatus.PENDING),
-});
+}).refine((v) => !v.startDate || !v.endDate || v.endDate > v.startDate, { message: 'The policy end date must be after its start date', path: ['endDate'] });
 export type UpsertInsuranceInput = z.infer<typeof upsertInsuranceSchema>;
 
 // ── Delivery scheduling ───────────────────────────────────

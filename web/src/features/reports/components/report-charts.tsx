@@ -30,7 +30,7 @@ export function DailyBars({ points }: { points: DailyPoint[] }): JSX.Element {
     <div>
       <div className="flex h-32 items-end justify-between gap-1">
         {points.map((p) => (
-          <div key={p.date} className="flex flex-1 flex-col items-center" title={`${p.label}: ${formatPaise(p.amount)}`}>
+          <div key={p.date} className="flex h-full flex-1 flex-col items-center" title={`${p.label}: ${formatPaise(p.amount)}`}>
             <div className="flex w-full flex-1 items-end">
               <div
                 className="w-full rounded-t bg-primary transition-all"

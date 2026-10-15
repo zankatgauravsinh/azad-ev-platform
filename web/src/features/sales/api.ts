@@ -74,6 +74,7 @@ export interface VehicleUnitDetail {
   purchaseDate: string | null;
   sellingPrice: string;
   location: string | null;
+  keyNumber: string | null;
   notes: string | null;
   variant: VehicleVariantDetail;
 }
@@ -100,7 +101,7 @@ export interface QuotationDto {
   notes: string | null;
   createdAt: string;
   accessories: { id: string; accessoryId: string; qty: number; unitPrice: string; accessory: { name: string } }[];
-  booking: { id: string; code: string } | null;
+  booking: { id: string; code: string; status: BookingStatus } | null;
 }
 export interface BookingDto {
   id: string;
@@ -133,6 +134,10 @@ export interface BookingDto {
   sale: { id: string; invoiceNumber: string | null; status: string; invoicedAt: string | null } | null;
   quotation: { id: string; code: string } | null;
   paymentSummary: { total: string; paid: string; balance: string; status: PaymentStatus };
+  /** The first date a delivery may be recorded on: the later of the booking and purchase dates. */
+  earliestDelivery: { date: string; label: string };
+  /** The booking's RTO invoice, when one has been generated (at most one per booking). */
+  rtoInvoice: { id: string; invoiceNumber: string; total: string; revision: number } | null;
 }
 
 const params = (q: Record<string, unknown>): Record<string, string> => {

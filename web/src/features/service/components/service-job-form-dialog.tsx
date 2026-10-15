@@ -6,8 +6,6 @@ import { SERVICE_JOB_TYPES, SERVICE_PRIORITIES } from '@azad/shared';
 import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { titleCase } from '@/lib/labels';
-import { useDebounce } from '@/hooks/use-debounce';
-import { inventoryApi } from '@/features/inventory/api';
 import { CustomerCombobox } from '@/features/sales/components/customer-combobox';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,7 +23,6 @@ export function ServiceJobFormDialog({ open, onOpenChange, onCreated }: { open: 
   const canAssign = useCan('service.assign'); // technician lookup/assignment (GET /service/jobs/technicians)
   const [customerId, setCustomerId] = useState('');
   const [unitId, setUnitId] = useState('');
-  const [vinSearch, setVinSearch] = useState('');
   const [type, setType] = useState('PAID');
   const [priority, setPriority] = useState('MEDIUM');
   const [technicianId, setTechnicianId] = useState('');
@@ -34,8 +31,8 @@ export function ServiceJobFormDialog({ open, onOpenChange, onCreated }: { open: 
   const [complaints, setComplaints] = useState<ComplaintRow[]>([{ description: '', priority: 'MEDIUM' }]);
   const [busy, setBusy] = useState(false);
 
-  const vinQ = useDebounce(vinSearch);
-  const { data: units } = useQuery({ queryKey: ['service', 'unit-search', vinQ], queryFn: () => inventoryApi.list({ q: vinQ || undefined, pageSize: 6 }), enabled: open && vinQ.length > 1 });
+  // Only the selected customer's own vehicles are offered; the server enforces the same rule.
+  const { data: vehicles, isLoading: vehiclesLoading } = useQuery({ queryKey: ['service', 'customer-vehicles', customerId], queryFn: () => serviceApi.customerVehicles(customerId), enabled: open && !!customerId });
   const { data: technicians } = useQuery({ queryKey: ['service', 'technicians'], queryFn: serviceApi.technicians, enabled: open && canAssign });
 
   const setComplaint = (i: number, patch: Partial<ComplaintRow>): void => setComplaints((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -73,20 +70,18 @@ export function ServiceJobFormDialog({ open, onOpenChange, onCreated }: { open: 
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader><DialogTitle>New job card</DialogTitle></DialogHeader>
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5"><Label>Customer</Label><CustomerCombobox value={customerId} onChange={(id) => setCustomerId(id)} /></div>
+          <div className="space-y-1.5"><Label htmlFor="job-customer">Customer</Label><CustomerCombobox id="job-customer" value={customerId} onChange={(id) => { setCustomerId(id); setUnitId(''); }} /></div>
           <div className="space-y-1.5">
             <Label>Vehicle (VIN)</Label>
-            <Input placeholder="Search VIN…" value={vinSearch} onChange={(e) => { setVinSearch(e.target.value); setUnitId(''); }} />
-            {units && units.data.length > 0 && !unitId && (
-              <div className="rounded-md border">
-                {units.data.map((u) => (
-                  <button key={u.id} type="button" className="block w-full px-3 py-1.5 text-left text-sm hover:bg-muted" onClick={() => { setUnitId(u.id); setVinSearch(u.vin); }}>
-                    <span className="font-mono">{u.vin}</span> · {u.variant.model.name} {u.variant.name}
-                  </button>
+            <Select value={unitId} onValueChange={setUnitId} disabled={!customerId || vehiclesLoading || !vehicles?.length}>
+              <SelectTrigger><SelectValue placeholder={!customerId ? 'Select a customer first' : vehiclesLoading ? 'Loading…' : 'Select a vehicle'} /></SelectTrigger>
+              <SelectContent>
+                {(vehicles ?? []).map((v) => (
+                  <SelectItem key={v.id} value={v.id}><span className="font-mono">{v.vin}</span> · {v.model} {v.variant} · {v.colour}</SelectItem>
                 ))}
-              </div>
-            )}
-            {unitId && <p className="text-xs text-emerald-600">Vehicle selected</p>}
+              </SelectContent>
+            </Select>
+            {customerId && vehicles?.length === 0 && <p className="text-xs text-muted-foreground">This customer has no vehicles booked or bought here.</p>}
           </div>
           <div className="space-y-1.5">
             <Label>Service type</Label>
@@ -124,12 +119,12 @@ export function ServiceJobFormDialog({ open, onOpenChange, onCreated }: { open: 
           </div>
           {complaints.map((c, i) => (
             <div key={i} className="flex gap-2">
-              <Input placeholder="Describe the complaint" value={c.description} onChange={(e) => setComplaint(i, { description: e.target.value })} />
+              <Input aria-label={`Complaint ${i + 1}`} placeholder="Describe the complaint" value={c.description} onChange={(e) => setComplaint(i, { description: e.target.value })} />
               <Select value={c.priority} onValueChange={(v) => setComplaint(i, { priority: v })}>
                 <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
                 <SelectContent>{SERVICE_PRIORITIES.map((p) => <SelectItem key={p} value={p}>{titleCase(p)}</SelectItem>)}</SelectContent>
               </Select>
-              {complaints.length > 1 && <Button type="button" size="icon" variant="ghost" onClick={() => setComplaints((r) => r.filter((_, idx) => idx !== i))}><Trash2 className="h-4 w-4" /></Button>}
+              {complaints.length > 1 && <Button type="button" size="icon" variant="ghost" aria-label={`Remove complaint ${i + 1}`} onClick={() => setComplaints((r) => r.filter((_, idx) => idx !== i))}><Trash2 className="h-4 w-4" /></Button>}
             </div>
           ))}
         </div>

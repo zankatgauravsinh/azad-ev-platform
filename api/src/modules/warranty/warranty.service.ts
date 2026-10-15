@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   buildPageMeta,
@@ -18,18 +18,33 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { CustomerTimelineService } from '../customers/customer-timeline.service';
 import { SequenceService } from '../sales/sequence.service';
+import { BookingsService, type DeliveredVehicle } from '../sales/bookings.service';
 import { addMonths, daysBetween, defaultCoverage, normaliseCoverage } from './warranty.helpers';
 import { warrantyInclude, technicianNames, type WarrantyRow } from './warranty.include';
 import { toClaimDto } from './warranty-claims.service';
 
 @Injectable()
-export class WarrantyService {
+export class WarrantyService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenant: TenantContext,
     private readonly sequence: SequenceService,
     private readonly timeline: CustomerTimelineService,
+    private readonly bookings: BookingsService,
   ) {}
+
+  onModuleInit(): void {
+    this.bookings.onDelivered((d) => this.issueOnDelivery(d));
+  }
+
+  /**
+   * A delivered vehicle gets its warranty straight away, starting on the delivery date. Skipped when the vehicle
+   * already has one (e.g. it was created by hand before the delivery was recorded).
+   */
+  async issueOnDelivery(d: DeliveredVehicle): Promise<void> {
+    if (await this.prisma.warranty.findFirst({ where: { unitId: d.unitId, status: { not: 'CANCELLED' } }, select: { id: true } })) return;
+    await this.create({ unitId: d.unitId, customerId: d.customerId, bookingId: d.bookingId, saleId: d.saleId, purchaseDate: d.deliveredAt }, d.userId);
+  }
 
   // ── Reads ──────────────────────────────────────────────
   async list(query: ListWarrantiesQuery): Promise<Paginated<WarrantyRecordDto>> {

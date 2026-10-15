@@ -264,8 +264,8 @@ describe('Vehicle Returns (e2e)', () => {
 
     it('cancels the vehicle warranty on completion', async () => {
       const s = await makeDeliveredSale(`CW${stamp}`);
-      const warranty = await http().post('/api/v1/warranties').set('Authorization', auth(ownerToken)).send({ unitId: s.unitId, customerId: s.customerId, periodMonths: 24 }).expect(201);
-      const wId = warranty.body.warranty.id;
+      // The warranty delivery issued.
+      const wId = (await prisma.warranty.findFirstOrThrow({ where: { unitId: s.unitId, status: 'ACTIVE' } })).id;
       const rid = await makeApprovedReturn(s.saleId);
       await http().post(`/api/v1/returns/${rid}/complete`).set('Authorization', auth(ownerToken))
         .send({ disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(201);

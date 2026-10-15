@@ -23,7 +23,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): JSX.E
   const [status, setStatus] = useState<AuthContextValue['status']>('loading');
 
   const loadUser = useCallback(async () => {
-    if (!tokenStore.getAccess()) {
+    // After a reload only the refresh token is left (the access token lives in memory): /auth/me then 401s once
+    // and the API client refreshes the session before retrying it.
+    if (!tokenStore.getAccess() && !tokenStore.getRefresh()) {
       setUser(null);
       setStatus('unauthenticated');
       return;

@@ -24,6 +24,8 @@ const makeBooking = (over: Record<string, any> = {}): any => ({
 
 vi.mock('../hooks', () => ({ useBooking: () => ({ data: h.booking.current, isLoading: false }), useSalesInvalidate: () => () => {} }));
 vi.mock('../components/booking-dialogs', () => ({ PaymentDialog: () => null, FinanceDialog: () => null, InsuranceDialog: () => null, ScheduleDeliveryDialog: () => null, CancelBookingDialog: () => null }));
+vi.mock('@/features/rto-invoices/components/rto-invoice-detail-dialog', () => ({ RtoInvoiceDetailDialog: () => null }));
+vi.mock('@/features/rto-invoices/components/rto-invoice-form-dialog', () => ({ RtoInvoiceFormDialog: () => null }));
 vi.mock('../components/booking-form-dialog', () => ({ BookingFormDialog: () => null }));
 vi.mock('../components/deliver-dialog', () => ({ DeliverDialog: (p: { open: boolean; booking: { id: string } }) => (p.open ? <div data-testid="deliver-dialog" data-booking={p.booking.id} /> : null) }));
 vi.mock('../api', () => ({ salesApi: { deliver: h.deliver, generateInvoice: vi.fn(), invoicePdf: h.invoicePdf } }));

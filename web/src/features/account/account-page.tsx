@@ -40,7 +40,7 @@ export function AccountPage(): JSX.Element {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Welcome, {user.name.split(' ')[0]}</h1>
         <p className="text-sm text-muted-foreground">
-          The showroom dashboard is being built module by module. Your account is ready.
+          Your profile and sign-in details.
         </p>
       </div>
 

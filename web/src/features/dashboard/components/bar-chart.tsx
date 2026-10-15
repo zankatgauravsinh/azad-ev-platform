@@ -12,7 +12,7 @@ export function BarChart({ points, tone = 'accent' }: { points: MonthlyPoint[]; 
       {points.map((p) => {
         const h = (Number(p.amount) / max) * 100;
         return (
-          <div key={p.month} className="flex flex-1 flex-col items-center gap-1">
+          <div key={p.month} className="flex h-full flex-1 flex-col items-center gap-1">
             <span className="text-[10px] font-medium tabular-nums text-muted-foreground">{formatCompactPaise(p.amount)}</span>
             <div className="flex w-full flex-1 items-end">
               <div

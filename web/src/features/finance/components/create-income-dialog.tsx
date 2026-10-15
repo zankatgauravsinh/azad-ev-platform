@@ -67,7 +67,7 @@ export function CreateIncomeDialog({ open, onOpenChange }: { open: boolean; onOp
             <div className="space-y-1"><Label>Amount (₹)</Label><Input type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
             <div className="space-y-1"><Label>GST (₹)</Label><Input type="number" min={0} value={gst} onChange={(e) => setGst(e.target.value)} placeholder="0" /></div>
           </div>
-          <div className="space-y-1"><Label>Customer (optional)</Label><CustomerCombobox value={customerId} onChange={(id) => setCustomerId(id)} /></div>
+          <div className="space-y-1"><Label htmlFor="income-customer">Customer (optional)</Label><CustomerCombobox id="income-customer" value={customerId} onChange={(id) => setCustomerId(id)} /></div>
           <div className="space-y-1"><Label>Reference</Label><Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" /></div>
           <div className="space-y-1"><Label>Description</Label><Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" /></div>
         </div>

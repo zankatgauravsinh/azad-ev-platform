@@ -11,6 +11,11 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useCategories, useFinanceMutations, useVendors } from '../hooks';
 import { payMethodLabel } from '../meta';
+import { todayDateInput } from '@/features/delivery/components/delivery-date-field';
+
+function FieldError({ message }: { message: string | null }): JSX.Element | null {
+  return message ? <p role="alert" className="text-xs text-destructive">{message}</p> : null;
+}
 
 export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }): JSX.Element {
   const { createExpense } = useFinanceMutations();
@@ -25,15 +30,27 @@ export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onO
   const [dueDate, setDueDate] = useState('');
   const [reference, setReference] = useState('');
   const [description, setDescription] = useState('');
+  const [expenseDate, setExpenseDate] = useState(todayDateInput);
+  // Field errors show once the user has tried to submit, next to the field they concern.
+  const [tried, setTried] = useState(false);
 
-  const reset = (): void => { setCategoryId(''); setVendorId(''); setAmount(''); setGst(''); setPaymentMethod('CASH'); setPaid(true); setDueDate(''); setReference(''); setDescription(''); };
+  const reset = (): void => { setCategoryId(''); setVendorId(''); setAmount(''); setGst(''); setPaymentMethod('CASH'); setPaid(true); setDueDate(''); setReference(''); setDescription(''); setExpenseDate(todayDateInput()); setTried(false); };
+
+  const rupees = Number(amount);
+  const errors = {
+    category: !categoryId ? 'Select a category' : null,
+    amount: !amount ? 'Enter the amount' : !Number.isFinite(rupees) || rupees <= 0 ? 'Enter an amount greater than zero' : null,
+    date: !expenseDate ? 'Choose the expense date' : expenseDate > todayDateInput() ? 'The expense date cannot be in the future' : null,
+  };
+  const shown = (e: string | null): string | null => (tried ? e : null);
 
   const submit = async (asDraft: boolean): Promise<void> => {
-    if (!categoryId) { toast.error('Select a category'); return; }
-    const rupees = Number(amount);
-    if (!Number.isFinite(rupees) || rupees <= 0) { toast.error('Enter a valid amount'); return; }
+    setTried(true);
+    if (errors.category || errors.amount || errors.date) return;
     try {
       const res = await createExpense.mutateAsync({
+        // Today is left to the server (the exact time is kept); an earlier day is sent as that date.
+        expenseDate: expenseDate === todayDateInput() ? undefined : new Date(expenseDate),
         categoryId,
         vendorId: vendorId || undefined,
         amount: Math.round(rupees * 100),
@@ -58,11 +75,12 @@ export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onO
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>Category</Label>
+              <Label htmlFor="expense-category">Category</Label>
               <Select value={categoryId} onValueChange={setCategoryId}>
-                <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                <SelectTrigger id="expense-category" aria-invalid={Boolean(shown(errors.category))}><SelectValue placeholder="Select" /></SelectTrigger>
                 <SelectContent>{categories?.filter((c) => c.active).map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
               </Select>
+              <FieldError message={shown(errors.category)} />
             </div>
             <div className="space-y-1">
               <Label>Vendor (optional)</Label>
@@ -71,7 +89,11 @@ export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onO
                 <SelectContent><SelectItem value="none">None</SelectItem>{vendors?.data.map((v) => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div className="space-y-1"><Label>Amount (₹)</Label><Input type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+            <div className="space-y-1">
+              <Label htmlFor="expense-amount">Amount (₹)</Label>
+              <Input id="expense-amount" type="number" min={0} value={amount} aria-invalid={Boolean(shown(errors.amount))} onChange={(e) => setAmount(e.target.value)} />
+              <FieldError message={shown(errors.amount)} />
+            </div>
             <div className="space-y-1"><Label>GST (₹)</Label><Input type="number" min={0} value={gst} onChange={(e) => setGst(e.target.value)} placeholder="0" /></div>
             <div className="space-y-1">
               <Label>Payment method</Label>
@@ -81,6 +103,11 @@ export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onO
               </Select>
             </div>
             <div className="space-y-1"><Label>Reference</Label><Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" /></div>
+            <div className="space-y-1">
+              <Label htmlFor="expense-date">Expense date</Label>
+              <Input id="expense-date" type="date" max={todayDateInput()} value={expenseDate} aria-invalid={Boolean(shown(errors.date))} onChange={(e) => setExpenseDate(e.target.value)} />
+              <FieldError message={shown(errors.date)} />
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-4">
             <label className="flex items-center gap-2 text-sm"><Switch checked={paid} onCheckedChange={setPaid} /> Paid</label>

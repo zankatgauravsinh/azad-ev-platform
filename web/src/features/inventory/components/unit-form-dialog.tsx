@@ -42,6 +42,7 @@ const formSchema = z.object({
   sellingPrice: optionalRupees,
   supplier: z.string().optional(),
   location: z.string().optional(),
+  keyNumber: z.string().max(30).optional(),
   notes: z.string().optional(),
   status: z.enum(UNIT_STATUSES as [UnitStatus, ...UnitStatus[]]),
 });
@@ -151,6 +152,8 @@ export function UnitFormDialog({
       ...(values.sellingPrice === '' ? {} : { sellingPrice: Number(rupeesToPaise(values.sellingPrice)) }),
       supplier: values.supplier || undefined,
       location: values.location || undefined,
+      // Sent even when empty on an edit, so a wrong key number can be removed.
+      keyNumber: isEdit ? values.keyNumber ?? '' : values.keyNumber || undefined,
       notes: values.notes || undefined,
     };
     try {
@@ -306,6 +309,9 @@ export function UnitFormDialog({
           <Field label="Location" htmlFor="unit-location">
             <Input id="unit-location" placeholder="e.g. Showroom floor" {...register('location')} />
           </Field>
+          <Field label="Key no." htmlFor="unit-key">
+            <Input id="unit-key" className="uppercase" placeholder="Printed on the RTO invoice" {...register('keyNumber')} />
+          </Field>
 
           {!isEdit && (
             <Field label="Initial status" htmlFor="unit-status">
@@ -411,6 +417,7 @@ function emptyValues(): FormValues {
     sellingPrice: '',
     supplier: '',
     location: '',
+    keyNumber: '',
     notes: '',
     status: UnitStatus.AVAILABLE,
   };
@@ -428,6 +435,7 @@ function toFormValues(unit: UnitDetail): FormValues {
     sellingPrice: paiseToRupees(unit.sellingPrice),
     supplier: unit.supplier ?? '',
     location: unit.location ?? '',
+    keyNumber: unit.keyNumber ?? '',
     notes: unit.notes ?? '',
     status: unit.status,
   };

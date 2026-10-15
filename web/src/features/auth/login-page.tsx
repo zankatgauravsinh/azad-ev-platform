@@ -41,7 +41,7 @@ export function LoginPage(): JSX.Element {
     <div className="flex min-h-screen items-center justify-center bg-secondary/40 p-4">
       <Card className="w-full max-w-sm shadow-lg">
         <CardHeader className="items-center text-center">
-          <img src="/logo.png" alt="AZAD EV" className="mb-2 h-auto w-48" />
+          <img src="/logo.png" alt="AZAD EV" className="mb-2 h-auto w-48 dark:rounded-lg dark:bg-white dark:p-2" />
           <CardDescription>Sign in to the showroom dashboard</CardDescription>
         </CardHeader>
         <CardContent>
@@ -53,7 +53,7 @@ export function LoginPage(): JSX.Element {
                 type="email"
                 autoComplete="email"
                 autoFocus
-                placeholder="owner@azadev.in"
+                placeholder="you@example.com"
                 aria-invalid={Boolean(errors.email)}
                 {...register('email')}
               />

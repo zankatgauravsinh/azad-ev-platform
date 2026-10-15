@@ -23,19 +23,19 @@ const saveBtn = () => screen.queryByRole('button', { name: 'Save permissions' })
 beforeEach(() => { h.update.mockReset().mockResolvedValue({}); h.toastError.mockReset(); });
 
 describe('PermissionEditorDialog', () => {
-  it('renders all 73 catalog permissions, grouped, with current selection loaded', () => {
+  it('renders every catalog permission, grouped, with current selection loaded', () => {
     open();
-    expect(boxes().length).toBe(PERMISSION_KEYS.length); // 73
+    expect(boxes().length).toBe(PERMISSION_KEYS.length); 
     expect(box('View customers')).toHaveAttribute('aria-checked', 'true');
     expect(box('View inventory')).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByText('2 of 73')).toBeInTheDocument();
+    expect(screen.getByText(`2 of ${PERMISSION_KEYS.length}`)).toBeInTheDocument();
   });
 
   it('toggles an individual permission', () => {
     open();
     fireEvent.click(box('View inventory'));
     expect(box('View inventory')).toHaveAttribute('aria-checked', 'true');
-    expect(screen.getByText('3 of 73')).toBeInTheDocument();
+    expect(screen.getByText(`3 of ${PERMISSION_KEYS.length}`)).toBeInTheDocument();
   });
 
   it('per-module Select all / Clear affects only that module', () => {
@@ -51,7 +51,7 @@ describe('PermissionEditorDialog', () => {
   it('Clear all empties the set and saves [] (zero permissions allowed)', async () => {
     open();
     fireEvent.click(screen.getByRole('button', { name: 'Clear all' }));
-    expect(screen.getByText('0 of 73')).toBeInTheDocument();
+    expect(screen.getByText(`0 of ${PERMISSION_KEYS.length}`)).toBeInTheDocument();
     fireEvent.click(saveBtn()!);
     await waitFor(() => expect(h.update).toHaveBeenCalledWith({ id: 'r1', permissionKeys: [] }));
   });

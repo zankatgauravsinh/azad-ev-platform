@@ -51,7 +51,9 @@ Then decide, per `deploy/DEPLOY.md`:
 Follow `deploy/DEPLOY.md` §2 exactly: `scripts/backup-docker.sh` (`BACKUP_ARCHIVE_VALID`), then
 `scripts/restore-test.sh` (`RESTORE_TEST_PASSED`) with the image from the `.meta` file. Record the archive
 name, its SHA-256 and both result lines, copy the archive and its `.sha256`, `.counts` and `.meta` off the
-server, verify the checksum there, and back up `uploads/`. `BACKUP_ARCHIVE_VALID` alone is not enough.
+server, verify the checksum there, and back up `uploads/`. `BACKUP_ARCHIVE_VALID` alone is not enough, and
+neither is `RESTORE_TEST_PASSED_TABLES_ONLY` (row counts not verified — the data changed during the dump):
+back up again with the API stopped until `RESTORE_TEST_PASSED`.
 
 ## 4. Run the compatibility checks against a snapshot — never against production
 

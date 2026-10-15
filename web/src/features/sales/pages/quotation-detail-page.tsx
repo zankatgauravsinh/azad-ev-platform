@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Copy, FileText, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
+import { BookingStatus, quotationConversionBlocker } from '@azad/shared';
 import { useCan } from '@/features/auth/auth-context';
+import { todayDateInput } from '@/features/delivery/components/delivery-date-field';
 import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaise } from '@/lib/money';
 import { saveBlob } from '@/lib/download';
@@ -24,6 +26,7 @@ export function QuotationDetailPage(): JSX.Element {
   const [convertOpen, setConvertOpen] = useState(false);
 
   if (isLoading || !q) return <div className="space-y-4"><Skeleton className="h-8 w-56" /><Skeleton className="h-40 w-full" /></div>;
+  const convertBlocker = quotationConversionBlocker(q, todayDateInput());
 
   const rows = [
     { label: 'Ex-showroom', value: q.exShowroom },
@@ -49,12 +52,13 @@ export function QuotationDetailPage(): JSX.Element {
         <div>
           <div className="flex items-center gap-2"><h1 className="text-2xl font-bold tracking-tight">{q.code}</h1><QuotationStatusBadge status={q.status} /></div>
           <p className="mt-1 text-sm text-muted-foreground">{q.customer.name} · {q.customer.phone} · {q.variant.model.name} {q.variant.name} {q.variant.colour}</p>
+          {canConvert && convertBlocker && (!q.booking || q.booking.status === BookingStatus.CANCELLED) && <p className="mt-1 text-sm text-amber-600">{convertBlocker}</p>}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={pdf}><FileText className="h-4 w-4" /> PDF</Button>
           {canCreate && <Button variant="outline" onClick={duplicate}><Copy className="h-4 w-4" /> Duplicate</Button>}
-          {canConvert && !q.booking && <Button onClick={() => setConvertOpen(true)}><ShoppingCart className="h-4 w-4" /> Convert to booking</Button>}
-          {q.booking && <Button variant="outline" onClick={() => navigate(`/bookings/${q.booking!.id}`)}>View booking {q.booking.code}</Button>}
+          {canConvert && !convertBlocker && <Button onClick={() => setConvertOpen(true)}><ShoppingCart className="h-4 w-4" /> Convert to booking</Button>}
+          {q.booking && <Button variant="outline" onClick={() => navigate(`/bookings/${q.booking!.id}`)}>View {q.booking.status === BookingStatus.CANCELLED ? 'cancelled ' : ''}booking {q.booking.code}</Button>}
         </div>
       </div>
 
@@ -79,7 +83,7 @@ export function QuotationDetailPage(): JSX.Element {
         </CardContent></Card>
       </div>
 
-      <ConvertQuotationDialog open={convertOpen} onOpenChange={setConvertOpen} quotationId={q.id} />
+      <ConvertQuotationDialog open={convertOpen} onOpenChange={setConvertOpen} quotation={q} />
     </div>
   );
 }

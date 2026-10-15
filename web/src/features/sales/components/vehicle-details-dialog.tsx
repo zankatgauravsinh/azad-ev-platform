@@ -96,6 +96,7 @@ export function VehicleDetailsDialog({
                 { label: 'VIN', value: mono(unit.vin) },
                 { label: 'Motor no.', value: mono(unit.motorNumber) },
                 { label: 'Battery no.', value: mono(unit.batteryNumber) },
+                { label: 'Key no.', value: unit.keyNumber ? mono(unit.keyNumber) : '—' },
               ]}
             />
             <Section

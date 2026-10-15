@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Banknote, Download, FileText, Plus, Printer, Star, Trash2, Wrench } from 'lucide-react';
@@ -17,6 +17,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PaymentStatusBadge } from '@/features/sales/components/status-badges';
 import { useServiceJob, useLabourItems, useServiceInvalidate } from '../hooks';
@@ -39,6 +41,7 @@ export function ServiceDetailPage(): JSX.Element {
   const canViewLabour = can('labour.view'); // labour-catalog read (picker)
   const { data: job, isLoading } = useServiceJob(id, canView);
   const [busy, setBusy] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   const run = async (fn: () => Promise<unknown>, ok?: string): Promise<void> => {
     setBusy(true);
@@ -73,7 +76,7 @@ export function ServiceDetailPage(): JSX.Element {
         </div>
         <div className="flex flex-wrap gap-2">
           {canWorkflow && nextStatuses.map((s) => (
-            <Button key={s} size="sm" variant={s === 'CANCELLED' ? 'outline' : 'default'} disabled={busy} className={s === 'CANCELLED' ? 'text-destructive' : ''} onClick={() => run(() => serviceApi.changeStatus(job.id, s), `Moved to ${titleCase(s)}`)}>
+            <Button key={s} size="sm" variant={s === 'CANCELLED' ? 'outline' : 'default'} disabled={busy} className={s === 'CANCELLED' ? 'text-destructive' : ''} onClick={() => (s === 'CANCELLED' ? setCancelOpen(true) : run(() => serviceApi.changeStatus(job.id, s), `Moved to ${titleCase(s)}`))}>
               {titleCase(s)}
             </Button>
           ))}
@@ -101,6 +104,7 @@ export function ServiceDetailPage(): JSX.Element {
         <Inspection job={job} run={run} busy={busy} canWorkflow={canWorkflow} />
         <Feedback job={job} run={run} busy={busy} canWorkflow={canWorkflow} />
       </div>
+      <CancelJobDialog open={cancelOpen} onOpenChange={setCancelOpen} code={job.code} onConfirm={(reason) => run(() => serviceApi.changeStatus(job.id, 'CANCELLED', reason), `Job card ${job.code} cancelled`)} />
     </div>
   );
 }
@@ -165,7 +169,7 @@ function Parts({ job, run, busy, canParts, canViewCatalog }: Section & { canPart
         {job.parts.map((p) => (
           <li key={p.id} className="flex items-center justify-between py-1.5">
             <span>{p.name} × {p.qty}{p.warranty && <span className="ml-1 text-xs text-accent">(warranty)</span>}</span>
-            <span className="flex items-center gap-2"><span className="tabular-nums">{formatPaise(p.lineTotal)}</span>{canParts && <Button size="icon" variant="ghost" className="h-6 w-6" disabled={busy} onClick={() => run(() => serviceApi.removePart(job.id, p.id))}><Trash2 className="h-3.5 w-3.5" /></Button>}</span>
+            <span className="flex items-center gap-2"><span className="tabular-nums">{formatPaise(p.lineTotal)}</span>{canParts && <Button size="icon" variant="ghost" className="h-6 w-6" aria-label={`Remove ${p.name}`} disabled={busy} onClick={() => run(() => serviceApi.removePart(job.id, p.id))}><Trash2 className="h-3.5 w-3.5" /></Button>}</span>
           </li>
         ))}
       </ul>
@@ -198,7 +202,7 @@ function Labour({ job, run, busy, canLabour, canViewCatalog }: Section & { canLa
         {job.labour.map((l) => (
           <li key={l.id} className="flex items-center justify-between py-1.5">
             <span>{l.description}</span>
-            <span className="flex items-center gap-2"><span className="tabular-nums">{formatPaise(l.cost)}</span>{canLabour && <Button size="icon" variant="ghost" className="h-6 w-6" disabled={busy} onClick={() => run(() => serviceApi.removeLabour(job.id, l.id))}><Trash2 className="h-3.5 w-3.5" /></Button>}</span>
+            <span className="flex items-center gap-2"><span className="tabular-nums">{formatPaise(l.cost)}</span>{canLabour && <Button size="icon" variant="ghost" className="h-6 w-6" aria-label={`Remove ${l.description}`} disabled={busy} onClick={() => run(() => serviceApi.removeLabour(job.id, l.id))}><Trash2 className="h-3.5 w-3.5" /></Button>}</span>
           </li>
         ))}
       </ul>
@@ -294,5 +298,34 @@ function Feedback({ job, run, busy, canWorkflow }: Section & { canWorkflow: bool
         </div>
       )}
     </Panel>
+  );
+}
+
+/** Cancelling a job card cannot be undone: it asks for a reason, recorded in the job's notes. */
+function CancelJobDialog({ open, onOpenChange, code, onConfirm }: { open: boolean; onOpenChange: (o: boolean) => void; code: string; onConfirm: (reason: string) => Promise<void> }): JSX.Element {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) setReason(''); }, [open]);
+  const confirm = async (): Promise<void> => {
+    setBusy(true);
+    try { await onConfirm(reason.trim()); onOpenChange(false); } finally { setBusy(false); }
+  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Cancel job card {code}?</DialogTitle>
+          <DialogDescription>This cannot be undone. Spare parts on the job go back to stock, and the job can no longer be changed.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label htmlFor="cancel-job-reason">Reason</Label>
+          <Textarea id="cancel-job-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Customer withdrew the vehicle" />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Keep job card</Button>
+          <Button variant="destructive" onClick={confirm} disabled={busy || !reason.trim()}>{busy ? 'Cancelling…' : 'Cancel job card'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

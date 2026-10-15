@@ -223,7 +223,7 @@ describe('Catalogue identity protection (e2e)', () => {
     const c = await catalogue();
     const u = await unit(c.variantId);
     const saleId = await deliver(u);
-    await warranty(u);
+    expect(await prisma.warranty.count({ where: { unitId: u } })).toBe(1); // issued on delivery
     const history = async () => ({
       sale: await prisma.sale.findUniqueOrThrow({ where: { id: saleId } }),
       booking: await prisma.booking.findFirstOrThrow({ where: { unitId: u } }),

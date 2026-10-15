@@ -34,7 +34,7 @@ export function StatCard({
         active && 'border-accent ring-1 ring-accent',
       )}
     >
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="truncate text-xs font-medium uppercase tracking-wide text-muted-foreground" title={label}>{label}</p>
       {loading ? (
         <Skeleton className="mt-2 h-7 w-16" />
       ) : (

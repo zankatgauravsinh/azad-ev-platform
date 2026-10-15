@@ -7,6 +7,7 @@ import { useVariants } from '@/features/inventory/hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { FormField } from '@/components/common/form-field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { salesApi } from '../api';
@@ -71,13 +72,12 @@ export function QuotationFormDialog({ open, onOpenChange }: { open: boolean; onO
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label>Customer</Label>
+              <Label htmlFor="quotation-customer">Customer</Label>
               <Controller control={control} name="customerId" render={({ field }) => (
-                <CustomerCombobox value={field.value} onChange={(id) => field.onChange(id)} />
+                <CustomerCombobox id="quotation-customer" value={field.value} onChange={(id) => field.onChange(id)} />
               )} />
             </div>
-            <div className="space-y-1.5">
-              <Label>Scooter (variant)</Label>
+            <FormField label="Scooter (variant)">
               <Controller control={control} name="variantId" render={({ field }) => (
                 <Select value={field.value} onValueChange={(val) => {
                   field.onChange(val);
@@ -90,7 +90,7 @@ export function QuotationFormDialog({ open, onOpenChange }: { open: boolean; onO
                   </SelectContent>
                 </Select>
               )} />
-            </div>
+            </FormField>
           </div>
 
           <PriceFields register={register} values={values} />
@@ -98,16 +98,16 @@ export function QuotationFormDialog({ open, onOpenChange }: { open: boolean; onO
           <div>
             <p className="mb-2 text-sm font-semibold">Finance estimate (optional)</p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="space-y-1.5"><Label>Down (₹)</Label><Input type="number" min={0} {...register('financeDownPayment', { valueAsNumber: true })} /></div>
-              <div className="space-y-1.5"><Label>Loan (₹)</Label><Input type="number" min={0} {...register('financeLoanAmount', { valueAsNumber: true })} /></div>
-              <div className="space-y-1.5"><Label>EMI (₹)</Label><Input type="number" min={0} {...register('financeEmi', { valueAsNumber: true })} /></div>
-              <div className="space-y-1.5"><Label>Tenure (mo)</Label><Input type="number" min={0} {...register('financeTenureMonths', { valueAsNumber: true })} /></div>
+              <FormField label="Down (₹)"><Input type="number" min={0} {...register('financeDownPayment', { valueAsNumber: true })} /></FormField>
+              <FormField label="Loan (₹)"><Input type="number" min={0} {...register('financeLoanAmount', { valueAsNumber: true })} /></FormField>
+              <FormField label="EMI (₹)"><Input type="number" min={0} {...register('financeEmi', { valueAsNumber: true })} /></FormField>
+              <FormField label="Tenure (mo)"><Input type="number" min={0} {...register('financeTenureMonths', { valueAsNumber: true })} /></FormField>
             </div>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5"><Label>Valid until</Label><Input type="date" {...register('validUntil')} /></div>
-            <div className="space-y-1.5"><Label>Notes</Label><Input {...register('notes')} /></div>
+            <FormField label="Valid until"><Input type="date" {...register('validUntil')} /></FormField>
+            <FormField label="Notes"><Input {...register('notes')} /></FormField>
           </div>
           {errors.customerId && <p className="text-xs text-destructive">Customer is required</p>}
 

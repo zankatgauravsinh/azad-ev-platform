@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { isAfterBusinessToday, resolveTimeZone } from '../../common/utils/business-date';
 import { Prisma } from '@prisma/client';
 import {
   NotificationPriority,
@@ -67,6 +68,7 @@ export class ExpensesService {
       if (!vendor) throw new NotFoundException('Vendor not found');
     }
     const expenseDate = dto.expenseDate ?? new Date();
+    await this.assertNotFuture(dto.expenseDate);
     await this.closing.assertOpen(expenseDate);
     const amount = BigInt(dto.amount);
     const gstAmount = BigInt(dto.gstAmount);
@@ -103,6 +105,7 @@ export class ExpensesService {
     const existing = await this.getRowOrThrow(id);
     await this.closing.assertOpen(existing.expenseDate);
     if (dto.expenseDate) await this.closing.assertOpen(dto.expenseDate);
+    await this.assertNotFuture(dto.expenseDate);
     // Financial fields freeze once approved/paid so approved figures (and P&L /
     // vendor outstanding) can't be altered after the fact.
     if ((existing.status === 'APPROVED' || existing.paid) && (dto.amount !== undefined || dto.gstAmount !== undefined || dto.expenseDate !== undefined || dto.vendorId !== undefined)) {
@@ -267,5 +270,12 @@ export class ExpensesService {
       })),
       createdAt: e.createdAt.toISOString(),
     };
+  }
+
+  /** An expense is recorded for a day it was incurred — today or earlier; a bill due later carries a due date. */
+  private async assertNotFuture(expenseDate: Date | undefined): Promise<void> {
+    if (!expenseDate) return;
+    const setting = await this.prisma.companySetting.findFirst({ select: { timezone: true } });
+    if (isAfterBusinessToday(expenseDate, new Date(), resolveTimeZone(setting?.timezone))) throw new BadRequestException('The expense date cannot be in the future');
   }
 }

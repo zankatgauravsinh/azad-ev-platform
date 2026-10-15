@@ -175,9 +175,8 @@ describe('Delivery (e2e)', () => {
     });
 
     it('surfaces delivery bookingId, payment context and warrantyId in the customer related payload', async () => {
-      // Issue a formal warranty so the customer warranty tab can open its detail dialog.
-      const warranty = await http().post('/api/v1/warranties').set('Authorization', auth(ownerToken))
-        .send({ unitId: pUnitId, customerId: pCustomerId, periodMonths: 24 }).expect(201);
+      // Delivery issued the vehicle's warranty, so the customer warranty tab can open its detail dialog.
+      const warranty = await prisma.warranty.findFirstOrThrow({ where: { unitId: pUnitId } });
       const related = await http().get(`/api/v1/customers/${pCustomerId}/related`).set('Authorization', auth(ownerToken)).expect(200);
 
       expect(related.body.bookings.some((b: { id: string }) => b.id === pBookingId)).toBe(true);
@@ -191,7 +190,7 @@ describe('Delivery (e2e)', () => {
       expect(related.body.deliveries[0].bookingId).toBe(pBookingId);
       // Warranty carries the record id the warranty dialog opens with.
       const war = related.body.warranty.find((w: { unitId: string }) => w.unitId === pUnitId);
-      expect(war.warrantyId).toBe(warranty.body.warranty.id);
+      expect(war.warrantyId).toBe(warranty.id);
     });
 
     it('keeps the outstanding balance visible after delivery and leaves payment history untouched', async () => {

@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Copy, FileText, MoreHorizontal, Plus, Search, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
-import { QUOTATION_STATUSES, QuotationStatus, type ListQuotationsQuery } from '@azad/shared';
+import { QUOTATION_STATUSES, QuotationStatus, quotationConversionBlocker, type ListQuotationsQuery } from '@azad/shared';
+import { todayDateInput } from '@/features/delivery/components/delivery-date-field';
 import { useCan } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaise } from '@/lib/money';
@@ -33,7 +34,7 @@ export function QuotationsListPage(): JSX.Element {
   const [status, setStatus] = useState<QuotationStatus | 'ALL'>('ALL');
   const [page, setPage] = useState(1);
   const [formOpen, setFormOpen] = useState(false);
-  const [convertId, setConvertId] = useState<string | null>(null);
+  const [converting, setConverting] = useState<QuotationDto | null>(null);
 
   const query: Partial<ListQuotationsQuery> = useMemo(() => ({ page, pageSize: 20, q: q || undefined, status: status === 'ALL' ? undefined : status }), [page, q, status]);
   const { data, isLoading, isFetching } = useQuotations(query);
@@ -61,11 +62,11 @@ export function QuotationsListPage(): JSX.Element {
       key: 'actions', header: '', align: 'right',
       render: (r) => (
         <DropdownMenu>
-          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-8 w-8" aria-label="More actions"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
             <DropdownMenuItem onClick={() => downloadPdf(r.id, r.code)}><FileText className="h-4 w-4" /> Download PDF</DropdownMenuItem>
             {canCreate && <DropdownMenuItem onClick={() => duplicate(r.id)}><Copy className="h-4 w-4" /> Duplicate</DropdownMenuItem>}
-            {canConvert && !r.booking && <DropdownMenuItem onClick={() => setConvertId(r.id)}><ShoppingCart className="h-4 w-4" /> Convert to booking</DropdownMenuItem>}
+            {canConvert && !quotationConversionBlocker(r, todayDateInput()) && <DropdownMenuItem onClick={() => setConverting(r)}><ShoppingCart className="h-4 w-4" /> Convert to booking</DropdownMenuItem>}
             {canUpdate && r.status === QuotationStatus.DRAFT && <DropdownMenuItem onClick={() => setStatusOf(r.id, QuotationStatus.SENT)}>Mark Sent</DropdownMenuItem>}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -89,7 +90,7 @@ export function QuotationsListPage(): JSX.Element {
       <DataTable columns={columns} rows={data?.data ?? []} getRowId={(r) => r.id} page={data?.meta} onPageChange={setPage} loading={isLoading || isFetching} onRowClick={(r) => navigate(`/quotations/${r.id}`)}
         emptyState={<EmptyState icon={FileText} title="No quotations" description="Create your first estimate." action={canCreate ? <Button onClick={() => setFormOpen(true)}><Plus className="h-4 w-4" /> New quotation</Button> : undefined} />} />
       <QuotationFormDialog open={formOpen} onOpenChange={setFormOpen} />
-      {convertId && <ConvertQuotationDialog open={Boolean(convertId)} onOpenChange={(o) => !o && setConvertId(null)} quotationId={convertId} />}
+      {converting && <ConvertQuotationDialog open={Boolean(converting)} onOpenChange={(o) => !o && setConverting(null)} quotation={converting} />}
     </div>
   );
 }

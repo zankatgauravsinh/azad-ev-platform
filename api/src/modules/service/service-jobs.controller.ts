@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import {
@@ -64,6 +64,13 @@ export class ServiceJobsController {
   @ApiOperation({ summary: 'Active technicians for assignment' })
   technicians() {
     return this.jobs.technicians();
+  }
+
+  @Get('customer-vehicles')
+  @Permissions('service.create')
+  @ApiOperation({ summary: "The customer's vehicles, for the job card form" })
+  customerVehicles(@Query('customerId', new ParseUUIDPipe()) customerId: string) {
+    return this.jobs.customerVehicles(customerId);
   }
 
   @Post()

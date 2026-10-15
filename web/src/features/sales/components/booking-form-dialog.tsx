@@ -7,13 +7,14 @@ import { useAvailableUnits } from '@/features/inventory/hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { FormField } from '@/components/common/form-field';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { salesApi, type BookingDto } from '../api';
 import { useSalesInvalidate } from '../hooks';
 import { CustomerCombobox } from './customer-combobox';
-import { PriceFields } from './price-fields';
+import { PriceFields, computeOnRoad } from './price-fields';
 
 interface FormValues {
   customerId: string; unitId: string;
@@ -52,6 +53,8 @@ export function BookingFormDialog({ open, onOpenChange, booking }: { open: boole
   const { control, register, handleSubmit, reset, watch, setValue, formState: { isSubmitting } } = useForm<FormValues>({ defaultValues: empty });
   useEffect(() => { if (open) reset(booking ? fromBooking(booking) : empty); }, [open, booking, reset]);
   const values = watch();
+  const onRoad = computeOnRoad(values);
+  const advanceTooHigh = !isEdit && values.advanceAmount > onRoad;
 
   const onSubmit = handleSubmit(async (v) => {
     try {
@@ -71,6 +74,7 @@ export function BookingFormDialog({ open, onOpenChange, booking }: { open: boole
       }
       if (!v.customerId) { toast.error('Select a customer'); return; }
       if (!v.unitId) { toast.error('Select an available scooter'); return; }
+      if (v.advanceAmount > computeOnRoad(v)) { toast.error('The advance cannot exceed the on-road total'); return; }
       await salesApi.createBooking({
         customerId: v.customerId,
         unitId: v.unitId,
@@ -102,23 +106,22 @@ export function BookingFormDialog({ open, onOpenChange, booking }: { open: boole
         <DialogHeader>
           <DialogTitle>{isEdit ? `Edit booking ${booking!.code}` : 'New booking'}</DialogTitle>
           <DialogDescription>
-            {isEdit ? 'Update pricing, delivery and notes. Customer and vehicle cannot be changed.' : 'Allocates a specific scooter (VIN) to the customer.'}
+            {isEdit ? 'Update delivery, finance and insurance needs, and notes. Pricing, customer and vehicle are fixed once booked.' : 'Allocates a specific scooter (VIN) to the customer.'}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
           {isEdit ? (
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5"><Label>Customer</Label><Input value={booking!.customer.name} disabled readOnly /></div>
-              <div className="space-y-1.5"><Label>Scooter</Label><Input value={`${booking!.unit.variant.model.name} ${booking!.unit.variant.name} · ${booking!.unit.vin}`} disabled readOnly /></div>
+              <FormField label="Customer"><Input value={booking!.customer.name} disabled readOnly /></FormField>
+              <FormField label="Scooter"><Input value={`${booking!.unit.variant.model.name} ${booking!.unit.variant.name} · ${booking!.unit.vin}`} disabled readOnly /></FormField>
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>Customer</Label>
-                <Controller control={control} name="customerId" render={({ field }) => <CustomerCombobox value={field.value} onChange={(id) => field.onChange(id)} />} />
+                <Label htmlFor="booking-customer">Customer</Label>
+                <Controller control={control} name="customerId" render={({ field }) => <CustomerCombobox id="booking-customer" value={field.value} onChange={(id) => field.onChange(id)} />} />
               </div>
-              <div className="space-y-1.5">
-                <Label>Scooter (available VIN)</Label>
+              <FormField label="Scooter (available VIN)">
                 <Controller control={control} name="unitId" render={({ field }) => (
                   <Select value={field.value} onValueChange={(val) => {
                     field.onChange(val);
@@ -127,11 +130,11 @@ export function BookingFormDialog({ open, onOpenChange, booking }: { open: boole
                   }}>
                     <SelectTrigger><SelectValue placeholder="Select scooter" /></SelectTrigger>
                     <SelectContent>
-                      {(units?.data ?? []).map((u) => <SelectItem key={u.id} value={u.id}>{u.variant.model.name} {u.variant.name} · {u.variant.colour} · {u.vin}</SelectItem>)}
+                      {(units?.data ?? []).map((u) => <SelectItem key={u.id} value={u.id}><span className="font-mono">{u.vin}</span> · {u.variant.model.name} {u.variant.name} · {u.variant.colour}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 )} />
-              </div>
+              </FormField>
             </div>
           )}
 
@@ -144,19 +147,23 @@ export function BookingFormDialog({ open, onOpenChange, booking }: { open: boole
           )}
 
           <div className="grid gap-4 sm:grid-cols-3">
-            {!isEdit && <div className="space-y-1.5"><Label>Advance (₹)</Label><Input type="number" min={0} {...register('advanceAmount', { valueAsNumber: true })} /></div>}
-            <div className="space-y-1.5"><Label>Expected delivery</Label><Input type="date" {...register('expectedDelivery')} /></div>
+            {!isEdit && (
+              <FormField label="Advance (₹)">
+                <Input type="number" min={0} max={onRoad} aria-invalid={advanceTooHigh} {...register('advanceAmount', { valueAsNumber: true })} />
+                {advanceTooHigh && <p className="text-xs text-destructive">Cannot exceed the on-road total</p>}
+              </FormField>
+            )}
+            <FormField label="Expected delivery"><Input type="date" {...register('expectedDelivery')} /></FormField>
             <div className="flex items-end gap-4">
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" {...register('financeRequired')} /> Finance</label>
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" {...register('insuranceRequired')} /> Insurance</label>
+              <label htmlFor="booking-finance" className="flex items-center gap-2 text-sm"><input id="booking-finance" type="checkbox" {...register('financeRequired')} /> Finance required</label>
+              <label htmlFor="booking-insurance" className="flex items-center gap-2 text-sm"><input id="booking-insurance" type="checkbox" {...register('insuranceRequired')} /> Insurance required</label>
             </div>
           </div>
 
-          <div className="space-y-1.5"><Label>Notes</Label><Textarea rows={2} {...register('notes')} placeholder="Internal booking notes" /></div>
-
+          <FormField label="Notes"><Textarea rows={2} {...register('notes')} placeholder="Internal booking notes" /></FormField>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create booking'}</Button>
+            <Button type="submit" disabled={isSubmitting || advanceTooHigh}>{isSubmitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create booking'}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

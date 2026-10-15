@@ -18,6 +18,7 @@ import { TenantContext } from '../../tenant/tenant-context.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.service';
 import { BookingsService } from '../sales/bookings.service';
+import { deliveryLowerBound } from '../sales/delivery-date';
 
 interface UploadedFile {
   buffer: Buffer;
@@ -45,7 +46,7 @@ interface RawRow {
 
 const detailInclude = {
   customer: { select: { id: true, name: true, phone: true, address: true, city: true } },
-  unit: { select: { vin: true, motorNumber: true, batteryNumber: true, variant: { select: { name: true, model: { select: { name: true } } } } } },
+  unit: { select: { vin: true, motorNumber: true, batteryNumber: true, purchaseDate: true, variant: { select: { name: true, model: { select: { name: true } } } } } },
   salesExecutive: { select: { name: true } },
   deliveryExecutive: { select: { name: true } },
   payments: { select: { amount: true } },
@@ -110,7 +111,7 @@ export class DeliveryService {
 
   async detail(bookingId: string): Promise<DeliveryDetailDto> {
     const b = await this.getBookingOrThrow(bookingId);
-    return this.toDetail(b);
+    return this.toDetail(b, await this.bookings.businessTimeZone());
   }
 
   async schedule(bookingId: string, dto: ScheduleDeliveryInput2): Promise<DeliveryDetailDto> {
@@ -255,7 +256,7 @@ export class DeliveryService {
     };
   }
 
-  private toDetail(b: BookingDetailRow): DeliveryDetailDto {
+  private toDetail(b: BookingDetailRow, timeZone: string): DeliveryDetailDto {
     const paid = b.payments.reduce<bigint>((a, p) => a + p.amount, 0n);
     const balance = b.total - paid;
     const d = b.sale?.delivery ?? null;
@@ -284,6 +285,7 @@ export class DeliveryService {
         total: String(b.total),
         paid: String(paid),
         pendingDocuments: b.pendingDocuments,
+        earliestDelivery: deliveryLowerBound(b, timeZone),
       },
       delivery: d
         ? {

@@ -1,11 +1,10 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { INestApplication } from '@nestjs/common';
-import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
-import { seedRbac } from '../src/common/rbac/rbac-seed';
+import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
 const PNG_1PX = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -20,49 +19,22 @@ describe('Customers (e2e)', () => {
   let salesToken: string;
   let techToken: string;
   let customerId: string;
+  let co: TestCompany;
   const phone = `98${Date.now().toString().slice(-8)}`;
-  const email = process.env.SEED_OWNER_EMAIL ?? 'owner@azadev.in';
-  const password = process.env.SEED_OWNER_PASSWORD ?? 'Azad@12345';
-  const createdUserIds: string[] = [];
-
-  const login = async (mail: string, pass: string): Promise<string> => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/auth/login')
-      .send({ email: mail, password: pass })
-      .expect(200);
-    return res.body.accessToken;
-  };
 
   beforeAll(async () => {
     app = await createE2eApp();
     prisma = app.get(PrismaService);
 
-    const hash = await bcrypt.hash('Test@12345', 12);
-    // Same company as the seeded owner (no request/tenant context here).
-    const owner = await prisma.user.findUniqueOrThrow({ where: { email: email.toLowerCase() } });
-    for (const [name, role] of [
-      ['E2E Sales', 'SALES_EXECUTIVE'],
-      ['E2E Tech', 'TECHNICIAN'],
-    ] as const) {
-      const user = await prisma.user.create({
-        data: { companyId: owner.companyId, name, email: `${role.toLowerCase()}.${Date.now()}@e2e.test`, role, passwordHash: hash },
-      });
-      createdUserIds.push(user.id);
-    }
-    // Backfill roleId so permission-migrated customer endpoints resolve as in production.
-    await seedRbac(prisma);
-    ownerToken = await login(email, password);
-    const [sales, tech] = await prisma.user.findMany({
-      where: { id: { in: createdUserIds } },
-      orderBy: { name: 'asc' },
-    });
-    salesToken = await login(sales!.email, 'Test@12345');
-    techToken = await login(tech!.email, 'Test@12345');
+    // A throwaway company: OWNER, SALES_EXECUTIVE and TECHNICIAN, roleIds backfilled as in production.
+    co = await createTestCompany(app, 'Cust', { roles: ['SALES_EXECUTIVE', 'TECHNICIAN'] });
+    ownerToken = co.user().token;
+    salesToken = co.user('SALES_EXECUTIVE').token;
+    techToken = co.user('TECHNICIAN').token;
   }, E2E_HOOK_TIMEOUT);
 
   afterAll(async () => {
-    if (customerId) await prisma.customer.deleteMany({ where: { id: customerId } });
-    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await purgeTestCompany(prisma, co?.id); // hard-deletes the customer and everything else it owns
     await app.close();
   }, E2E_HOOK_TIMEOUT);
 
@@ -190,5 +162,39 @@ describe('Customers (e2e)', () => {
       .delete(`/api/v1/customers/${customerId}/timeline`)
       .set('Authorization', owner())
       .expect(404);
+  });
+
+  // QA M6: a mobile number is unique within a showroom, not across all of them.
+  it('two companies may each have a customer with the same mobile; within one company it stays unique', async () => {
+    const other = await createTestCompany(app, 'CustB');
+    const http = () => request(app.getHttpServer());
+    try {
+      const phone = `93${Date.now().toString().slice(-8)}`;
+      const create = (auth: string, name: string) => http().post('/api/v1/customers').set('Authorization', auth).send({ name, phone });
+      const mine = (await create(`Bearer ${ownerToken}`, 'Same Mobile A').expect(201)).body;
+      await create(other.auth(), 'Same Mobile B').expect(201);
+      expect((await create(`Bearer ${ownerToken}`, 'Duplicate A').expect(409)).body.message).toBe(`A customer with mobile ${phone} already exists`);
+
+      // A deleted customer still holds the number; the refusal says so instead of a database error.
+      await http().delete(`/api/v1/customers/${mine.id}`).set('Authorization', `Bearer ${ownerToken}`).expect(204);
+      expect((await create(`Bearer ${ownerToken}`, 'After delete').expect(409)).body.message).toBe(`A customer with mobile ${phone} already exists (it may belong to a deleted customer)`);
+    } finally {
+      await purgeTestCompany(prisma, other.id);
+    }
+  });
+
+  // RTO invoice details: tehsil, district, Aadhaar, PAN and GSTIN live on the customer.
+  it('stores tehsil, district and validated Aadhaar / PAN / GSTIN; an empty value clears them', async () => {
+    const http = () => request(app.getHttpServer());
+    const auth = `Bearer ${ownerToken}`;
+    const c = (await http().post('/api/v1/customers').set('Authorization', auth)
+      .send({ name: 'Identity Test', phone: `90${Date.now().toString().slice(-8)}`, tehsil: 'Kodinar', district: 'Gir Somnath', aadhaarNumber: '2341-2341-2346', panNumber: 'abcde1234f', gstin: '24aajct0051e1zt' }).expect(201)).body;
+    expect(c).toMatchObject({ tehsil: 'Kodinar', district: 'Gir Somnath', aadhaarNumber: '234123412346', panNumber: 'ABCDE1234F', gstin: '24AAJCT0051E1ZT' });
+    const bad = await http().patch(`/api/v1/customers/${c.id}`).set('Authorization', auth).send({ aadhaarNumber: '234123412347' }).expect(400);
+    expect(JSON.stringify(bad.body)).toContain('Enter a valid 12-digit Aadhaar number');
+    await http().patch(`/api/v1/customers/${c.id}`).set('Authorization', auth).send({ panNumber: 'AB12' }).expect(400);
+    await http().patch(`/api/v1/customers/${c.id}`).set('Authorization', auth).send({ gstin: '24AAJCT0051E1ZU' }).expect(400);
+    const cleared = (await http().patch(`/api/v1/customers/${c.id}`).set('Authorization', auth).send({ aadhaarNumber: '', gstin: null }).expect(200)).body;
+    expect(cleared).toMatchObject({ aadhaarNumber: null, gstin: null, panNumber: 'ABCDE1234F' });
   });
 });

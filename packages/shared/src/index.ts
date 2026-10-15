@@ -21,3 +21,5 @@ export * from './finance';
 export * from './delivery';
 export * from './tax';
 export * from './catalog';
+export * from './rto';
+export * from './identity';

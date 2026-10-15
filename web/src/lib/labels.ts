@@ -140,8 +140,19 @@ const SERVICE_PRIORITY_TONE: Record<ServicePriority, BadgeTone> = {
 };
 export const servicePriorityTone = (s: ServicePriority): BadgeTone => SERVICE_PRIORITY_TONE[s] ?? 'muted';
 
+/** Words that stay upper-case when a code is shown as text ("UPI", not "Upi"). */
+const ACRONYMS = new Set(['UPI', 'NEFT', 'RTGS', 'IMPS', 'GST', 'RTO', 'AMC', 'VIN', 'EMI', 'QC', 'PDF', 'ID', 'PIN', 'CSV']);
+
+/** An enum code as text: 'STATUS_CHANGE' → 'Status Change', 'UPI' → 'UPI'. */
 export const titleCase = (s: string): string =>
-  s.toLowerCase().split('_').map((w) => w[0]?.toUpperCase() + w.slice(1)).join(' ');
+  s.split('_').map((w) => (ACRONYMS.has(w.toUpperCase()) ? w.toUpperCase() : (w[0]?.toUpperCase() ?? '') + w.slice(1).toLowerCase())).join(' ');
+
+/**
+ * Where a payment was taken. Every payment against a booking is stored as BOOKING_ADVANCE (finance reports group
+ * on it), but only the first is really an advance — so it reads "Booking payment".
+ */
+const PAYMENT_CONTEXT_LABEL: Record<string, string> = { BOOKING_ADVANCE: 'Booking payment', SALE: 'Sale payment', SERVICE: 'Service payment' };
+export const paymentContextLabel = (context: string): string => PAYMENT_CONTEXT_LABEL[context] ?? titleCase(context);
 
 /** Polished display names for permission-catalog module keys (Role editor grouping headers). */
 const PERMISSION_MODULE_LABELS: Record<string, string> = {
@@ -149,6 +160,7 @@ const PERMISSION_MODULE_LABELS: Record<string, string> = {
   amc: 'AMC',
   gst: 'GST',
   pnl: 'P&L',
+  rto: 'RTO Invoices',
 };
 export function permissionModuleLabel(moduleKey: string): string {
   return PERMISSION_MODULE_LABELS[moduleKey] ?? titleCase(moduleKey);
