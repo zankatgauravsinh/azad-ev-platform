@@ -161,11 +161,20 @@ describe('Accessory counter sales (e2e)', () => {
     expect(res.body).toMatchObject({ status: 'CANCELLED', refunds: [] });
   });
 
-  it('P&L counts accessory sales separately, net of refunds; the cash book shows the refund', async () => {
+  it('P&L: accessory sales before GST on live invoices, matched with their cost; the cash book shows the refund', async () => {
     const pnl = await http().get('/api/v1/finance/pnl').set('Authorization', A.auth()).expect(200);
     const line = (label: string) => pnl.body.income.find((l: { label: string }) => l.label === label)?.amount;
-    const collected = await prisma.payment.aggregate({ where: { companyId: A.id, context: 'ACCESSORY' }, _sum: { amount: true } });
-    expect(line('Accessory sales')).toBe(String((collected._sum.amount ?? 0n) - 345000n));
+    const expense = (label: string) => pnl.body.expenses.find((l: { label: string }) => l.label === label)?.amount;
+    const live = await prisma.accessorySale.aggregate({ where: { companyId: A.id, status: 'ACTIVE' }, _sum: { subtotal: true, gstAmount: true } });
+    expect(line('Accessory sales')).toBe(String(live._sum.subtotal ?? 0n)); // cancelled invoices and GST left out
+    const items = await prisma.accessorySaleItem.findMany({ where: { sale: { companyId: A.id, status: 'ACTIVE' } }, select: { costAtSale: true, qty: true } });
+    const cost = items.reduce((n, i) => n + i.costAtSale * BigInt(i.qty), 0n);
+    expect(expense('Accessory cost of sales')).toBe(String(cost));
+    expect(pnl.body.costOfGoods).toBe(String(cost));
+    expect(pnl.body.grossProfit).toBe(String((live._sum.subtotal ?? 0n) - cost));
+    // Accessory invoice GST is GST collected.
+    const gst = await http().get('/api/v1/finance/gst-summary').set('Authorization', A.auth()).expect(200);
+    expect(gst.body.collected).toBe(String(live._sum.gstAmount ?? 0n));
     expect(line('Sales revenue')).toBe('0'); // not mixed into vehicle sales
     expect(pnl.body.income.some((l: { label: string }) => l.label === 'Less: Sales returns (refunds)')).toBe(false);
     const book = await http().get('/api/v1/finance/cash-book').set('Authorization', A.auth()).expect(200);

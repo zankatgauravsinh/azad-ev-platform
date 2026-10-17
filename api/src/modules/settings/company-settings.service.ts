@@ -166,6 +166,7 @@ export class CompanySettingsService {
       jobCardPrefix: s.jobCardPrefix,
       rtoInvoicePrefix: s.rtoInvoicePrefix,
       accessoryInvoicePrefix: s.accessoryInvoicePrefix,
+      accessoryPurchasePrefix: s.accessoryPurchasePrefix,
       accessoryGstEnabled: s.accessoryGstEnabled,
       accessoryGstRateBp: s.accessoryGstRateBp,
       warrantyPrefix: s.warrantyPrefix,

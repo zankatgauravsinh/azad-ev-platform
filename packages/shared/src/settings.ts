@@ -61,6 +61,7 @@ export const updateCompanySettingsSchema = z
     jobCardPrefix: prefix('Job card prefix').optional(),
     rtoInvoicePrefix: prefix('RTO invoice prefix').optional(),
     accessoryInvoicePrefix: prefix('Accessory invoice prefix').optional(),
+    accessoryPurchasePrefix: prefix('Accessory purchase prefix').optional(),
     warrantyPrefix: prefix('Warranty prefix').optional(),
     amcPrefix: prefix('AMC prefix').optional(),
     claimPrefix: prefix('Claim prefix').optional(),
@@ -151,6 +152,7 @@ export interface CompanySettingsDto {
   jobCardPrefix: string;
   rtoInvoicePrefix: string;
   accessoryInvoicePrefix: string;
+  accessoryPurchasePrefix: string;
   /** GST on accessory counter-sale invoices (prices include it). */
   accessoryGstEnabled: boolean;
   /** GST rate for an accessory without a GST classification, in basis points. */

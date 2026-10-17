@@ -21,9 +21,11 @@ export class PnlService {
     const from = query.from ?? fy.from;
     const to = query.to ?? fy.to;
 
-    const [collectedAgg, paidAgg, monthly] = await Promise.all([
+    const [collectedAgg, paidAgg, accessorySaleGst, accessoryPurchaseGst, monthly] = await Promise.all([
       this.prisma.income.aggregate({ _sum: { gstAmount: true }, where: { incomeDate: { gte: from, lte: to } } }),
       this.prisma.expense.aggregate({ _sum: { gstAmount: true }, where: { status: 'APPROVED', expenseDate: { gte: from, lte: to } } }),
+      this.prisma.accessorySale.aggregate({ _sum: { gstAmount: true }, where: { status: 'ACTIVE', invoiceDate: { gte: from, lte: to } } }),
+      this.prisma.accessoryPurchase.aggregate({ _sum: { gstAmount: true }, where: { status: 'ACTIVE', purchaseDate: { gte: from, lte: to } } }),
       this.prisma.$queryRaw<{ month: string; collected: bigint; paid: bigint }[]>`
         SELECT month, SUM(collected)::bigint AS collected, SUM(paid)::bigint AS paid FROM (
           SELECT to_char(date_trunc('month', "incomeDate"), 'YYYY-MM') AS month, "gstAmount" AS collected, 0::bigint AS paid
@@ -31,11 +33,17 @@ export class PnlService {
           UNION ALL
           SELECT to_char(date_trunc('month', "expenseDate"), 'YYYY-MM') AS month, 0::bigint AS collected, "gstAmount" AS paid
           FROM "Expense" WHERE "companyId" = ${company} AND "deletedAt" IS NULL AND status = 'APPROVED' AND "expenseDate" >= ${from} AND "expenseDate" <= ${to}
+          UNION ALL
+          SELECT to_char(date_trunc('month', "invoiceDate"), 'YYYY-MM') AS month, "gstAmount" AS collected, 0::bigint AS paid
+          FROM "AccessorySale" WHERE "companyId" = ${company} AND status = 'ACTIVE' AND "invoiceDate" >= ${from} AND "invoiceDate" <= ${to}
+          UNION ALL
+          SELECT to_char(date_trunc('month', "purchaseDate"), 'YYYY-MM') AS month, 0::bigint AS collected, "gstAmount" AS paid
+          FROM "AccessoryPurchase" WHERE "companyId" = ${company} AND status = 'ACTIVE' AND "purchaseDate" >= ${from} AND "purchaseDate" <= ${to}
         ) t GROUP BY month ORDER BY month`,
     ]);
 
-    const collected = collectedAgg._sum.gstAmount ?? 0n;
-    const paid = paidAgg._sum.gstAmount ?? 0n;
+    const collected = (collectedAgg._sum.gstAmount ?? 0n) + (accessorySaleGst._sum.gstAmount ?? 0n);
+    const paid = (paidAgg._sum.gstAmount ?? 0n) + (accessoryPurchaseGst._sum.gstAmount ?? 0n);
     const collectedMonths = fillMonths(monthly.map((m) => ({ month: m.month, amount: m.collected, count: 0 })), now);
     const paidMonths = fillMonths(monthly.map((m) => ({ month: m.month, amount: m.paid, count: 0 })), now);
     return {
@@ -58,7 +66,8 @@ export class PnlService {
     const from = query.from ?? fy.from;
     const to = query.to ?? fy.to;
 
-    const [salesPayments, servicePayments, amc, incomeBySource, expenseByCategory, cogs, salesReturns, accessoryPayments, accessoryRefunds] = await Promise.all([
+    const company = this.tenant.requireCompanyId();
+    const [salesPayments, servicePayments, amc, incomeBySource, expenseByCategory, cogs, salesReturns, accessorySales, accessoryCogs] = await Promise.all([
       this.prisma.payment.aggregate({ _sum: { amount: true }, where: { context: { in: ['SALE', 'BOOKING_ADVANCE'] }, paidAt: { gte: from, lte: to } } }),
       this.prisma.payment.aggregate({ _sum: { amount: true }, where: { context: 'SERVICE', paidAt: { gte: from, lte: to } } }),
       this.prisma.amcPlan.aggregate({ _sum: { price: true }, where: { createdAt: { gte: from, lte: to } } }),
@@ -72,9 +81,13 @@ export class PnlService {
       // COGS is unchanged: the Vehicle-Purchase model is purchase-period based, not per-unit,
       // so a return has no COGS reversal here — intentional, pending CA review.
       this.prisma.refund.aggregate({ _sum: { amount: true }, where: { returnId: { not: null }, refundedAt: { gte: from, lte: to } } }),
-      // Accessory counter sales, cash basis: what was collected, less what was refunded on cancelled sales.
-      this.prisma.payment.aggregate({ _sum: { amount: true }, where: { context: 'ACCESSORY', paidAt: { gte: from, lte: to } } }),
-      this.prisma.refund.aggregate({ _sum: { amount: true }, where: { accessorySaleId: { not: null }, refundedAt: { gte: from, lte: to } } }),
+      // Accessory counter sales, invoice basis: what was invoiced before GST on live (not cancelled) invoices, and
+      // the cost of those pieces (the average cost when sold) — so the margin is matched. Purchases are stock, not
+      // expenses, so they appear only through this cost.
+      this.prisma.accessorySale.aggregate({ _sum: { subtotal: true }, where: { status: 'ACTIVE', invoiceDate: { gte: from, lte: to } } }),
+      this.prisma.$queryRaw<{ cost: bigint | null }[]>`
+        SELECT SUM(i."costAtSale" * i.qty)::bigint AS cost FROM "AccessorySaleItem" i JOIN "AccessorySale" s ON s.id = i."saleId"
+        WHERE s."companyId" = ${company} AND s.status = 'ACTIVE' AND s."invoiceDate" >= ${from} AND s."invoiceDate" <= ${to}`,
     ]);
 
     const salesRevenueGross = salesPayments._sum.amount ?? 0n;
@@ -82,8 +95,8 @@ export class PnlService {
     const salesRevenue = salesRevenueGross - returnsTotal; // net of refunds (cash-basis reversal)
     const serviceRevenue = servicePayments._sum.amount ?? 0n;
     const amcRevenue = amc._sum.price ?? 0n;
-    // GST-inclusive, like the vehicle sales line (P&L is cash collected).
-    const accessoryRevenue = (accessoryPayments._sum.amount ?? 0n) - (accessoryRefunds._sum.amount ?? 0n);
+    const accessoryRevenue = accessorySales._sum.subtotal ?? 0n;
+    const accessoryCost = accessoryCogs[0]?.cost ?? 0n;
 
     const income: ProfitLossLine[] = [{ label: 'Sales revenue', amount: String(salesRevenueGross) }];
     if (returnsTotal > 0n) income.push({ label: 'Less: Sales returns (refunds)', amount: String(-returnsTotal) });
@@ -109,10 +122,11 @@ export class PnlService {
       .map((e) => ({ label: nameOf.get(e.categoryId) ?? 'Other', _n: e._sum.amount ?? 0n }))
       .sort((a, b) => Number(b._n - a._n))
       .map(({ label, _n }) => ({ label, amount: String(_n) }));
+    if (accessoryCost > 0n) expenses.push({ label: 'Accessory cost of sales', amount: String(accessoryCost) });
 
     const totalIncome = salesRevenue + accessoryRevenue + serviceRevenue + amcRevenue + otherIncomeTotal;
     const totalExpense = sumBig(expenses.map((e) => BigInt(e.amount)));
-    const costOfGoods = cogs._sum.amount ?? 0n;
+    const costOfGoods = (cogs._sum.amount ?? 0n) + accessoryCost;
 
     return {
       range: { from: from.toISOString(), to: to.toISOString() },
@@ -121,7 +135,7 @@ export class PnlService {
       totalIncome: String(totalIncome),
       totalExpense: String(totalExpense),
       costOfGoods: String(costOfGoods),
-      grossProfit: String(salesRevenue - costOfGoods),
+      grossProfit: String(salesRevenue + accessoryRevenue - costOfGoods),
       netProfit: String(totalIncome - totalExpense),
     };
   }

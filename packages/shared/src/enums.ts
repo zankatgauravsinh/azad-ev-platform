@@ -498,6 +498,8 @@ export const AccessoryMovementType = {
   RELEASE: 'RELEASE',
   /** Back in stock from a cancelled accessory counter sale. */
   SALE_RETURN: 'SALE_RETURN',
+  /** Taken out again because its purchase was cancelled. */
+  PURCHASE_RETURN: 'PURCHASE_RETURN',
 } as const;
 export type AccessoryMovementType = (typeof AccessoryMovementType)[keyof typeof AccessoryMovementType];
 export const ACCESSORY_MOVEMENT_TYPES = Object.values(AccessoryMovementType);

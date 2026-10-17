@@ -14,9 +14,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAccessoryCategories, useAccessoryList, useAccessoryMutations } from '../hooks';
 import { AccessoryFormDialog } from '../components/accessory-form-dialog';
 import { AccessoryStockDialog } from '../components/accessory-stock-dialog';
+import { PurchasesPanel } from '../components/purchases-panel';
 
 const ALL = '__all__';
 
@@ -44,6 +46,9 @@ export function AccessoriesPage(): JSX.Element {
   const [editing, setEditing] = useState<AccessoryDto | null>(null);
   const [adding, setAdding] = useState(false);
   const [stockOf, setStockOf] = useState<string | null>(null);
+  // Purchases show what was paid for stock: the owner's (purchase-cost permission) and managing accessories.
+  const canPurchase = canManage && canSeeCost;
+  const [tab, setTab] = useState<'stock' | 'purchases'>('stock');
 
   const filters = useMemo(() => ({ q: q || undefined, category: category === ALL ? undefined : category, status, lowStock }), [q, category, status, lowStock]);
   const { data: rows = [], isLoading, isFetching } = useAccessoryList(filters);
@@ -137,7 +142,16 @@ export function AccessoriesPage(): JSX.Element {
 
   return (
     <div>
-      <PageHeader title="Accessories" description="What you sell with a scooter — price and stock. Click an item for its stock and history." actions={addButton} />
+      <PageHeader title="Accessories" description="What you sell with a scooter — price and stock. Click an item for its stock and history." actions={tab === 'stock' ? addButton : undefined} />
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'stock' | 'purchases')}>
+        {canPurchase && (
+          <TabsList className="mb-4">
+            <TabsTrigger value="stock">Stock</TabsTrigger>
+            <TabsTrigger value="purchases">Purchases</TabsTrigger>
+          </TabsList>
+        )}
+        <TabsContent value="stock">
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Active items" value={stats.items} loading={statsLoading} />
@@ -191,6 +205,13 @@ export function AccessoriesPage(): JSX.Element {
           />
         }
       />
+        </TabsContent>
+        {canPurchase && (
+          <TabsContent value="purchases">
+            <PurchasesPanel />
+          </TabsContent>
+        )}
+      </Tabs>
 
       <AccessoryFormDialog open={adding} onOpenChange={setAdding} />
       <AccessoryStockDialog id={stockOf} onOpenChange={(o) => !o && setStockOf(null)} />

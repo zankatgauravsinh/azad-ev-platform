@@ -15,6 +15,7 @@ vi.mock('../hooks', () => ({
   useAccessoryCategories: () => ({ data: ['Safety'] }),
   useAccessoryMutations: () => ({ setActive: { mutateAsync: h.setActive, isPending: false } }),
 }));
+vi.mock('../components/purchases-panel', () => ({ PurchasesPanel: () => <p>purchases panel</p> }));
 vi.mock('../components/accessory-stock-dialog', () => ({ AccessoryStockDialog: ({ id }: { id: string | null }) => (id ? <p>stock of {id}</p> : null) }));
 vi.mock('../components/accessory-form-dialog', () => ({ AccessoryFormDialog: ({ open, accessory }: { open: boolean; accessory?: AccessoryDto }) => (open ? <p>{accessory ? `editing ${accessory.name}` : 'adding'}</p> : null) }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: (m: string) => h.toastError(m) } }));
@@ -107,5 +108,13 @@ describe('AccessoriesPage', () => {
     fireEvent.change(category!, { target: { value: 'Safety' } });
     fireEvent.click(screen.getByRole('button', { name: /Low \/ out of stock/ }));
     expect(h.lists).toContainEqual({ q: undefined, category: 'Safety', status: 'all', lowStock: true });
+  });
+
+  it('the Purchases tab is only for those who manage accessories and see purchase cost (the owner)', () => {
+    renderWith(['accessories.view', 'accessories.manage']);
+    expect(screen.queryByRole('tab', { name: 'Purchases' })).toBeNull();
+    cleanup();
+    renderWith(['accessories.view', 'accessories.manage', 'inventory.cost']);
+    expect(screen.getByRole('tab', { name: 'Purchases' })).toBeInTheDocument();
   });
 });

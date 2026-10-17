@@ -52,16 +52,24 @@ export class VendorsService {
 
   async ledger(id: string): Promise<VendorLedgerDto> {
     const vendor = await this.getRowOrThrow(id);
-    const expenses = await this.prisma.expense.findMany({
-      where: { vendorId: id },
-      include: { category: { select: { name: true } } },
-      orderBy: { expenseDate: 'desc' },
-      take: 500,
-    });
+    const [expenses, purchases] = await Promise.all([
+      this.prisma.expense.findMany({
+        where: { vendorId: id },
+        include: { category: { select: { name: true } } },
+        orderBy: { expenseDate: 'desc' },
+        take: 500,
+      }),
+      // Accessory stock bought from this vendor (cancelled bills left out).
+      this.prisma.accessoryPurchase.findMany({
+        where: { vendorId: id, status: 'ACTIVE' },
+        select: { id: true, purchaseNumber: true, purchaseDate: true, vendorInvoiceNumber: true, total: true, paid: true, items: { select: { quantity: true, accessory: { select: { name: true } } } } },
+        orderBy: { purchaseDate: 'desc' },
+        take: 500,
+      }),
+    ]);
     const totals = await this.vendorTotals([id]);
-    return {
-      vendor: this.toDto(vendor, totals),
-      rows: expenses.map((e) => ({
+    const rows = [
+      ...expenses.map((e) => ({
         id: e.id,
         date: e.expenseDate.toISOString(),
         expenseNumber: e.expenseNumber,
@@ -70,7 +78,17 @@ export class VendorsService {
         amount: String(e.amount + e.gstAmount),
         paid: e.paid,
       })),
-    };
+      ...purchases.map((p) => ({
+        id: p.id,
+        date: p.purchaseDate.toISOString(),
+        expenseNumber: p.purchaseNumber,
+        category: 'Accessory purchase',
+        description: [p.vendorInvoiceNumber ? `Bill ${p.vendorInvoiceNumber}` : null, p.items.map((i) => `${i.accessory.name} × ${i.quantity}`).join(', ')].filter(Boolean).join(' · '),
+        amount: String(p.total),
+        paid: p.paid,
+      })),
+    ].sort((a, b) => b.date.localeCompare(a.date));
+    return { vendor: this.toDto(vendor, totals), rows };
   }
 
   async create(dto: CreateVendorInput, userId: string): Promise<VendorDto> {
@@ -127,13 +145,21 @@ export class VendorsService {
   private async vendorTotals(ids: string[]): Promise<Map<string, { outstanding: bigint; total: bigint }>> {
     const map = new Map<string, { outstanding: bigint; total: bigint }>();
     if (ids.length === 0) return map;
-    const [totals, outstanding] = await Promise.all([
+    const [totals, outstanding, purchased, owed] = await Promise.all([
       this.prisma.expense.groupBy({ by: ['vendorId'], where: { vendorId: { in: ids }, status: { not: 'REJECTED' } }, _sum: { amount: true, gstAmount: true } }),
       this.prisma.expense.groupBy({ by: ['vendorId'], where: { vendorId: { in: ids }, status: 'APPROVED', paid: false }, _sum: { amount: true, gstAmount: true } }),
+      // Accessory purchases count too: every live bill in the total, unpaid ones as outstanding.
+      this.prisma.accessoryPurchase.groupBy({ by: ['vendorId'], where: { vendorId: { in: ids }, status: 'ACTIVE' }, _sum: { total: true } }),
+      this.prisma.accessoryPurchase.groupBy({ by: ['vendorId'], where: { vendorId: { in: ids }, status: 'ACTIVE', paid: false }, _sum: { total: true } }),
     ]);
     for (const id of ids) map.set(id, { outstanding: 0n, total: 0n });
-    for (const t of totals) if (t.vendorId) map.set(t.vendorId, { ...map.get(t.vendorId)!, total: (t._sum.amount ?? 0n) + (t._sum.gstAmount ?? 0n) });
-    for (const o of outstanding) if (o.vendorId) map.set(o.vendorId, { ...map.get(o.vendorId)!, outstanding: (o._sum.amount ?? 0n) + (o._sum.gstAmount ?? 0n) });
+    const add = (vendorId: string | null, key: 'total' | 'outstanding', amount: bigint): void => {
+      if (vendorId && map.has(vendorId)) map.set(vendorId, { ...map.get(vendorId)!, [key]: map.get(vendorId)![key] + amount });
+    };
+    for (const t of totals) add(t.vendorId, 'total', (t._sum.amount ?? 0n) + (t._sum.gstAmount ?? 0n));
+    for (const o of outstanding) add(o.vendorId, 'outstanding', (o._sum.amount ?? 0n) + (o._sum.gstAmount ?? 0n));
+    for (const p of purchased) add(p.vendorId, 'total', p._sum.total ?? 0n);
+    for (const p of owed) add(p.vendorId, 'outstanding', p._sum.total ?? 0n);
     return map;
   }
 

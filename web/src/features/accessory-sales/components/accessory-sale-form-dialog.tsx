@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   ACCESSORY_SALE_MAX_LINES,
@@ -13,6 +13,7 @@ import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaiseExact, paiseToRupees, rupeesToPaise } from '@/lib/money';
 import { CustomerCombobox } from '@/features/sales/components/customer-combobox';
 import { useAccessoryList } from '@/features/accessories/hooks';
+import { AccessoryPicker } from '@/features/accessories/components/accessory-picker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -94,11 +95,8 @@ export function AccessorySaleFormDialog({
     return { rows, total: sum((r) => r.total), taxable: sum((r) => r.split.taxable), cgst: sum((r) => r.split.cgst), sgst: sum((r) => r.split.sgst), igst: sum((r) => r.split.igst) };
   }, [lines, gstOn, defaults, supply]);
 
-  const unused = catalogue.filter((a) => !lines.some((l) => l.accessoryId === a.id));
-  const addLine = (id: string): void => {
-    const a = byId.get(id);
-    if (!a) return;
-    setLines((ls) => [...ls, { accessoryId: id, qty: '1', price: String(paiseToRupees(a.sellPrice)) }]);
+  const addLine = (a: (typeof catalogue)[number]): void => {
+    setLines((ls) => (ls.some((l) => l.accessoryId === a.id) ? ls : [...ls, { accessoryId: a.id, qty: '1', price: String(paiseToRupees(a.sellPrice)) }]));
   };
   const setLine = (i: number, patch: Partial<Line>): void => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
@@ -200,21 +198,14 @@ export function AccessorySaleFormDialog({
             );
           })}
           {lines.length < ACCESSORY_SALE_MAX_LINES && (
-            <Select value="" onValueChange={addLine}>
-              <SelectTrigger aria-label="Add an accessory" className="w-full sm:w-72">
-                <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Plus className="h-4 w-4" /> Add an accessory
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                {unused.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">No more active accessories</p>}
-                {unused.map((a) => (
-                  <SelectItem key={a.id} value={a.id} disabled={a.available <= 0}>
-                    {a.name} · {formatPaiseExact(a.sellPrice)} · {a.available > 0 ? `${a.available} available` : 'out of stock'}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <AccessoryPicker
+              accessories={catalogue}
+              exclude={lines.map((l) => l.accessoryId)}
+              onPick={addLine}
+              meta={(a) => `${formatPaiseExact(a.sellPrice)} · ${a.available > 0 ? `${a.available} available` : 'out of stock'}`}
+              unavailable={(a) => a.available <= 0}
+              placeholder="Type the accessory name, e.g. helmet…"
+            />
           )}
         </section>
 

@@ -28,11 +28,12 @@ const MOVEMENT_LABELS: Record<AccessoryMovementType, string> = {
   RESERVE: 'Reserved',
   RELEASE: 'Released',
   SALE_RETURN: 'Sale cancelled',
+  PURCHASE_RETURN: 'Purchase cancelled',
 };
 
 /** Signed quantity as the ledger moved it: reservations change "reserved", not "on hand". */
 const signed = (m: AccessoryMovementDto): string => {
-  const out = m.type === 'SALE_OUT' || m.quantity < 0;
+  const out = m.type === 'SALE_OUT' || m.type === 'PURCHASE_RETURN' || m.quantity < 0;
   const n = Math.abs(m.quantity);
   return out ? `−${n}` : `+${n}`;
 };

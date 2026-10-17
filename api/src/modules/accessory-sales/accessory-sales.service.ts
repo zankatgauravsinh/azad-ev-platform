@@ -27,9 +27,9 @@ import { SequenceService } from '../sales/sequence.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { AccessoryInvoicePdfService } from './accessory-invoice-pdf.service';
 import { formatInrExact } from '../../common/utils/money';
-import { businessDateOf, resolveTimeZone } from '../../common/utils/business-date';
+import { resolveTimeZone } from '../../common/utils/business-date';
 import { weightedAvgCost } from '../../common/utils/inventory-cost';
-import { periodCovers, toCalendarDate } from '../tax/tax-calendar';
+import { accessoryGstRates } from '../accessories/accessory-gst-rates';
 
 type Tx = Prisma.TransactionClient;
 
@@ -83,7 +83,7 @@ export class AccessorySalesService {
     const customer = customerId ? await this.prisma.customer.findFirst({ where: { id: customerId }, select: { id: true, gstStateCode: true } }) : null;
     if (customerId && !customer) throw new NotFoundException('Customer not found');
     const accessories = await this.prisma.accessory.findMany({ where: { isActive: true }, select: { id: true, taxClassificationId: true } });
-    const rates = await this.ratesFor(accessories, settings?.accessoryGstRateBp ?? 1800, resolveTimeZone(settings?.timezone));
+    const rates = await accessoryGstRates(this.prisma, accessories, settings?.accessoryGstRateBp ?? 1800, resolveTimeZone(settings?.timezone));
     const bookings = customer
       ? await this.prisma.booking.findMany({ where: { customerId: customer.id, status: { not: BookingStatus.CANCELLED } }, select: { id: true, code: true, status: true }, orderBy: { createdAt: 'desc' }, take: 20 })
       : [];
@@ -147,7 +147,7 @@ export class AccessorySalesService {
     const settings = await this.prisma.companySetting.findFirst({ select: { accessoryGstEnabled: true, accessoryGstRateBp: true, gstStateCode: true, timezone: true } });
     const gstApplied = settings?.accessoryGstEnabled ?? false;
     const supplyType = dto.supplyType ?? suggestSupply(settings?.gstStateCode ?? null, customer.gstStateCode).supplyType;
-    const rates = gstApplied ? await this.ratesFor(accessories, settings?.accessoryGstRateBp ?? 1800, resolveTimeZone(settings?.timezone)) : new Map<string, { gstRateBp: number; hsnCode: string | null }>();
+    const rates = gstApplied ? await accessoryGstRates(this.prisma, accessories, settings?.accessoryGstRateBp ?? 1800, resolveTimeZone(settings?.timezone)) : new Map<string, { gstRateBp: number; hsnCode: string | null }>();
     const hsn = await this.hsnCodes(accessories);
 
     const lines = dto.items.map((l) => {
@@ -315,26 +315,6 @@ export class AccessorySalesService {
       data: { receiptNumber, context: PaymentContext.ACCESSORY, accessorySaleId: saleId, amount: BigInt(dto.amount), mode: dto.mode, reference: dto.reference ?? null, receivedById: actor.id, paidAt: at, createdById: actor.id, updatedById: actor.id },
     });
     await this.timeline.record({ customerId, type: CustomerEventType.ADVANCE_PAYMENT, title: `Payment received for ${invoiceNumber} (${dto.mode})`, description: `${receiptNumber} · ${formatInrExact(BigInt(dto.amount))}`, entityType: 'Payment', entityId: payment.id, actorId: actor.id }, tx);
-  }
-
-  /**
-   * GST rate (basis points) and HSN per accessory: its classification's rate on today's business date; exempt /
-   * nil-rated classifications are 0%; an accessory with no classification, or no rate for today, takes the default.
-   */
-  private async ratesFor(accessories: { id: string; taxClassificationId: string | null }[], defaultBp: number, timeZone: string): Promise<Map<string, { gstRateBp: number; hsnCode: string | null }>> {
-    const classIds = [...new Set(accessories.map((a) => a.taxClassificationId).filter((c): c is string => Boolean(c)))];
-    const classes = classIds.length
-      ? await this.prisma.taxClassification.findMany({ where: { id: { in: classIds }, deletedAt: null }, select: { id: true, code: true, treatment: true, rates: { where: { isActive: true }, select: { ratePercent: true, effectiveFrom: true, effectiveTo: true } } } })
-      : [];
-    const today = businessDateOf(new Date(), timeZone);
-    const byClass = new Map(
-      classes.map((c) => {
-        if (c.treatment !== 'TAXABLE') return [c.id, { gstRateBp: 0, hsnCode: c.code }];
-        const rate = c.rates.find((r) => periodCovers(toCalendarDate(r.effectiveFrom), r.effectiveTo ? toCalendarDate(r.effectiveTo) : null, today));
-        return [c.id, { gstRateBp: rate ? Math.round(Number(rate.ratePercent) * 100) : defaultBp, hsnCode: c.code }];
-      }),
-    );
-    return new Map(accessories.map((a) => [a.id, (a.taxClassificationId && byClass.get(a.taxClassificationId)) || { gstRateBp: defaultBp, hsnCode: null }]));
   }
 
   private async hsnCodes(accessories: { id: string; taxClassificationId: string | null }[]): Promise<Map<string, string | null>> {

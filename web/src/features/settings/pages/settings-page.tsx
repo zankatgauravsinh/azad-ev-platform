@@ -59,7 +59,7 @@ export function SettingsPage(): JSX.Element {
         rtoInvoicePrefix: settings.rtoInvoicePrefix, warrantyPrefix: settings.warrantyPrefix, amcPrefix: settings.amcPrefix,
         claimPrefix: settings.claimPrefix, returnPrefix: settings.returnPrefix, creditNotePrefix: settings.creditNotePrefix,
         refundPrefix: settings.refundPrefix,
-        accessoryInvoicePrefix: settings.accessoryInvoicePrefix, accessoryGstEnabled: settings.accessoryGstEnabled, accessoryGstRateBp: settings.accessoryGstRateBp,
+        accessoryInvoicePrefix: settings.accessoryInvoicePrefix, accessoryPurchasePrefix: settings.accessoryPurchasePrefix, accessoryGstEnabled: settings.accessoryGstEnabled, accessoryGstRateBp: settings.accessoryGstRateBp,
         defaultWarrantyMonths: settings.defaultWarrantyMonths, serviceReminderDays: settings.serviceReminderDays,
         warrantyEnabled: settings.warrantyEnabled, amcEnabled: settings.amcEnabled, warrantyReminderDays: settings.warrantyReminderDays,
         financeEnabled: settings.financeEnabled, expensePrefix: settings.expensePrefix, vendorPrefix: settings.vendorPrefix,
@@ -249,6 +249,7 @@ export function SettingsPage(): JSX.Element {
                   </Field>
                   <p className="text-xs text-muted-foreground sm:col-span-2">Used for an accessory without a GST classification; a classified accessory uses its own rate.</p>
                   <Field label="Accessory invoice prefix" error={errors.accessoryInvoicePrefix?.message}><Input {...register('accessoryInvoicePrefix')} /></Field>
+                  <Field label="Accessory purchase prefix" error={errors.accessoryPurchasePrefix?.message}><Input {...register('accessoryPurchasePrefix')} /></Field>
                 </Grid>
               </Panel>
             </TabsContent>

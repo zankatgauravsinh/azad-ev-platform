@@ -1062,20 +1062,39 @@ enum AccessoryMovementType {
   RELEASE
   /// Pieces back in stock from a cancelled accessory counter sale.
   SALE_RETURN
+  /// Pieces taken out again because their purchase was cancelled.
+  PURCHASE_RETURN
+}
+
+enum AccessoryPurchaseStatus {
+  ACTIVE
+  CANCELLED
 }
 
 /// Accessory purchase (stock-in) header — supplier invoice. Reuses Vendor.
 model AccessoryPurchase {
-  id             String   @id @default(uuid())
-  companyId      String   @default("")
-  purchaseNumber String
-  vendorId       String?
-  vendor         Vendor?  @relation(fields: [vendorId], references: [id], onDelete: SetNull)
-  purchaseDate   DateTime @default(now())
-  notes          String?
-  subtotal       BigInt   @default(0)
-  gstAmount      BigInt   @default(0)
-  total          BigInt   @default(0)
+  id                  String                  @id @default(uuid())
+  companyId           String                  @default("")
+  purchaseNumber      String
+  vendorId            String?
+  vendor              Vendor?                 @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  /// The supplier's bill number (printed on their invoice).
+  vendorInvoiceNumber String?
+  /// The bill date, a calendar date stored at midnight UTC (never in the future).
+  purchaseDate        DateTime                @default(now())
+  notes               String?
+  status              AccessoryPurchaseStatus @default(ACTIVE)
+  /// Paid to the vendor (method + date) or still owed — unpaid bills are the vendor's outstanding.
+  paid                Boolean                 @default(false)
+  paidAt              DateTime?
+  paymentMethod       FinancePayMethod?
+  paymentReference    String?
+  cancelledAt         DateTime?
+  cancelledById       String?
+  cancelReason        String?
+  subtotal            BigInt                  @default(0)
+  gstAmount           BigInt                  @default(0)
+  total               BigInt                  @default(0)
 
   createdById String?
   updatedById String?
@@ -1098,6 +1117,8 @@ model AccessoryPurchaseItem {
   quantity    Int
   /// Ex-GST unit cost — the basis for weighted-average costing.
   unitCost    BigInt            @default(0)
+  /// GST rate in basis points (1800 = 18%); 0 when the GST amount was typed in or none applies.
+  gstRateBp   Int               @default(0)
   gstAmount   BigInt            @default(0)
   lineTotal   BigInt            @default(0)
 
@@ -1574,6 +1595,7 @@ model CompanySetting {
   refundPrefix            String  @default("RF")
   rtoInvoicePrefix        String  @default("RTO")
   accessoryInvoicePrefix  String  @default("ACC")
+  accessoryPurchasePrefix String  @default("APU")
   /// Accessory counter sales: whether the invoice carries GST (prices include it) and the rate used for an
   /// accessory with no GST classification, in basis points (1800 = 18%).
   accessoryGstEnabled     Boolean @default(false)
@@ -1629,25 +1651,26 @@ model CompanySetting {
 
 /// Per-company document sequence counters (state, not user-editable settings).
 model InvoiceSetting {
-  id                         String @id @default(uuid())
-  companyId                  String @unique @default("")
-  nextInvoiceNumber          Int    @default(1)
-  nextBookingNumber          Int    @default(1)
-  nextQuotationNumber        Int    @default(1)
-  nextReceiptNumber          Int    @default(1)
-  nextServiceNumber          Int    @default(1)
-  nextWarrantyNumber         Int    @default(1)
-  nextAmcNumber              Int    @default(1)
-  nextClaimNumber            Int    @default(1)
-  nextExpenseNumber          Int    @default(1)
-  nextVendorNumber           Int    @default(1)
-  nextIncomeNumber           Int    @default(1)
-  nextBankNumber             Int    @default(1)
-  nextReturnNumber           Int    @default(1)
-  nextCreditNoteNumber       Int    @default(1)
-  nextRefundNumber           Int    @default(1)
-  nextRtoInvoiceNumber       Int    @default(1)
-  nextAccessoryInvoiceNumber Int    @default(1)
+  id                          String @id @default(uuid())
+  companyId                   String @unique @default("")
+  nextInvoiceNumber           Int    @default(1)
+  nextBookingNumber           Int    @default(1)
+  nextQuotationNumber         Int    @default(1)
+  nextReceiptNumber           Int    @default(1)
+  nextServiceNumber           Int    @default(1)
+  nextWarrantyNumber          Int    @default(1)
+  nextAmcNumber               Int    @default(1)
+  nextClaimNumber             Int    @default(1)
+  nextExpenseNumber           Int    @default(1)
+  nextVendorNumber            Int    @default(1)
+  nextIncomeNumber            Int    @default(1)
+  nextBankNumber              Int    @default(1)
+  nextReturnNumber            Int    @default(1)
+  nextCreditNoteNumber        Int    @default(1)
+  nextRefundNumber            Int    @default(1)
+  nextRtoInvoiceNumber        Int    @default(1)
+  nextAccessoryInvoiceNumber  Int    @default(1)
+  nextAccessoryPurchaseNumber Int    @default(1)
 
   createdById String?
   updatedById String?

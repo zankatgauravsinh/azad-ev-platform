@@ -45,7 +45,11 @@ vi.mock('@/components/ui/select', async () => {
 });
 
 const defaults = (over: Partial<AccessorySaleDefaults> = {}): AccessorySaleDefaults => ({ gstEnabled: false, defaultGstRateBp: 1800, rates: {}, supplyType: 'INTRA', supplyTypeHint: '', bookings: [{ id: B1, code: 'BK0001', status: 'CONFIRMED' }], ...over });
-const add = (id: string): void => { fireEvent.change(screen.getByLabelText('Add an accessory'), { target: { value: id } }); };
+/** Type in the accessory box and pick the match. */
+const add = (name: string): void => {
+  fireEvent.change(screen.getByRole('combobox', { name: 'Add an accessory' }), { target: { value: name } });
+  fireEvent.click(screen.getByRole('option', { name: new RegExp(`^${name}`) }));
+};
 
 beforeEach(() => {
   h.create.mockReset().mockResolvedValue({ id: 's1', invoiceNumber: 'ACC0001' });
@@ -59,8 +63,8 @@ describe('AccessorySaleFormDialog', () => {
     const onDone = vi.fn();
     render(<AccessorySaleFormDialog open onOpenChange={() => {}} onDone={onDone} />);
     fireEvent.click(screen.getByText('pick customer'));
-    add(H1);
-    add(G1);
+    add('Helmet');
+    add('Guard');
     expect((screen.getByLabelText('Price of Helmet') as HTMLInputElement).value).toBe('1500');
     fireEvent.change(screen.getByLabelText('Quantity of Helmet'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Price of Guard'), { target: { value: '450' } });
@@ -81,9 +85,12 @@ describe('AccessorySaleFormDialog', () => {
 
   it('out-of-stock items cannot be picked, and quantities above what is available are refused', async () => {
     render(<AccessorySaleFormDialog open onOpenChange={() => {}} />);
-    expect((screen.getByRole('option', { name: /Mat/ }) as HTMLOptionElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Add an accessory' }), { target: { value: 'mat' } });
+    expect(screen.getByRole('option', { name: /^Mat/ })).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('option', { name: /^Mat/ })).toHaveTextContent('out of stock');
+    expect(screen.queryByRole('option', { name: /as a new accessory/ })).toBeNull(); // sales never create items
     fireEvent.click(screen.getByText('pick customer'));
-    add(G1);
+    add('Guard');
     fireEvent.change(screen.getByLabelText('Quantity of Guard'), { target: { value: '2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create invoice' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Only 1 of Guard available');
@@ -94,7 +101,7 @@ describe('AccessorySaleFormDialog', () => {
     h.defaults = defaults({ gstEnabled: true, rates: { [H1]: { gstRateBp: 1800, hsnCode: '6506' } } });
     render(<AccessorySaleFormDialog open onOpenChange={() => {}} />);
     fireEvent.click(screen.getByText('pick customer'));
-    add(H1);
+    add('Helmet');
     const totals = screen.getByLabelText('Invoice total');
     expect(totals).toHaveTextContent('Taxable value');
     expect(totals).toHaveTextContent('1,271.19');
@@ -107,7 +114,7 @@ describe('AccessorySaleFormDialog', () => {
   it('paid now cannot exceed the total', async () => {
     render(<AccessorySaleFormDialog open onOpenChange={() => {}} />);
     fireEvent.click(screen.getByText('pick customer'));
-    add(G1);
+    add('Guard');
     fireEvent.change(screen.getByLabelText('Paid now (₹)'), { target: { value: '501' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create invoice' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('cannot be more than the total');
