@@ -129,10 +129,7 @@ npm run build          # builds packages/shared → api → web (in that order)
 ### 3a. Apply migrations (only if the release changed the Prisma schema)
 
 ```
-cd api
-set -a; source .env; set +a      # load DATABASE_URL
-npm run prisma:deploy            # = prisma migrate deploy (no-op if nothing pending)
-cd ..
+npm run prisma:deploy --workspace api   # = prisma migrate deploy, with DATABASE_URL from api/.env or the root .env (no-op if nothing pending)
 ```
 
 Skip this entirely when there are no schema changes.
@@ -144,11 +141,13 @@ user's dynamic role (`User.roleId`) from their legacy `role`. **Authorization is
 so this must run or every non-OWNER user is denied across the app.**
 
 ```
-cd api
-set -a; source .env; set +a      # load DATABASE_URL (skip if already loaded in §3a)
-npm run rbac:init                # = node dist/rbac-init.js  (needs `npm run build` from §3 first)
-cd ..
+npm run rbac:init --workspace api   # = node dist/rbac-init.js  (needs `npm run build` from §3 first)
 ```
+
+`rbac:init` and `npm run prisma:deploy --workspace api` find `DATABASE_URL` on their own: they read
+`api/.env`, or the repository-root `.env` when there is none (the server keeps it in the root). A value
+already exported in the shell wins. The bare Prisma CLI (`npx prisma …` from `api/`) only reads `api/.env`, so
+run it as `(set -a; . ../.env; set +a; npx prisma migrate status)` when the file is in the root.
 
 - Run it on **every** deploy, not just migration releases — it is idempotent (a second run creates
   nothing and backfills zero users) and safe to repeat.

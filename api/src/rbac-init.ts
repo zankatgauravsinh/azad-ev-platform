@@ -1,5 +1,10 @@
+import { resolve } from 'path';
 import { PrismaClient } from '@prisma/client';
 import { seedRbac } from './common/rbac/rbac-seed';
+import { loadEnvFile } from './common/env/load-env-file';
+
+// DATABASE_URL from api/.env or the repository-root .env (where the server keeps it); the environment wins.
+loadEnvFile(resolve(__dirname, '..'));
 
 /**
  * Production-safe RBAC initializer. Run it AFTER `prisma migrate deploy`, on every deploy, as
