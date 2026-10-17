@@ -58,7 +58,7 @@ export class PnlService {
     const from = query.from ?? fy.from;
     const to = query.to ?? fy.to;
 
-    const [salesPayments, servicePayments, amc, incomeBySource, expenseByCategory, cogs, salesReturns] = await Promise.all([
+    const [salesPayments, servicePayments, amc, incomeBySource, expenseByCategory, cogs, salesReturns, accessoryPayments, accessoryRefunds] = await Promise.all([
       this.prisma.payment.aggregate({ _sum: { amount: true }, where: { context: { in: ['SALE', 'BOOKING_ADVANCE'] }, paidAt: { gte: from, lte: to } } }),
       this.prisma.payment.aggregate({ _sum: { amount: true }, where: { context: 'SERVICE', paidAt: { gte: from, lte: to } } }),
       this.prisma.amcPlan.aggregate({ _sum: { price: true }, where: { createdAt: { gte: from, lte: to } } }),
@@ -71,7 +71,10 @@ export class PnlService {
       // An approved deduction stays as retained income by design (paid − deduction = refund).
       // COGS is unchanged: the Vehicle-Purchase model is purchase-period based, not per-unit,
       // so a return has no COGS reversal here — intentional, pending CA review.
-      this.prisma.refund.aggregate({ _sum: { amount: true }, where: { refundedAt: { gte: from, lte: to } } }),
+      this.prisma.refund.aggregate({ _sum: { amount: true }, where: { returnId: { not: null }, refundedAt: { gte: from, lte: to } } }),
+      // Accessory counter sales, cash basis: what was collected, less what was refunded on cancelled sales.
+      this.prisma.payment.aggregate({ _sum: { amount: true }, where: { context: 'ACCESSORY', paidAt: { gte: from, lte: to } } }),
+      this.prisma.refund.aggregate({ _sum: { amount: true }, where: { accessorySaleId: { not: null }, refundedAt: { gte: from, lte: to } } }),
     ]);
 
     const salesRevenueGross = salesPayments._sum.amount ?? 0n;
@@ -79,9 +82,12 @@ export class PnlService {
     const salesRevenue = salesRevenueGross - returnsTotal; // net of refunds (cash-basis reversal)
     const serviceRevenue = servicePayments._sum.amount ?? 0n;
     const amcRevenue = amc._sum.price ?? 0n;
+    // GST-inclusive, like the vehicle sales line (P&L is cash collected).
+    const accessoryRevenue = (accessoryPayments._sum.amount ?? 0n) - (accessoryRefunds._sum.amount ?? 0n);
 
     const income: ProfitLossLine[] = [{ label: 'Sales revenue', amount: String(salesRevenueGross) }];
     if (returnsTotal > 0n) income.push({ label: 'Less: Sales returns (refunds)', amount: String(-returnsTotal) });
+    income.push({ label: 'Accessory sales', amount: String(accessoryRevenue) });
     income.push({ label: 'Service revenue', amount: String(serviceRevenue) });
     income.push({ label: 'AMC revenue', amount: String(amcRevenue) });
     // P&L uses net amounts only — GST is a liability / recoverable credit, not
@@ -104,7 +110,7 @@ export class PnlService {
       .sort((a, b) => Number(b._n - a._n))
       .map(({ label, _n }) => ({ label, amount: String(_n) }));
 
-    const totalIncome = salesRevenue + serviceRevenue + amcRevenue + otherIncomeTotal;
+    const totalIncome = salesRevenue + accessoryRevenue + serviceRevenue + amcRevenue + otherIncomeTotal;
     const totalExpense = sumBig(expenses.map((e) => BigInt(e.amount)));
     const costOfGoods = cogs._sum.amount ?? 0n;
 

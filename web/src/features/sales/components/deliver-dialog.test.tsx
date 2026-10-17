@@ -9,7 +9,7 @@ vi.mock('../hooks', () => ({ useSalesInvalidate: () => h.invalidate }));
 vi.mock('sonner', () => ({ toast: { success: (m: string) => h.toastSuccess(m), error: (m: string) => h.toastError(m) } }));
 
 const shift = (days: number): string => todayDateInput(new Date(Date.now() + days * 86_400_000));
-const booking = { id: 'b1', code: 'BK-1', earliestDelivery: { date: shift(-30), label: 'booking date' } };
+const booking = { id: 'b1', code: 'BK-1', earliestDelivery: { date: shift(-30), label: "scooter's purchase date" } };
 const field = (): HTMLInputElement => screen.getByLabelText('Delivery date') as HTMLInputElement;
 const confirm = (): HTMLElement => screen.getByRole('button', { name: /Confirm delivery/ });
 
@@ -53,13 +53,21 @@ describe('DeliverDialog (Booking → Deliver)', () => {
     expect(h.deliver).not.toHaveBeenCalled();
   });
 
-  it('prevents a date before the booking date from being submitted', () => {
+  it("prevents a date before the scooter's purchase date from being submitted", () => {
     render(<DeliverDialog open onOpenChange={() => {}} booking={booking} />);
     expect(field().min).toBe(shift(-30));
     fireEvent.change(field(), { target: { value: shift(-31) } });
-    expect(screen.getByRole('alert')).toHaveTextContent('Delivery date cannot be before the booking date');
+    expect(screen.getByRole('alert')).toHaveTextContent("Delivery date cannot be before the scooter's purchase date");
     expect(confirm()).toBeDisabled();
     fireEvent.change(field(), { target: { value: shift(-30) } });
+    expect(confirm()).not.toBeDisabled();
+  });
+
+  it('with no purchase date recorded, any past date is allowed (old records)', () => {
+    render(<DeliverDialog open onOpenChange={() => {}} booking={{ ...booking, earliestDelivery: null }} />);
+    expect(field().min).toBe('');
+    fireEvent.change(field(), { target: { value: '2015-06-15' } });
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(confirm()).not.toBeDisabled();
   });
 

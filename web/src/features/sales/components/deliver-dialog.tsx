@@ -38,10 +38,10 @@ export function DeliverDialog({ open, onOpenChange, booking }: Props): JSX.Eleme
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Deliver <span className="font-mono">{booking.code}</span></DialogTitle></DialogHeader>
-        <DeliveryDateField id="booking-delivery-date" value={date} onChange={setDate} notBefore={booking.earliestDelivery} />
+        <DeliveryDateField id="booking-delivery-date" value={date} onChange={setDate} notBefore={booking.earliestDelivery ?? undefined} />
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button variant="accent" disabled={busy || deliveryDateError(date, booking.earliestDelivery) !== null} onClick={submit}><Truck className="h-4 w-4" /> Confirm delivery</Button>
+          <Button variant="accent" disabled={busy || deliveryDateError(date, booking.earliestDelivery ?? undefined) !== null} onClick={submit}><Truck className="h-4 w-4" /> Confirm delivery</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

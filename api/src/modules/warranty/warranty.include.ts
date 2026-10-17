@@ -10,6 +10,8 @@ export const warrantyInclude = {
       vin: true,
       motorNumber: true,
       batteryNumber: true,
+      controllerNumber: true,
+      chargerNumber: true,
       variant: { select: { name: true, model: { select: { name: true } } } },
     },
   },

@@ -33,8 +33,11 @@ const optionalIdentifierField = z
  * response for anyone else.
  */
 export const PURCHASE_COST_PERMISSION = 'inventory.cost';
-/** Response keys that carry purchase-cost data (removed for users without inventory.cost). */
-export const PURCHASE_COST_FIELDS = ['purchaseCost', 'purchasePrice', 'purchaseGstRateBp', 'purchaseGst', 'transportCharge'] as const;
+/**
+ * Response keys that carry purchase-cost data (removed for users without inventory.cost): a vehicle's purchase
+ * breakdown, and an accessory's weighted-average cost and its cost at sale.
+ */
+export const PURCHASE_COST_FIELDS = ['purchaseCost', 'purchasePrice', 'purchaseGstRateBp', 'purchaseGst', 'transportCharge', 'avgCost', 'costAtSale'] as const;
 /** Request keys that set purchase-cost data (refused from users without inventory.cost). */
 export const PURCHASE_COST_INPUTS = ['purchasePrice', 'purchaseGstRate', 'purchaseGst', 'transportCharge'] as const;
 
@@ -55,6 +58,40 @@ export function computePurchaseCost(price: bigint, gst: { rateBp: number } | { a
   const purchaseGst = 'amount' in gst ? gst.amount : (price * BigInt(gst.rateBp) * 2n + 10000n) / 20000n;
   return { purchasePrice: price, purchaseGstRateBp: 'amount' in gst ? null : gst.rateBp, purchaseGst, transportCharge: transport, purchaseCost: price + purchaseGst + transport };
 }
+
+/* ── Component warranty ─────────────────────────────────────────────────────────────────────────
+ * Months of warranty for each main component, entered with the scooter. Delivery issues the warranty card
+ * from them, starting on the delivery date. 0 = not covered; blank = the company's default warranty period.
+ * Once the warranty exists, only the owner changes them — from the warranty, which regenerates the card.
+ */
+export const WARRANTY_MONTH_COMPONENTS = ['MOTOR', 'BATTERY', 'CONTROLLER', 'CHARGER'] as const;
+export type WarrantyMonthComponent = (typeof WARRANTY_MONTH_COMPONENTS)[number];
+/** The InventoryUnit column holding each component's months. */
+export const UNIT_WARRANTY_MONTH_FIELDS = {
+  MOTOR: 'motorWarrantyMonths',
+  BATTERY: 'batteryWarrantyMonths',
+  CONTROLLER: 'controllerWarrantyMonths',
+  CHARGER: 'chargerWarrantyMonths',
+} as const satisfies Record<WarrantyMonthComponent, string>;
+export type UnitWarrantyMonthField = (typeof UNIT_WARRANTY_MONTH_FIELDS)[WarrantyMonthComponent];
+export const WARRANTY_MONTHS_MAX = 240;
+/** Whole months, 0–240. */
+export const warrantyMonthsSchema = z.coerce.number().int('Whole months only').min(0).max(WARRANTY_MONTHS_MAX, `At most ${WARRANTY_MONTHS_MAX} months`);
+/** Optional on a unit: '' or null → not entered (the company default applies). */
+const unitWarrantyMonthsField = z.preprocess((v) => (v === '' ? null : v), warrantyMonthsSchema.nullable().optional());
+
+/** An extra item typed in for the warranty card (e.g. "Hub motor bearings", 12 months). A type alias, so it can
+ * ride in JSON columns and activity-log metadata. */
+export type WarrantyExtra = { name: string; months: number };
+export const WARRANTY_EXTRAS_MAX = 10;
+export const warrantyExtraSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(60, 'At most 60 characters'),
+  months: z.coerce.number().int('Whole months only').min(1, 'At least 1 month').max(WARRANTY_MONTHS_MAX, `At most ${WARRANTY_MONTHS_MAX} months`),
+});
+export const warrantyExtrasSchema = z
+  .array(warrantyExtraSchema)
+  .max(WARRANTY_EXTRAS_MAX, `At most ${WARRANTY_EXTRAS_MAX} extra items`)
+  .refine((items) => new Set(items.map((i) => i.name.toLowerCase())).size === items.length, { message: 'Each extra item needs a different name' });
 
 /**
  * A unit names its catalogue entry in one of two ways:
@@ -78,6 +115,12 @@ const unitFields = {
   batteryNumber: identifierField,
   controllerNumber: optionalIdentifierField,
   chargerNumber: optionalIdentifierField,
+  // Component warranty months (see UNIT_WARRANTY_MONTH_FIELDS); locked once the vehicle has a warranty.
+  motorWarrantyMonths: unitWarrantyMonthsField,
+  batteryWarrantyMonths: unitWarrantyMonthsField,
+  controllerWarrantyMonths: unitWarrantyMonthsField,
+  chargerWarrantyMonths: unitWarrantyMonthsField,
+  warrantyExtras: warrantyExtrasSchema.optional(),
   purchaseDate: z.coerce.date().optional(),
   // Purchase cost (inventory.cost only). Omitted → unchanged on an edit, zero on a new unit.
   purchasePrice: paise.optional(),
@@ -215,6 +258,13 @@ export interface InventoryUnitDto {
   status: UnitStatus;
   controllerNumber: string | null;
   chargerNumber: string | null;
+  /** Component warranty months; null = the company default applies. */
+  motorWarrantyMonths: number | null;
+  batteryWarrantyMonths: number | null;
+  controllerWarrantyMonths: number | null;
+  chargerWarrantyMonths: number | null;
+  /** Extra items printed on the warranty card after the four components. */
+  warrantyExtras: WarrantyExtra[];
   purchaseDate: string | null;
   /** Purchase-cost fields: present only for users with inventory.cost. */
   purchaseCost?: string;

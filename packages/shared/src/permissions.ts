@@ -167,6 +167,8 @@ const MODULE_ROWS: Record<PermissionModule, Row[]> = {
   accessories: [
     ['view', 'View accessories'],
     ['manage', 'Manage accessories'],
+    ['sell', 'Sell accessories (counter sale) & take payments'],
+    ['cancel', 'Cancel accessory sales', true],
   ],
   settings: [
     ['view', 'View company settings'],

@@ -53,6 +53,8 @@ export interface InventoryDashboard {
 export interface UnitDetail extends InventoryUnitDto {
   /** How its identity may change — computed by the server, for presentation only (the server re-checks). */
   identity: UnitIdentityPolicy;
+  /** The vehicle has a warranty card: its component months are then changed from the warranty (owner only). */
+  warrantyIssued?: boolean;
   events: InventoryEventDto[];
   photos: InventoryUnitPhotoDto[];
   documents: InventoryUnitDocumentDto[];

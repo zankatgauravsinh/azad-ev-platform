@@ -22,4 +22,5 @@ export * from './delivery';
 export * from './tax';
 export * from './catalog';
 export * from './rto';
+export * from './accessory-sales';
 export * from './identity';

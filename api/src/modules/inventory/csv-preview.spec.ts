@@ -103,4 +103,11 @@ describe('buildCsvPreview', () => {
     const rows = readCsvRows(Buffer.from(`${HEAD}\n,Solo,Pro,Teal, vin1 ,m1,,,,,\n,Solo,Pro,Teal,VIN1,m2,b2,,,,\n`), header);
     expect(identifierCandidates(rows)).toEqual({ vin: ['VIN1'], motorNumber: ['M1', 'M2'], batteryNumber: ['B2'] });
   });
+
+  it('a purchase date after today is refused (today itself is fine)', () => {
+    const rows = readCsvRows(Buffer.from([HEAD, ',Solo,Pro,Teal,vin1,m1,b1,12/10/2026,,,', ',Solo,Pro,Teal,vin2,m2,b2,2026-10-11,,,'].join('\n')), header);
+    const p = buildCsvPreview(rows, catalogue, none(), 2000, new Date('2026-10-11T00:00:00.000Z'), SHA, '2026-10-11');
+    expect(p.rows[0]!.issues).toEqual([{ code: 'INVALID_DATE', field: 'purchaseDate', message: 'Purchase date 12/10/2026 is in the future.' }]);
+    expect(p.rows[1]!.status).toBe('VALID');
+  });
 });

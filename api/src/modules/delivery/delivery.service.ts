@@ -111,7 +111,7 @@ export class DeliveryService {
 
   async detail(bookingId: string): Promise<DeliveryDetailDto> {
     const b = await this.getBookingOrThrow(bookingId);
-    return this.toDetail(b, await this.bookings.businessTimeZone());
+    return this.toDetail(b);
   }
 
   async schedule(bookingId: string, dto: ScheduleDeliveryInput2): Promise<DeliveryDetailDto> {
@@ -256,7 +256,7 @@ export class DeliveryService {
     };
   }
 
-  private toDetail(b: BookingDetailRow, timeZone: string): DeliveryDetailDto {
+  private toDetail(b: BookingDetailRow): DeliveryDetailDto {
     const paid = b.payments.reduce<bigint>((a, p) => a + p.amount, 0n);
     const balance = b.total - paid;
     const d = b.sale?.delivery ?? null;
@@ -285,7 +285,7 @@ export class DeliveryService {
         total: String(b.total),
         paid: String(paid),
         pendingDocuments: b.pendingDocuments,
-        earliestDelivery: deliveryLowerBound(b, timeZone),
+        earliestDelivery: deliveryLowerBound(b),
       },
       delivery: d
         ? {

@@ -110,7 +110,7 @@ export class BookingsService {
     const booking = await this.prisma.booking.findFirst({ where: { id }, include });
     if (!booking) throw new NotFoundException('Booking not found');
     // earliestDelivery: the first date a delivery may be recorded on (see delivery-date.ts), for the date pickers.
-    return { ...booking, paymentSummary: this.paymentSummary(booking), earliestDelivery: deliveryLowerBound(booking, await this.businessTimeZone()) };
+    return { ...booking, paymentSummary: this.paymentSummary(booking), earliestDelivery: deliveryLowerBound(booking) };
   }
 
   // ── Create / allocate ──────────────────────────────────
@@ -349,9 +349,9 @@ export class BookingsService {
   }
 
   /** Applies the delivery-date rules (see delivery-date.ts): never the future, never before `notBefore`. */
-  private resolveDelivery(actualDelivery: MarkDeliveredInput['actualDelivery'], timeZone: string, notBefore: DeliveryLowerBound): ResolvedDeliveryDate {
+  private resolveDelivery(actualDelivery: MarkDeliveredInput['actualDelivery'], timeZone: string, notBefore: DeliveryLowerBound | null): ResolvedDeliveryDate {
     try {
-      return resolveDeliveryDate(actualDelivery, new Date(), timeZone, notBefore);
+      return resolveDeliveryDate(actualDelivery, new Date(), timeZone, notBefore ?? undefined);
     } catch (e) {
       if (e instanceof FutureDeliveryDateError || e instanceof EarlyDeliveryDateError) throw new BadRequestException(e.message);
       throw e;

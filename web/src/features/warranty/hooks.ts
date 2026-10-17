@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ListAmcQuery, ListClaimsQuery, ListWarrantiesQuery } from '@azad/shared';
+import type { ListAmcQuery, ListClaimsQuery, ListWarrantiesQuery, ReviseWarrantyMonthsInput } from '@azad/shared';
 import { amcApi, claimsApi, warrantyApi } from './api';
 
 const keys = {
@@ -21,7 +21,8 @@ export const useAmcPlan = (id: string | undefined) => useQuery({ queryKey: keys.
 
 export function useWarrantyInvalidate() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: keys.all });
+  // A months change also updates the vehicle's months (inventory).
+  return () => Promise.all([qc.invalidateQueries({ queryKey: keys.all }), qc.invalidateQueries({ queryKey: ['inventory'] })]);
 }
 
 export function useWarrantyMutations() {
@@ -30,6 +31,7 @@ export function useWarrantyMutations() {
   return {
     create: useMutation({ mutationFn: warrantyApi.create, ...opts }),
     cancel: useMutation({ mutationFn: warrantyApi.cancel, ...opts }),
+    reviseMonths: useMutation({ mutationFn: (v: { id: string; body: ReviseWarrantyMonthsInput }) => warrantyApi.reviseMonths(v.id, v.body), ...opts }),
     generate: useMutation({ mutationFn: warrantyApi.generate, ...opts }),
     completeFreeService: useMutation({ mutationFn: (v: { id: string; status: string; remarks?: string }) => warrantyApi.completeFreeService(v.id, { status: v.status, remarks: v.remarks }), ...opts }),
     createClaim: useMutation({ mutationFn: claimsApi.create, ...opts }),

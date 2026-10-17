@@ -28,6 +28,7 @@ import { BookingDetailDialog } from '@/features/sales/components/booking-detail-
 import { ServiceJobDetailDialog } from '@/features/service/components/service-job-detail-dialog';
 import { DeliveryDetailDialog } from '@/features/delivery/components/delivery-detail-dialog';
 import { WarrantyDetailDialog } from '@/features/warranty/components/warranty-detail-dialog';
+import { AccessorySalesPanel } from '@/features/accessory-sales/components/accessory-sales-panel';
 import { paymentContextLabel, titleCase } from '@/lib/labels';
 
 export function CustomerDetailPage(): JSX.Element {
@@ -93,6 +94,7 @@ export function CustomerDetailPage(): JSX.Element {
           <TabsTrigger value="documents">Documents</TabsTrigger>
           <TabsTrigger value="bookings">Bookings</TabsTrigger>
           <TabsTrigger value="payments">Payments</TabsTrigger>
+          {can('accessories.view') && <TabsTrigger value="accessories">Accessories</TabsTrigger>}
           <TabsTrigger value="deliveries">Deliveries</TabsTrigger>
           <TabsTrigger value="service">Service</TabsTrigger>
           <TabsTrigger value="warranty">Warranty</TabsTrigger>
@@ -140,6 +142,7 @@ export function CustomerDetailPage(): JSX.Element {
         <TabsContent value="documents"><Card><CardContent className="p-6"><DocumentsPanel customerId={customer.id} /></CardContent></Card></TabsContent>
         <TabsContent value="bookings"><RelatedList customerId={customer.id} customerName={customer.name} kind="bookings" /></TabsContent>
         <TabsContent value="payments"><RelatedList customerId={customer.id} customerName={customer.name} kind="payments" /></TabsContent>
+        <TabsContent value="accessories"><Card><CardContent className="p-6"><AccessorySalesPanel customerId={customer.id} customerName={customer.name} /></CardContent></Card></TabsContent>
         <TabsContent value="deliveries"><RelatedList customerId={customer.id} customerName={customer.name} kind="deliveries" /></TabsContent>
         <TabsContent value="service"><RelatedList customerId={customer.id} customerName={customer.name} kind="service" /></TabsContent>
         <TabsContent value="warranty"><RelatedList customerId={customer.id} customerName={customer.name} kind="warranty" /></TabsContent>

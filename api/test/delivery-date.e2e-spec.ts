@@ -73,9 +73,10 @@ describe('Delivery date (e2e)', () => {
       .expect(201);
     const booking = await http().post('/api/v1/bookings').set('Authorization', auth(co.token)).send({ customerId: co.customerId, unitId: unit.body.id, exShowroom: 1_000_000 }).expect(201);
     await http().post(`/api/v1/bookings/${booking.body.id}/invoice`).set('Authorization', auth(co.token)).expect(201);
-    // Raw SQL: the server sets createdAt, and the suite owns this company's rows.
-    await prisma.$executeRaw`UPDATE "Booking" SET "createdAt" = ${new Date(Date.now() - bookedDaysAgo * 86_400_000)} WHERE id = ${booking.body.id}`;
-    if (purchaseDate) await prisma.$executeRaw`UPDATE "InventoryUnit" SET "purchaseDate" = ${new Date(`${purchaseDate}T00:00:00.000Z`)} WHERE id = ${unit.body.id}`;
+    // Raw SQL: the server sets createdAt, and the suite owns this company's rows. The columns are timestamp without
+    // time zone holding UTC, so convert explicitly — otherwise Postgres uses the session zone (e.g. Asia/Kolkata).
+    await prisma.$executeRaw`UPDATE "Booking" SET "createdAt" = ${new Date(Date.now() - bookedDaysAgo * 86_400_000)}::timestamptz AT TIME ZONE 'UTC' WHERE id = ${booking.body.id}`;
+    if (purchaseDate) await prisma.$executeRaw`UPDATE "InventoryUnit" SET "purchaseDate" = ${new Date(`${purchaseDate}T00:00:00.000Z`)}::timestamptz AT TIME ZONE 'UTC' WHERE id = ${unit.body.id}`;
     return booking.body.id;
   };
 
@@ -219,29 +220,24 @@ describe('Delivery date (e2e)', () => {
     expect(a.actualDelivery).toEqual(a.deliveredAt);
   });
 
-  // ───────────────────────── Lower bound: booking / purchase date ─────────────────────────
+  // ───────────────────────── Lower bound: the purchase date (never the booking date) ─────────────────────────
   const display = (date: string): string => date.split('-').reverse().join('/');
 
   describe.each(ENTRY_POINTS)('lower bound — %s', (_name, deliver) => {
-    it('a delivery cannot be dated before the booking date', async () => {
+    it('an old handover may be dated before its booking was entered (no purchase date recorded: any past date)', async () => {
       const id = await invoicedBooking(A, { bookedDaysAgo: 10 });
-      const booked = businessDateOf(new Date(Date.now() - 10 * 86_400_000), 'Asia/Kolkata');
-      for (const date of [shift(booked, -1), '2015-06-15']) {
-        const res = await deliver(A.token, id, { actualDelivery: date }).expect(400);
-        expect(res.body.message).toBe(`Delivery date cannot be before the booking date (${display(booked)})`);
-      }
-      await expectNotDelivered(id);
-      await deliver(A.token, id, { actualDelivery: booked }).expect(201);
-      expect((await stored(id)).actualDelivery).toEqual(noonOf(booked, 'Asia/Kolkata'));
+      await deliver(A.token, id, { actualDelivery: '2015-06-15' }).expect(201);
+      expect((await stored(id)).actualDelivery).toEqual(noonOf('2015-06-15', 'Asia/Kolkata'));
     });
 
-    it('nor before the purchase date, when the scooter was bought after it was booked', async () => {
-      const purchased = shift(today(A), -5);
+    it("but never before the scooter's purchase date — even when that is before the booking", async () => {
+      const purchased = shift(today(A), -30);
       const id = await invoicedBooking(A, { bookedDaysAgo: 10, purchaseDate: purchased });
       const res = await deliver(A.token, id, { actualDelivery: shift(purchased, -1) }).expect(400);
       expect(res.body.message).toBe(`Delivery date cannot be before the scooter's purchase date (${display(purchased)})`);
       await expectNotDelivered(id);
       await deliver(A.token, id, { actualDelivery: purchased }).expect(201);
+      expect((await stored(id)).actualDelivery).toEqual(noonOf(purchased, 'Asia/Kolkata'));
     });
 
     it('today is always accepted, even when the purchase date was entered in the future', async () => {
@@ -257,6 +253,9 @@ describe('Delivery date (e2e)', () => {
     const expected = { date: purchased, label: "scooter's purchase date" };
     expect((await http().get(`/api/v1/bookings/${id}`).set('Authorization', auth(A.token)).expect(200)).body.earliestDelivery).toEqual(expected);
     expect((await http().get(`/api/v1/deliveries/${id}`).set('Authorization', auth(A.token)).expect(200)).body.booking.earliestDelivery).toEqual(expected);
+    // No purchase date → no lower bound at all.
+    const open = await invoicedBooking(A, { bookedDaysAgo: 10 });
+    expect((await http().get(`/api/v1/bookings/${open}`).set('Authorization', auth(A.token)).expect(200)).body.earliestDelivery).toBeNull();
   });
 
   // ───────────────────────── What the client gets back ─────────────────────────

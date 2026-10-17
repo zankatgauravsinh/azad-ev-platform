@@ -70,16 +70,17 @@ const isoDate = (date: Date): string => date.toISOString().slice(0, 10);
 const plural = (lines: number[]): string => (lines.length === 1 ? `line ${lines[0]}` : `lines ${lines.join(', ')}`);
 
 /** The preview only. `existing` must hold the matches for identifierCandidates(rows). */
-export function buildCsvPreview(rows: CsvSourceRow[], catalogue: Catalogue, existing: ExistingIdentifiers, maxRows: number, checkedAt: Date, fileSha256: string): CsvImportPreview {
-  return validateCsvFile(rows, catalogue, existing, maxRows, checkedAt, fileSha256).preview;
+export function buildCsvPreview(rows: CsvSourceRow[], catalogue: Catalogue, existing: ExistingIdentifiers, maxRows: number, checkedAt: Date, fileSha256: string, today?: string): CsvImportPreview {
+  return validateCsvFile(rows, catalogue, existing, maxRows, checkedAt, fileSha256, today).preview;
 }
 
 /**
  * Validates the file. `units` holds what the import would create — one per row, in file order — and is
- * only meaningful when `preview.summary.invalid` is 0.
+ * only meaningful when `preview.summary.invalid` is 0. `today` (the company's calendar date, 'YYYY-MM-DD')
+ * refuses a purchase date in the future.
  */
 export function validateCsvFile(
-  rows: CsvSourceRow[], catalogue: Catalogue, existing: ExistingIdentifiers, maxRows: number, checkedAt: Date, fileSha256: string,
+  rows: CsvSourceRow[], catalogue: Catalogue, existing: ExistingIdentifiers, maxRows: number, checkedAt: Date, fileSha256: string, today?: string,
 ): { preview: CsvImportPreview; units: ImportableUnit[] } {
   const units: ImportableUnit[] = [];
   // Which lines use each identifier value, per field.
@@ -113,6 +114,10 @@ export function validateCsvFile(
     check(() => csvStatus(record.status));
     let purchaseDate: Date | null = null;
     if (text(record.purchaseDate) !== '') check(() => { purchaseDate = parseCsvDate(record.purchaseDate!); });
+    const bought = purchaseDate as Date | null;
+    if (bought && today && bought.toISOString().slice(0, 10) > today) {
+      add({ code: 'INVALID_DATE', field: 'purchaseDate', message: `Purchase date ${bought.toISOString().slice(0, 10).split('-').reverse().join('/')} is in the future.` });
+    }
     // 4. Catalogue — needs the three names (a missing one is already reported above).
     let variant: CatalogueVariant | null = null;
     const names = { brand: text(record.brand), model: text(record.model), variant: text(record.variant), colour: text(record.colour) };

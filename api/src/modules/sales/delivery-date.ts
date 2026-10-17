@@ -7,10 +7,11 @@ import { businessDateOf, noonOf, type BusinessDate } from '../../common/utils/bu
  *
  * INTERPRETATION
  *  The delivery date is a business calendar date in the company's time zone. It may be today or a past
- *  date; a future date is refused. A past date may not be earlier than `notBefore` — the later of the
- *  booking date and the scooter's purchase date (a vehicle cannot be handed over before it was booked or
- *  bought, and the warranty starts on this date). Today is always allowed, so a stray future purchase
- *  date never blocks a real handover.
+ *  date; a future date is refused. A past date may not be earlier than `notBefore` — the scooter's purchase
+ *  date, when recorded (a vehicle cannot be handed over before the dealer bought it, and the warranty
+ *  starts on this date). The booking date is deliberately NOT a bound: an old handover may be entered
+ *  today, with its booking created now. Today is always allowed, so a stray future purchase date never
+ *  blocks a real handover.
  *
  * STORAGE (Booking.actualDelivery and Delivery.deliveredAt are DateTime columns — unchanged)
  *  - today, or nothing sent → the current instant, exactly as before: the real handover time.
@@ -43,20 +44,19 @@ export class EarlyDeliveryDateError extends Error {
   }
 }
 
-/** The earliest permitted delivery date and what it is (e.g. "booking date"). */
+/** The earliest permitted delivery date and what it is (e.g. "scooter's purchase date"). */
 export interface DeliveryLowerBound {
   date: BusinessDate;
   label: string;
 }
 
 /**
- * A booking's `notBefore`: the later of the day it was booked (in the company's time zone) and the scooter's
- * purchase date (a calendar date, stored at midnight UTC).
+ * A booking's `notBefore`: the scooter's purchase date (a calendar date, stored at midnight UTC), or null when
+ * none is recorded — then any past date is allowed.
  */
-export function deliveryLowerBound(booking: { createdAt: Date; unit: { purchaseDate: Date | null } }, timeZone: string): DeliveryLowerBound {
-  const booked: DeliveryLowerBound = { date: businessDateOf(booking.createdAt, timeZone), label: 'booking date' };
+export function deliveryLowerBound(booking: { unit: { purchaseDate: Date | null } }): DeliveryLowerBound | null {
   const purchase = booking.unit.purchaseDate?.toISOString().slice(0, 10);
-  return purchase && purchase > booked.date ? { date: purchase, label: "scooter's purchase date" } : booked;
+  return purchase ? { date: purchase, label: "scooter's purchase date" } : null;
 }
 
 /** 'YYYY-MM-DD' → 'DD/MM/YYYY', the format the app shows dates in. */

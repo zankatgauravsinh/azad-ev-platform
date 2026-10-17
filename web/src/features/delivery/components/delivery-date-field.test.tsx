@@ -28,10 +28,10 @@ describe('deliveryDateError', () => {
     expect(deliveryDateError('', undefined, now)).toBe('Choose the delivery date');
   });
   it('refuses a date before the booking or purchase date, naming it', () => {
-    const booked = { date: '2026-09-20', label: 'booking date' };
+    const booked = { date: '2026-09-20', label: 'purchase date' };
     expect(deliveryDateError('2026-09-20', booked, now)).toBeNull();
     expect(deliveryDateError('2026-09-25', booked, now)).toBeNull();
-    expect(deliveryDateError('2026-09-19', booked, now)).toBe('Delivery date cannot be before the booking date (20/09/2026)');
+    expect(deliveryDateError('2026-09-19', booked, now)).toBe('Delivery date cannot be before the purchase date (20/09/2026)');
   });
   it('always accepts today, even when the bound is in the future', () => {
     const purchase = { date: '2026-10-09', label: "scooter's purchase date" };
@@ -66,14 +66,14 @@ describe('DeliveryDateField', () => {
   });
 
   it('starts at the earliest permitted date and explains it', () => {
-    const notBefore = { date: shift(-10), label: 'booking date' };
+    const notBefore = { date: shift(-10), label: 'purchase date' };
     render(<DeliveryDateField value={shift(-11)} onChange={() => {}} notBefore={notBefore} />);
     expect(field().min).toBe(shift(-10));
-    expect(screen.getByRole('alert')).toHaveTextContent('Delivery date cannot be before the booking date');
+    expect(screen.getByRole('alert')).toHaveTextContent('Delivery date cannot be before the purchase date');
     cleanup();
     render(<DeliveryDateField value={todayDateInput()} onChange={() => {}} notBefore={notBefore} />);
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByText(/back to the booking date/)).toBeInTheDocument();
+    expect(screen.getByText(/back to the purchase date/)).toBeInTheDocument();
   });
 
   it('never sets a minimum later than today', () => {

@@ -16,6 +16,8 @@ import { DashboardPage } from '@/features/dashboard/pages/dashboard-page';
 import { ServiceListPage } from '@/features/service/pages/service-list-page';
 import { ServiceDetailPage } from '@/features/service/pages/service-detail-page';
 import { SparePartsPage } from '@/features/service/pages/spare-parts-page';
+import { AccessoriesPage } from '@/features/accessories/pages/accessories-page';
+import { AccessorySalesPage } from '@/features/accessory-sales/pages/accessory-sales-page';
 import { ServiceReportsPage } from '@/features/service/pages/service-reports-page';
 import { SettingsPage } from '@/features/settings/pages/settings-page';
 import { RolesPage } from '@/features/roles/pages/roles-page';
@@ -45,6 +47,8 @@ export const router = createBrowserRouter([
           { path: '/inventory', element: <InventoryListPage /> },
           { path: '/inventory/models', element: <ModelsPage /> },
           { path: '/inventory/:id', element: <InventoryDetailPage /> },
+          { path: '/accessories', element: <AccessoriesPage /> },
+          { path: '/accessory-sales', element: <AccessorySalesPage /> },
           { path: '/customers', element: <CustomersListPage /> },
           { path: '/customers/:id', element: <CustomerDetailPage /> },
           { path: '/quotations', element: <QuotationsListPage /> },

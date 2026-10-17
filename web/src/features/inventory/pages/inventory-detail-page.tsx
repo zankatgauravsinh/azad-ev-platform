@@ -142,6 +142,11 @@ export function InventoryDetailPage(): JSX.Element {
                     <Info label="Purchase cost" value={formatPaise(unit.purchaseCost)} />
                   </>
                 )}
+                <Info
+                  className="col-span-2 sm:col-span-3"
+                  label={unit.warrantyIssued ? 'Warranty (months) — card issued' : 'Warranty (months)'}
+                  value={warrantyMonthsText(unit)}
+                />
                 <Info label="Selling price" value={formatPaise(unit.sellingPrice)} />
                 <Info label="Supplier" value={unit.supplier ?? '—'} />
                 <Info label="Location" value={unit.location ?? '—'} />
@@ -272,4 +277,16 @@ function Info({
       <p className={`mt-0.5 text-sm ${mono ? 'font-mono' : 'font-medium'}`}>{value}</p>
     </div>
   );
+}
+
+/** "Motor 36 · Battery 60 · Controller 12 · Charger —" ("default" when not entered, "not covered" for 0). */
+function warrantyMonthsText(unit: { motorWarrantyMonths: number | null; batteryWarrantyMonths: number | null; controllerWarrantyMonths: number | null; chargerWarrantyMonths: number | null; warrantyExtras?: { name: string; months: number }[] }): string {
+  const one = (label: string, months: number | null): string => `${label} ${months == null ? 'default' : months === 0 ? 'not covered' : months}`;
+  return [
+    one('Motor', unit.motorWarrantyMonths),
+    one('Battery', unit.batteryWarrantyMonths),
+    one('Controller', unit.controllerWarrantyMonths),
+    one('Charger', unit.chargerWarrantyMonths),
+    ...(unit.warrantyExtras ?? []).map((e) => `${e.name} ${e.months}`),
+  ].join(' · ');
 }

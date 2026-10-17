@@ -173,34 +173,7 @@ export type ScheduleDeliveryInput = z.infer<typeof scheduleDeliverySchema>;
 export const markDeliveredSchema = z.object({ actualDelivery: deliveryDateInputSchema.nullish() });
 export type MarkDeliveredInput = z.infer<typeof markDeliveredSchema>;
 
-// ── Accessories catalogue ─────────────────────────────────
-export const createAccessorySchema = z.object({
-  name: z.string().trim().min(1),
-  sku: z.string().trim().optional(),
-  category: z.string().trim().max(80).optional(),
-  sellPrice: money,
-  minStock: z.coerce.number().int().min(0).default(0),
-  isPart: z.boolean().default(false),
-});
-export type CreateAccessoryInput = z.infer<typeof createAccessorySchema>;
-
 // ── Response DTOs ─────────────────────────────────────────
-export interface AccessoryDto {
-  id: string;
-  name: string;
-  sku: string | null;
-  category: string | null;
-  sellPrice: string;
-  /** Weighted-average moving cost (system-maintained). */
-  avgCost: string;
-  onHand: number;
-  reserved: number;
-  /** onHand - reserved. */
-  available: number;
-  minStock: number;
-  isPart: boolean;
-  isActive: boolean;
-}
 export interface PriceBreakup {
   exShowroom: string;
   discount: string;

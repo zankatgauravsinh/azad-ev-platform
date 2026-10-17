@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { UnitStatus } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { resolveTimeZone } from '../../common/utils/business-date';
 
 type Db = PrismaService | Prisma.TransactionClient;
 
@@ -292,6 +293,19 @@ export class InventoryRepository {
            OR EXISTS (SELECT 1 FROM "Warranty" WHERE "unitId" = ${id})
            OR EXISTS (SELECT 1 FROM "AmcPlan" WHERE "unitId" = ${id})) AS committed`;
     return row?.committed === true;
+  }
+
+  /** The company's time zone, in which "today" (e.g. for a purchase date) is read. */
+  async businessTimeZone(): Promise<string> {
+    const setting = await this.prisma.companySetting.findFirst({ select: { timezone: true } });
+    return resolveTimeZone(setting?.timezone);
+  }
+
+  /** The vehicle has a warranty card that is not cancelled. */
+  async hasLiveWarranty(id: string, db: Db = this.prisma): Promise<boolean> {
+    const [row] = await db.$queryRaw<{ live: boolean }[]>`
+      SELECT EXISTS (SELECT 1 FROM "Warranty" WHERE "unitId" = ${id} AND status::text <> 'CANCELLED') AS live`;
+    return row?.live === true;
   }
 }
 

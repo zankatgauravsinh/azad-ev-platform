@@ -346,7 +346,7 @@ describe('Sales domain (e2e)', () => {
     // M9: delivering issues the warranty, starting on the delivery date, with its free services.
     await http().post(`/api/v1/bookings/${booking.id}/invoice`).set('Authorization', auth()).expect(201);
     const day = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-    await prisma.$executeRaw`UPDATE "Booking" SET "createdAt" = ${new Date(Date.now() - 10 * 86_400_000)} WHERE id = ${booking.id}`;
+    await prisma.$executeRaw`UPDATE "Booking" SET "createdAt" = ${new Date(Date.now() - 10 * 86_400_000)}::timestamptz AT TIME ZONE 'UTC' WHERE id = ${booking.id}`;
     await http().post(`/api/v1/bookings/${booking.id}/deliver`).set('Authorization', auth()).send({ actualDelivery: day }).expect(201);
     const warranties = await prisma.warranty.findMany({ where: { unitId: unit.body.id }, include: { freeServices: true } });
     expect(warranties).toHaveLength(1);

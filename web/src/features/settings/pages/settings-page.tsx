@@ -59,6 +59,7 @@ export function SettingsPage(): JSX.Element {
         rtoInvoicePrefix: settings.rtoInvoicePrefix, warrantyPrefix: settings.warrantyPrefix, amcPrefix: settings.amcPrefix,
         claimPrefix: settings.claimPrefix, returnPrefix: settings.returnPrefix, creditNotePrefix: settings.creditNotePrefix,
         refundPrefix: settings.refundPrefix,
+        accessoryInvoicePrefix: settings.accessoryInvoicePrefix, accessoryGstEnabled: settings.accessoryGstEnabled, accessoryGstRateBp: settings.accessoryGstRateBp,
         defaultWarrantyMonths: settings.defaultWarrantyMonths, serviceReminderDays: settings.serviceReminderDays,
         warrantyEnabled: settings.warrantyEnabled, amcEnabled: settings.amcEnabled, warrantyReminderDays: settings.warrantyReminderDays,
         financeEnabled: settings.financeEnabled, expensePrefix: settings.expensePrefix, vendorPrefix: settings.vendorPrefix,
@@ -231,6 +232,23 @@ export function SettingsPage(): JSX.Element {
                     </div>
                   </Field>
                   <Field label="Invoice footer" className="sm:col-span-2"><Input {...register('invoiceFooter')} /></Field>
+                </Grid>
+              </Panel>
+              <Panel>
+                <p className="mb-3 text-sm font-semibold">Accessory invoices</p>
+                <Grid>
+                  <SwitchRow control={control} name="accessoryGstEnabled" label="GST on accessory invoices" hint="On: prices include GST and the invoice shows CGST + SGST (or IGST). Off: a plain invoice with no GST." />
+                  <Field label="Accessory GST rate (%)" error={errors.accessoryGstRateBp?.message}>
+                    <Controller
+                      control={control}
+                      name="accessoryGstRateBp"
+                      render={({ field }) => (
+                        <Input type="number" min={0} max={28} step={0.01} value={field.value === undefined || field.value === null ? '' : Number(field.value) / 100} onChange={(e) => field.onChange(e.target.value === '' ? undefined : Math.round(Number(e.target.value) * 100))} />
+                      )}
+                    />
+                  </Field>
+                  <p className="text-xs text-muted-foreground sm:col-span-2">Used for an accessory without a GST classification; a classified accessory uses its own rate.</p>
+                  <Field label="Accessory invoice prefix" error={errors.accessoryInvoicePrefix?.message}><Input {...register('accessoryInvoicePrefix')} /></Field>
                 </Grid>
               </Panel>
             </TabsContent>

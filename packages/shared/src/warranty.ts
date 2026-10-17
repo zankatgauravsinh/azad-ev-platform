@@ -13,6 +13,7 @@ import {
   type AmcStatus,
   type WarrantyCoverageItem,
 } from './enums';
+import { WARRANTY_MONTH_COMPONENTS, warrantyExtrasSchema, warrantyMonthsSchema, type WarrantyMonthComponent } from './inventory';
 
 const paise = z.coerce.number().int().min(0);
 const warrantyStatusTuple = WARRANTY_STATUSES as [WarrantyStatus, ...WarrantyStatus[]];
@@ -29,6 +30,10 @@ export interface WarrantyCoverageLine {
   label: string;
   covered: boolean;
   remarks: string | null;
+  /** Months this component is covered for, from the start date (absent on warranties issued before component months). */
+  months?: number | null;
+  /** Last day of this component's cover (ISO); absent / null when not covered or not tracked. */
+  validUntil?: string | null;
 }
 
 export interface WarrantyPartLine {
@@ -48,6 +53,9 @@ export interface WarrantyRecordDto {
   variant: string;
   motorNumber: string | null;
   batteryNumber: string | null;
+  /** The vehicle's controller / charger serial numbers (printed on the card). */
+  controllerNumber: string | null;
+  chargerNumber: string | null;
   bookingId: string | null;
   bookingCode: string | null;
   saleId: string | null;
@@ -211,6 +219,20 @@ export const updateWarrantySchema = z.object({
   status: z.enum(warrantyStatusTuple).optional(),
 });
 export type UpdateWarrantyInput = z.infer<typeof updateWarrantySchema>;
+
+/**
+ * Owner only: change the component warranty months (and the extra items) of an issued warranty and regenerate
+ * its card (same warranty number, same start date). The vehicle's months and extra items are updated to match.
+ * `extras` omitted → the card's extra items are kept.
+ */
+export const reviseWarrantyMonthsSchema = z.object({
+  months: z
+    .object(Object.fromEntries(WARRANTY_MONTH_COMPONENTS.map((c) => [c, warrantyMonthsSchema])) as Record<WarrantyMonthComponent, typeof warrantyMonthsSchema>)
+    .refine((m) => Object.values(m).some((v) => v > 0), { message: 'Cover at least one component' }),
+  extras: warrantyExtrasSchema.optional(),
+  reason: z.string().trim().max(300).optional(),
+});
+export type ReviseWarrantyMonthsInput = z.infer<typeof reviseWarrantyMonthsSchema>;
 
 export const listWarrantiesQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),

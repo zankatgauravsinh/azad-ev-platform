@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileDown, Plus, ShieldX } from 'lucide-react';
+import { CalendarClock, FileDown, Plus, ShieldX } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaise } from '@/lib/money';
@@ -14,19 +14,25 @@ import { warrantyApi } from '../api';
 import { useWarranty, useWarrantyMutations } from '../hooks';
 import { claimTone, expiryLabel, expiryTone, freeServiceTone, warrantyTone } from '../meta';
 import { CreateClaimDialog } from './create-claim-dialog';
+import { WarrantyMonthsDialog } from './warranty-months-dialog';
 
 const fmt = (iso: string): string => new Date(iso).toLocaleDateString('en-IN');
 
 export function WarrantyDetailDialog({ id, onOpenChange }: { id: string | null; onOpenChange: (o: boolean) => void }): JSX.Element {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const canManageClaims = can('claims.manage'); // new claim + approve/reject/complete (warranty-claims)
   const canUpdateWarranty = can('warranty.update'); // free-service completion
   const canCancel = can('warranty.cancel');
+  // The warranty card's months: the owner alone changes them (and the card is regenerated).
+  const canEditMonths = user?.role === 'OWNER' && canUpdateWarranty;
   const { data } = useWarranty(id ?? undefined);
   const { cancel, completeFreeService, updateClaim } = useWarrantyMutations();
   const [claimOpen, setClaimOpen] = useState(false);
+  const [monthsOpen, setMonthsOpen] = useState(false);
 
   const w = data?.warranty;
+  // Warranties issued before component months show the older table.
+  const withMonths = Boolean(data?.coverage.some((c) => c.months != null));
 
   const download = async (): Promise<void> => {
     if (!w) return;
@@ -59,6 +65,7 @@ export function WarrantyDetailDialog({ id, onOpenChange }: { id: string | null; 
 
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onClick={download}><FileDown className="h-4 w-4" /> Certificate</Button>
+              {canEditMonths && w.status !== 'CANCELLED' && <Button size="sm" variant="outline" onClick={() => setMonthsOpen(true)}><CalendarClock className="h-4 w-4" /> Edit months</Button>}
               {canManageClaims && w.status !== 'CANCELLED' && <Button size="sm" onClick={() => setClaimOpen(true)}><Plus className="h-4 w-4" /> New claim</Button>}
               {canCancel && w.status !== 'CANCELLED' && <Button size="sm" variant="outline" onClick={doCancel} disabled={cancel.isPending}><ShieldX className="h-4 w-4" /> Cancel</Button>}
             </div>
@@ -69,20 +76,27 @@ export function WarrantyDetailDialog({ id, onOpenChange }: { id: string | null; 
               <Field label="VIN" value={w.vin} mono />
               <Field label="Motor no." value={w.motorNumber ?? '—'} mono />
               <Field label="Battery no." value={w.batteryNumber ?? '—'} mono />
+              <Field label="Controller no." value={w.controllerNumber ?? '—'} mono />
+              <Field label="Charger no." value={w.chargerNumber ?? '—'} mono />
               <Field label="Invoice" value={w.invoiceNumber ?? '—'} />
-              <Field label="Purchased" value={fmt(w.purchaseDate)} />
-              <Field label="Valid from" value={fmt(w.startDate)} />
-              <Field label="Valid until" value={fmt(w.endDate)} />
+              <Field label="Valid from (delivery)" value={fmt(w.startDate)} />
+              <Field label="Valid until" value={`${fmt(w.endDate)} (${w.periodMonths} months)`} />
             </dl>
 
             <Section title="Coverage">
               <Table>
-                <TableHeader><TableRow><TableHead>Component</TableHead><TableHead>Status</TableHead><TableHead>Remarks</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>Component</TableHead><TableHead>Status</TableHead>{withMonths && <><TableHead>Months</TableHead><TableHead>Valid until</TableHead></>}<TableHead>Remarks</TableHead></TableRow></TableHeader>
                 <TableBody>
-                  {data.coverage.map((c) => (
-                    <TableRow key={c.item}>
+                  {data.coverage.map((c, i) => (
+                    <TableRow key={`${c.item}-${i}`}>
                       <TableCell>{c.label}</TableCell>
                       <TableCell><Badge variant={c.covered ? 'success' : 'muted'}>{c.covered ? 'Covered' : 'Excluded'}</Badge></TableCell>
+                      {withMonths && (
+                        <>
+                          <TableCell className="tabular-nums">{c.covered && c.months ? c.months : '—'}</TableCell>
+                          <TableCell className="tabular-nums">{c.covered && c.validUntil ? fmt(c.validUntil) : '—'}</TableCell>
+                        </>
+                      )}
                       <TableCell className="text-muted-foreground">{c.remarks ?? '—'}</TableCell>
                     </TableRow>
                   ))}
@@ -158,6 +172,7 @@ export function WarrantyDetailDialog({ id, onOpenChange }: { id: string | null; 
             </Section>
 
             {w && <CreateClaimDialog open={claimOpen} onOpenChange={setClaimOpen} warrantyId={w.id} warrantyNumber={w.warrantyNumber} />}
+            {w && canEditMonths && <WarrantyMonthsDialog open={monthsOpen} onOpenChange={setMonthsOpen} warranty={w} coverage={data.coverage} />}
           </>
         )}
       </DialogContent>

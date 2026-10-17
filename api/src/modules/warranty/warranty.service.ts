@@ -1,11 +1,16 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, type OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  ActivityAction,
+  Role,
+  UNIT_WARRANTY_MONTH_FIELDS,
+  WARRANTY_MONTH_COMPONENTS,
   buildPageMeta,
   type CompleteFreeServiceInput,
   type CreateWarrantyInput,
   type FreeServiceDto,
   type ListWarrantiesQuery,
+  type ReviseWarrantyMonthsInput,
   type Paginated,
   type UpdateWarrantyInput,
   type WarrantyClaimDto,
@@ -15,11 +20,12 @@ import {
   type WarrantyTimelineEntry,
 } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { CustomerTimelineService } from '../customers/customer-timeline.service';
 import { SequenceService } from '../sales/sequence.service';
 import { BookingsService, type DeliveredVehicle } from '../sales/bookings.service';
-import { addMonths, daysBetween, defaultCoverage, normaliseCoverage } from './warranty.helpers';
+import { addMonths, cardCoverage, componentMonthsOf, coverageLabel, daysBetween, extrasOf, normaliseCoverage, periodOf, readExtras, withMonths, type ComponentMonths } from './warranty.helpers';
 import { warrantyInclude, technicianNames, type WarrantyRow } from './warranty.include';
 import { toClaimDto } from './warranty-claims.service';
 
@@ -31,6 +37,7 @@ export class WarrantyService implements OnModuleInit {
     private readonly sequence: SequenceService,
     private readonly timeline: CustomerTimelineService,
     private readonly bookings: BookingsService,
+    private readonly activityLog: ActivityLogService,
   ) {}
 
   onModuleInit(): void {
@@ -38,8 +45,9 @@ export class WarrantyService implements OnModuleInit {
   }
 
   /**
-   * A delivered vehicle gets its warranty straight away, starting on the delivery date. Skipped when the vehicle
-   * already has one (e.g. it was created by hand before the delivery was recorded).
+   * A delivered vehicle gets its warranty card straight away, starting on the delivery date, with the component
+   * months entered on the vehicle. Skipped when the vehicle already has one (e.g. it was created by hand before
+   * the delivery was recorded).
    */
   async issueOnDelivery(d: DeliveredVehicle): Promise<void> {
     if (await this.prisma.warranty.findFirst({ where: { unitId: d.unitId, status: { not: 'CANCELLED' } }, select: { id: true } })) return;
@@ -157,7 +165,17 @@ export class WarrantyService implements OnModuleInit {
     const company = this.tenant.requireCompanyId();
     const unit = await this.prisma.inventoryUnit.findFirst({
       where: { id: dto.unitId },
-      select: { id: true, motorNumber: true, batteryNumber: true, bookings: { select: { id: true, customerId: true, actualDelivery: true, sale: { select: { invoiceNumber: true } } }, orderBy: { createdAt: 'desc' }, take: 1 } },
+      select: {
+        id: true,
+        motorNumber: true,
+        batteryNumber: true,
+        motorWarrantyMonths: true,
+        batteryWarrantyMonths: true,
+        controllerWarrantyMonths: true,
+        chargerWarrantyMonths: true,
+        warrantyExtras: true,
+        bookings: { select: { id: true, customerId: true, actualDelivery: true, sale: { select: { invoiceNumber: true } } }, orderBy: { createdAt: 'desc' }, take: 1 },
+      },
     });
     if (!unit) throw new NotFoundException('Vehicle not found');
 
@@ -169,11 +187,16 @@ export class WarrantyService implements OnModuleInit {
     if (!customerId) throw new BadRequestException('Customer could not be resolved for this vehicle — provide a customer or link a booking');
 
     const settings = await this.prisma.companySetting.findFirst();
-    const periodMonths = dto.periodMonths ?? settings?.defaultWarrantyMonths ?? 36;
+    // Months not entered on the vehicle fall back to the period given here, else the company default.
+    const fallbackMonths = dto.periodMonths ?? settings?.defaultWarrantyMonths ?? 36;
     const purchaseDate = dto.purchaseDate ?? booking?.actualDelivery ?? new Date();
-    const startDate = purchaseDate;
+    // The warranty runs from the delivery date whenever the vehicle has been delivered.
+    const startDate = booking?.actualDelivery ?? purchaseDate;
+    const unitMonths: ComponentMonths = Object.fromEntries(WARRANTY_MONTH_COMPONENTS.map((c) => [c, unit[UNIT_WARRANTY_MONTH_FIELDS[c]]]));
+    // The card: motor, battery, controller and charger, then the extra items typed in with the scooter.
+    const coverage = withMonths(dto.coverage?.length ? normaliseCoverage(dto.coverage) : cardCoverage(readExtras(unit.warrantyExtras)), startDate, unitMonths, fallbackMonths);
+    const periodMonths = periodOf(coverage, fallbackMonths);
     const endDate = addMonths(startDate, periodMonths);
-    const coverage = dto.coverage?.length ? normaliseCoverage(dto.coverage) : defaultCoverage();
 
     const created = await this.prisma.$transaction(async (tx) => {
       const warrantyNumber = await this.sequence.next('warranty', tx);
@@ -233,15 +256,78 @@ export class WarrantyService implements OnModuleInit {
     return { created };
   }
 
-  async update(id: string, dto: UpdateWarrantyInput, userId: string): Promise<WarrantyDetailDto> {
+  async update(id: string, dto: UpdateWarrantyInput, actor: { id: string; role: Role }): Promise<WarrantyDetailDto> {
     const warranty = await this.getRowOrThrow(id);
+    const userId = actor.id;
     const data: Prisma.WarrantyUpdateInput = { updatedById: userId };
-    if (dto.coverage) data.coverage = normaliseCoverage(dto.coverage) as unknown as Prisma.InputJsonValue;
+    if (dto.coverage) {
+      // The coverage is the warranty card: only the owner changes it. Each line keeps the months it had.
+      if (actor.role !== Role.OWNER) throw new ForbiddenException('Only the owner can change the warranty coverage');
+      const had = new Map(this.readCoverage(warranty.coverage).map((l) => [l.item, l.months]));
+      const lines = normaliseCoverage(dto.coverage).map((l) => ({ ...l, months: had.get(l.item) ?? null }));
+      data.coverage = withMonths(lines, warranty.startDate, {}, warranty.periodMonths) as unknown as Prisma.InputJsonValue;
+    }
     if (dto.dealerNotes !== undefined) data.dealerNotes = dto.dealerNotes;
     if (dto.customerNotes !== undefined) data.customerNotes = dto.customerNotes;
     if (dto.status) data.status = dto.status;
     await this.prisma.warranty.update({ where: { id }, data });
     void warranty;
+    return this.detail(id);
+  }
+
+  /**
+   * Owner only: new months for the motor, battery, controller and charger. The card is regenerated under the same
+   * warranty number and start date: each component's end date, the overall period (its longest component) and
+   * the expiry move with it, and the vehicle's months are updated to match. The previous months are kept in the
+   * activity log.
+   */
+  async reviseMonths(id: string, dto: ReviseWarrantyMonthsInput, actor: { id: string; role: Role }): Promise<WarrantyDetailDto> {
+    if (actor.role !== Role.OWNER) throw new ForbiddenException('Only the owner can change the warranty months');
+    const warranty = await this.getRowOrThrow(id);
+    if (warranty.status === 'CANCELLED') throw new ConflictException('This warranty is cancelled');
+    const current = this.readCoverage(warranty.coverage);
+    const before = componentMonthsOf(current);
+    const extrasBefore = extrasOf(current);
+    const extras = dto.extras ?? extrasBefore;
+    // Rebuilt as the four components plus the extra items (any other line of an older card is dropped); a
+    // component keeps its remarks.
+    const remarks = new Map(current.map((l) => [l.item, l.remarks]));
+    const lines = cardCoverage(extras).map((l) => (l.item === 'CUSTOM' ? l : { ...l, remarks: remarks.get(l.item) ?? null }));
+    const coverage = withMonths(lines, warranty.startDate, dto.months, warranty.periodMonths);
+    const periodMonths = periodOf(coverage, warranty.periodMonths);
+    const endDate = addMonths(warranty.startDate, periodMonths);
+    // A claimed warranty stays claimed; otherwise the new expiry decides whether it is still running.
+    const status = warranty.status === 'CLAIMED' ? warranty.status : endDate < new Date() ? 'EXPIRED' : 'ACTIVE';
+    const shape = (l: WarrantyCoverageLine[]): string => JSON.stringify(l.map((c) => [c.item, c.label, c.covered, c.months ?? null]));
+    if (shape(coverage) === shape(current)) throw new BadRequestException('Nothing to change: the months given match the warranty');
+    const listed = (items: { name: string; months: number }[]): string => (items.length ? items.map((e) => `${e.name} ${e.months}`).join(', ') : 'none');
+    const changes = [
+      ...WARRANTY_MONTH_COMPONENTS.filter((c) => before[c] !== dto.months[c]).map((c) => `${coverageLabel(c)} ${before[c] ?? '—'} → ${dto.months[c]}`),
+      ...(listed(extras) !== listed(extrasBefore) ? [`extra items ${listed(extrasBefore)} → ${listed(extras)}`] : []),
+    ];
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.warranty.update({ where: { id }, data: { coverage: coverage as unknown as Prisma.InputJsonValue, periodMonths, endDate, status, updatedById: actor.id } });
+      await tx.inventoryUnit.update({
+        where: { id: warranty.unitId },
+        data: {
+          ...Object.fromEntries(WARRANTY_MONTH_COMPONENTS.map((c) => [UNIT_WARRANTY_MONTH_FIELDS[c], dto.months[c]])),
+          warrantyExtras: extras as unknown as Prisma.InputJsonValue,
+          updatedById: actor.id,
+        },
+      });
+      await this.activityLog.recordInTransaction(
+        {
+          actorId: actor.id,
+          action: ActivityAction.UPDATE,
+          entityType: 'Warranty',
+          entityId: id,
+          summary: `Regenerated warranty ${warranty.warrantyNumber}${changes.length ? `: ${changes.join('; ')}` : ' as motor, battery, controller, charger and extra items'}${dto.reason ? ` — ${dto.reason}` : ''}`,
+          metadata: { before, after: dto.months, extras: { from: extrasBefore, to: extras }, periodMonths: { from: warranty.periodMonths, to: periodMonths } },
+        },
+        tx,
+      );
+    });
     return this.detail(id);
   }
 
@@ -307,6 +393,8 @@ export class WarrantyService implements OnModuleInit {
       variant: r.unit.variant.name,
       motorNumber: r.motorNumber,
       batteryNumber: r.batteryNumber,
+      controllerNumber: r.unit.controllerNumber,
+      chargerNumber: r.unit.chargerNumber,
       bookingId: r.bookingId,
       bookingCode: null,
       saleId: r.saleId,

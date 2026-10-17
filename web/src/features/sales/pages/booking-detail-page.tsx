@@ -20,6 +20,7 @@ import { DeliverDialog } from '../components/deliver-dialog';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { RtoInvoiceDetailDialog } from '@/features/rto-invoices/components/rto-invoice-detail-dialog';
 import { RtoInvoiceFormDialog } from '@/features/rto-invoices/components/rto-invoice-form-dialog';
+import { AccessorySalesPanel } from '@/features/accessory-sales/components/accessory-sales-panel';
 import { DocumentActions } from '@/features/delivery/components/document-actions';
 import { VehicleDetailsDialog } from '../components/vehicle-details-dialog';
 import { CustomerDetailDialog } from '@/features/customers/components/customer-detail-dialog';
@@ -228,6 +229,12 @@ export function BookingDetailPage(): JSX.Element {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="mt-4">
+        <CardContent className="p-6">
+          <AccessorySalesPanel customerId={b.customer.id} customerName={b.customer.name} bookingId={b.id} />
+        </CardContent>
+      </Card>
 
       {dialog === 'payment' && <PaymentDialog open onOpenChange={() => setDialog(null)} booking={b} />}
       {dialog === 'finance' && <FinanceDialog open onOpenChange={() => setDialog(null)} booking={b} />}

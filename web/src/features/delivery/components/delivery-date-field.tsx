@@ -8,7 +8,8 @@ import { Label } from '@/components/ui/label';
  *
  * "Today" here is this device's date and only drives the default and the early warning. The server is
  * the authority: it decides today in the company's time zone, rejects a future date, and rejects a past
- * date before the booking's `earliestDelivery` (the later of the booking and purchase dates).
+ * date before the booking's `earliestDelivery` (the scooter's purchase date; the booking date is not a bound, so
+ * old handovers can be entered).
  */
 
 /** The first date a delivery may be recorded on, as sent by the API. */

@@ -17,6 +17,8 @@ import {
   canTransitionUnit,
   CSV_IMPORT_MAX_ROWS,
   PURCHASE_COST_INPUTS,
+  UNIT_WARRANTY_MONTH_FIELDS,
+  type UnitWarrantyMonthField,
   computePurchaseCost,
   type PurchaseCostBreakdown,
   type CsvImportPreview,
@@ -34,6 +36,7 @@ import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { ExportService, type ExportData } from '../../export/export.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.service';
 import { formatInr } from '../../common/utils/money';
+import { businessDateOf, isAfterBusinessToday } from '../../common/utils/business-date';
 import { InventoryRepository } from './inventory.repository';
 import { CatalogRepository, type VariantRow } from './catalog/catalog.repository';
 import { TenantContext } from '../../tenant/tenant-context.service';
@@ -84,6 +87,8 @@ const MSG_IDENTIFICATION_HISTORY = 'Vehicle identification cannot be changed onc
 const MSG_VARIANT_AFTER_BOOKING = 'Vehicle model/variant cannot be changed after booking or delivery.';
 const MSG_VARIANT_HISTORY = 'Vehicle model/variant cannot be changed once the vehicle has a sale, warranty or AMC history.';
 const MSG_CORRECTION_NOT_ELIGIBLE = 'Identification correction applies only to delivered, in-service or returned vehicles, or to vehicles with a sale, warranty or AMC history — edit this vehicle instead.';
+const MSG_FUTURE_PURCHASE_DATE = 'Purchase date cannot be in the future';
+const MSG_WARRANTY_MONTHS_LOCKED = 'This scooter already has a warranty card — the owner changes its months and extra items from the warranty (Edit months).';
 const MSG_CHANGED_CONCURRENTLY = 'This vehicle was changed by someone else — reload and try again.';
 
 /**
@@ -156,6 +161,13 @@ const purchaseCostData = (
         : existing?.purchaseGstRateBp != null ? { rateBp: existing.purchaseGstRateBp }
           : { amount: existing?.purchaseGst ?? 0n };
   return computePurchaseCost(price, gst, transport);
+};
+
+/** The component warranty months sent with a unit — only those given; null clears one (the company default applies). */
+const warrantyMonthsData = (dto: Partial<Record<UnitWarrantyMonthField, number | null>>): Partial<Record<UnitWarrantyMonthField, number | null>> => {
+  const data: Partial<Record<UnitWarrantyMonthField, number | null>> = {};
+  for (const field of Object.values(UNIT_WARRANTY_MONTH_FIELDS)) if (dto[field] !== undefined) data[field] = dto[field];
+  return data;
 };
 
 /** A plain JSON object (type alias, not an interface) so it can ride in the activity-log metadata. */
@@ -305,10 +317,12 @@ export class InventoryService {
   async getById(id: string) {
     const unit = await this.repo.findDetail(id);
     if (!unit) throw new NotFoundException('Scooter not found');
-    const committed = await this.repo.hasCommittedHistory(id);
+    const [committed, warrantyIssued] = await Promise.all([this.repo.hasCommittedHistory(id), this.repo.hasLiveWarranty(id)]);
     return {
       ...unit,
       identity: unitIdentityPolicy(unit.status as UnitStatus, committed),
+      // Once the warranty card is issued its component months are changed from the warranty (owner only).
+      warrantyIssued,
       photos: unit.photos.map((p) => ({
         id: p.id,
         fileKey: p.fileKey,
@@ -339,9 +353,20 @@ export class InventoryService {
     return { exists: Boolean(found) };
   }
 
+  /** A scooter cannot have been bought after today (the company's calendar date); delivery dates start from it. */
+  private async assertPurchaseDateNotFuture(purchaseDate: Date | null | undefined): Promise<void> {
+    if (purchaseDate && isAfterBusinessToday(purchaseDate, new Date(), await this.repo.businessTimeZone())) throw new BadRequestException(MSG_FUTURE_PURCHASE_DATE);
+  }
+
+  /** Today's calendar date in the company's time zone ('YYYY-MM-DD'). */
+  private async businessToday(): Promise<string> {
+    return businessDateOf(new Date(), await this.repo.businessTimeZone());
+  }
+
   // ── Writes ─────────────────────────────────────────────
   async create(dto: CreateUnitInput, userId: string, canSeeCost = false) {
     assertMaySetPurchaseCost(dto, canSeeCost);
+    await this.assertPurchaseDateNotFuture(dto.purchaseDate);
     await this.assertVinAvailable(dto.vin);
     // Curated: an existing active variant, checked against the tenant before anything is written.
     const curated = dto.variantId ? await this.curatedVariant(dto.variantId) : null;
@@ -358,6 +383,8 @@ export class InventoryService {
           batteryNumber: dto.batteryNumber,
           controllerNumber: dto.controllerNumber ?? null,
           chargerNumber: dto.chargerNumber ?? null,
+          ...warrantyMonthsData(dto),
+          warrantyExtras: (dto.warrantyExtras ?? []) as unknown as Prisma.InputJsonValue,
           status: dto.status,
           purchaseDate: dto.purchaseDate ?? null,
           ...purchaseCostData(dto),
@@ -395,6 +422,7 @@ export class InventoryService {
 
   async update(id: string, dto: UpdateUnitInput, userId: string, canSeeCost = false) {
     assertMaySetPurchaseCost(dto, canSeeCost);
+    await this.assertPurchaseDateNotFuture(dto.purchaseDate);
     const existing = await this.getUnitOrThrow(id);
     // Identification: only an ACTUAL change counts (inputs are already normalised upper-case by the
     // schema, like the stored values). Refused as a whole after delivery — before anything is checked
@@ -406,6 +434,11 @@ export class InventoryService {
     if (dto.vin && dto.vin !== existing.vin) {
       await this.assertVinAvailable(dto.vin);
     }
+    // Component warranty months are the vehicle's until its warranty card is issued; then they belong to the card.
+    const warrantyMonths = warrantyMonthsData(dto);
+    const extrasChanged = dto.warrantyExtras !== undefined && JSON.stringify(dto.warrantyExtras) !== JSON.stringify(existing.warrantyExtras ?? []);
+    const monthsChanged = extrasChanged || (Object.keys(warrantyMonths) as UnitWarrantyMonthField[]).some((k) => existing[k] !== warrantyMonths[k]);
+    if (monthsChanged && (await this.repo.hasLiveWarranty(id))) throw new ConflictException(MSG_WARRANTY_MONTHS_LOCKED);
     // Curated selection is validated against the tenant first (404 / 409), before any status rule.
     const curated = dto.variantId !== undefined ? await this.curatedVariant(dto.variantId) : null;
 
@@ -453,6 +486,8 @@ export class InventoryService {
       if (dto.purchaseDate !== undefined) data.purchaseDate = dto.purchaseDate;
       if (dto.controllerNumber !== undefined) data.controllerNumber = dto.controllerNumber;
       if (dto.chargerNumber !== undefined) data.chargerNumber = dto.chargerNumber;
+      Object.assign(data, warrantyMonths);
+      if (dto.warrantyExtras !== undefined) data.warrantyExtras = dto.warrantyExtras as unknown as Prisma.InputJsonValue;
       Object.assign(data, purchaseCostData(dto, existing));
       if (dto.sellingPrice !== undefined) data.sellingPrice = BigInt(dto.sellingPrice);
       if (dto.supplier !== undefined) data.supplier = dto.supplier ?? null;
@@ -662,7 +697,7 @@ export class InventoryService {
     }
     if (rows.length === 0) throw new BadRequestException('The file has no rows to import.');
     const validate = async (db?: Prisma.TransactionClient) =>
-      validateCsvFile(rows, await this.csvCatalogue(companyId, db), await this.repo.findUsedIdentifiers(identifierCandidates(rows), companyId, db), CSV_IMPORT_MAX_ROWS, new Date(), fileSha256);
+      validateCsvFile(rows, await this.csvCatalogue(companyId, db), await this.repo.findUsedIdentifiers(identifierCandidates(rows), companyId, db), CSV_IMPORT_MAX_ROWS, new Date(), fileSha256, await this.businessToday());
 
     try {
       return await this.repo.transaction(async (tx) => {
@@ -746,7 +781,7 @@ export class InventoryService {
       return await this.repo.transaction(async (tx) => {
         const catalogue = await this.csvCatalogue(companyId, tx);
         const used = await this.repo.findUsedIdentifiers(identifierCandidates(rows), companyId, tx);
-        return buildCsvPreview(rows, catalogue, used, CSV_IMPORT_MAX_ROWS, new Date(), fileSha256);
+        return buildCsvPreview(rows, catalogue, used, CSV_IMPORT_MAX_ROWS, new Date(), fileSha256, await this.businessToday());
       }, CSV_CHECK_TX);
     } catch (error) {
       if (isTransactionTimeout(error)) throw new ServiceUnavailableException('The server is busy — the preview could not run in time. Try again in a moment.');

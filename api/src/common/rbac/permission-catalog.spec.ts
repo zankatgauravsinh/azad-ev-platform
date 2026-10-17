@@ -27,7 +27,7 @@ describe('permission catalog', () => {
   });
 
   it('matches the approved catalog size (regression lock)', () => {
-    expect(PERMISSIONS.length).toBe(77); // + rto.view / rto.generate / rto.edit (RTO invoices), + inventory.cost
+    expect(PERMISSIONS.length).toBe(79); // + rto.view / rto.generate / rto.edit (RTO invoices), + inventory.cost, + accessories.sell / accessories.cancel
     expect(PERMISSION_MODULES.length).toBe(26);
   });
 

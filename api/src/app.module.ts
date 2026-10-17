@@ -17,6 +17,8 @@ import { UploadsModule } from './uploads/uploads.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { SalesModule } from './modules/sales/sales.module';
+import { AccessoriesModule } from './modules/accessories/accessories.module';
+import { AccessorySalesModule } from './modules/accessory-sales/accessory-sales.module';
 import { ServiceModule } from './modules/service/service.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -56,6 +58,8 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     InventoryModule,
     CustomersModule,
     SalesModule,
+    AccessoriesModule,
+    AccessorySalesModule,
     ServiceModule,
     DashboardModule,
     ReportsModule,

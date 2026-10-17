@@ -23,6 +23,8 @@ export class WarrantyPdfService {
   certificate(input: CertificateInput): Promise<Buffer> {
     return this.build((doc, left, right) => {
       const w = input.warranty;
+      // Warranties issued before component months print the older single-period table.
+      const withMonths = input.coverage.some((c) => c.months != null);
       drawBrandHeader(doc, input.brand, {
         docType: 'WARRANTY CERTIFICATE',
         infoLines: [`No: ${w.warrantyNumber}`, `Issued: ${d(w.startDate)}`],
@@ -35,15 +37,21 @@ export class WarrantyPdfService {
         ['Model', `${w.model} ${w.variant}`],
         ['Motor No.', w.motorNumber ?? '—'],
         ['Battery No.', w.batteryNumber ?? '—'],
+        ['Controller No.', w.controllerNumber ?? '—'],
+        ['Charger No.', w.chargerNumber ?? '—'],
         ['Invoice', w.invoiceNumber ?? '—'],
-        ['Purchase Date', d(w.purchaseDate)],
-        ['Warranty Period', `${w.periodMonths} months`],
-        ['Valid From', d(w.startDate)],
+        ['Delivery Date', d(w.startDate)],
+        ['Warranty Period', withMonths ? `Up to ${w.periodMonths} months` : `${w.periodMonths} months`],
         ['Valid Until', d(w.endDate)],
       ]);
 
       this.sectionTitle(doc, left, 'Coverage');
-      this.table(doc, left, right, ['Component', 'Status', 'Remarks'], [0.42, 0.18, 0.4], input.coverage.map((c) => [c.label, c.covered ? 'Covered' : 'Excluded', c.remarks ?? '—']), (row) => (row[1] === 'Covered' ? TEAL : '#B23A48'));
+      if (withMonths) {
+        // Each component's own months, counted from the delivery date.
+        this.table(doc, left, right, ['Component', 'Warranty', 'Valid Until', 'Remarks'], [0.34, 0.18, 0.18, 0.3], input.coverage.map((c) => [c.label, c.covered && c.months ? `${c.months} months` : 'Not covered', c.covered && c.validUntil ? d(c.validUntil) : '—', c.remarks ?? '—']), (row) => (row[1] === 'Not covered' ? '#B23A48' : TEAL));
+      } else {
+        this.table(doc, left, right, ['Component', 'Status', 'Remarks'], [0.42, 0.18, 0.4], input.coverage.map((c) => [c.label, c.covered ? 'Covered' : 'Excluded', c.remarks ?? '—']), (row) => (row[1] === 'Covered' ? TEAL : '#B23A48'));
+      }
 
       if (input.freeServices.length) {
         this.sectionTitle(doc, left, 'Free Services');

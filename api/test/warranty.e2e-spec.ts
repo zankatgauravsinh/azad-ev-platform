@@ -50,14 +50,14 @@ describe('Warranty & AMC (e2e)', () => {
     await app.close();
   }, E2E_HOOK_TIMEOUT);
 
-  it('creates a warranty with default coverage and three free services', async () => {
+  it('creates a warranty card (motor, battery, controller, charger) and three free services', async () => {
     const res = await http().post('/api/v1/warranties').set('Authorization', auth(ownerToken))
       .send({ unitId, customerId, periodMonths: 36 }).expect(201);
     warrantyId = res.body.warranty.id;
     warrantyNumber = res.body.warranty.warrantyNumber;
     expect(res.body.warranty.status).toBe('ACTIVE');
     expect(res.body.warranty.vin).toBe(`WTYVIN${stamp}`);
-    expect(res.body.coverage.length).toBeGreaterThanOrEqual(10);
+    expect(res.body.coverage.map((c: { item: string }) => c.item)).toEqual(['MOTOR', 'BATTERY', 'CONTROLLER', 'CHARGER']);
     expect(res.body.coverage.some((c: { item: string; covered: boolean }) => c.item === 'MOTOR' && c.covered)).toBe(true);
     expect(res.body.freeServices.length).toBe(3);
     expect(res.body.timeline.length).toBeGreaterThan(0);

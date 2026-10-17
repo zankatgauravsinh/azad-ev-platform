@@ -40,7 +40,7 @@ const SALES_EXECUTIVE_PERMISSIONS: readonly string[] = [
   'service.view',
   'warranty.view', 'amc.view', 'claims.view',
   'search.use', 'notifications.use',
-  'accessories.view',
+  'accessories.view', 'accessories.sell',
   'settings.branding',
 ];
 
@@ -55,10 +55,11 @@ const TECHNICIAN_PERMISSIONS: readonly string[] = [
   'settings.branding',
 ];
 
-// ACCOUNTANT: finance family (+ read-only RTO invoices). No notifications/search/dashboard/inventory/returns/staff.
+// ACCOUNTANT: finance family (+ read-only RTO invoices and accessory sales). No notifications/search/dashboard/inventory/returns/staff.
 const ACCOUNTANT_PERMISSIONS: readonly string[] = [
   'finance.view', 'finance.manage',
   'rto.view',
+  'accessories.view',
   'expenses.view', 'expenses.manage',
   'bank.view', 'bank.manage',
   'income.view', 'income.manage',

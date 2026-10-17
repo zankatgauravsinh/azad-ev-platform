@@ -120,9 +120,9 @@ export function DeliveryDetailDialog({ id, onOpenChange }: { id: string | null; 
                 </Section>
                 <div className="space-y-1"><Label>Notes</Label><Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional handover notes" /></div>
                 <div className="space-y-1"><Label>Override reason (delivering with pending docs)</Label><Input value={override} onChange={(e) => setOverride(e.target.value)} placeholder="Optional" /></div>
-                <DeliveryDateField value={deliveryDate} onChange={setDeliveryDate} disabled={!canManage} notBefore={b.earliestDelivery} />
+                <DeliveryDateField value={deliveryDate} onChange={setDeliveryDate} disabled={!canManage} notBefore={b.earliestDelivery ?? undefined} />
                 {canManage && (
-                  <Button onClick={doComplete} disabled={complete.isPending || deliveryDateError(deliveryDate, b.earliestDelivery) !== null}>
+                  <Button onClick={doComplete} disabled={complete.isPending || deliveryDateError(deliveryDate, b.earliestDelivery ?? undefined) !== null}>
                     <CheckCircle2 className="h-4 w-4" /> Complete delivery
                   </Button>
                 )}

@@ -19,7 +19,7 @@ export class CashbookService {
     private readonly closing: MonthlyClosingService,
   ) {}
 
-  /** Bank balance = opening + credits − debits − non-cash vehicle-return refunds (money paid back). */
+  /** Bank balance = opening + credits − debits − non-cash refunds (vehicle returns, cancelled accessory sales). */
   async bankBalance(): Promise<bigint> {
     const settings = await this.prisma.companySetting.findFirst();
     const [groups, nonCashRefunds] = await Promise.all([
@@ -45,7 +45,7 @@ export class CashbookService {
       this.prisma.refund.aggregate({ _sum: { amount: true }, where: { method: 'CASH', ...(before ? { refundedAt: before } : {}) } }),
     ]);
     const cashIn = (income._sum.amount ?? 0n) + (income._sum.gstAmount ?? 0n) + (withdrawals._sum.amount ?? 0n) + (cashPayments._sum.amount ?? 0n);
-    // Cash refunds for vehicle returns are money out of the drawer.
+    // Cash refunds (vehicle returns, cancelled accessory sales) are money out of the drawer.
     const cashOut = (expense._sum.amount ?? 0n) + (expense._sum.gstAmount ?? 0n) + (deposits._sum.amount ?? 0n) + (cashRefunds._sum.amount ?? 0n);
     return (settings?.openingCash ?? 0n) + cashIn - cashOut + (adjustments._sum.amount ?? 0n);
   }
@@ -86,7 +86,7 @@ export class CashbookService {
       this.prisma.bankTransaction.findMany({ where: { type: { in: ['DEPOSIT', 'WITHDRAWAL'] }, txnDate: win }, select: { txnNumber: true, txnDate: true, type: true, amount: true } }),
       this.prisma.payment.findMany({ where: { mode: 'CASH', paidAt: win }, select: { receiptNumber: true, paidAt: true, amount: true, context: true } }),
       this.prisma.cashAdjustment.findMany({ where: { adjDate: win }, select: { adjDate: true, amount: true, notes: true } }),
-      this.prisma.refund.findMany({ where: { method: 'CASH', refundedAt: win }, select: { refundNumber: true, refundedAt: true, amount: true } }),
+      this.prisma.refund.findMany({ where: { method: 'CASH', refundedAt: win }, select: { refundNumber: true, refundedAt: true, amount: true, accessorySaleId: true } }),
     ]);
     const rows: CashBookRow[] = [];
     for (const i of income) rows.push({ at: i.incomeDate.toISOString(), kind: 'INCOME', label: `${i.incomeNumber} · ${i.source}`, inAmount: String(i.amount + i.gstAmount), outAmount: '0' });
@@ -94,7 +94,7 @@ export class CashbookService {
     for (const b of bank) rows.push({ at: b.txnDate.toISOString(), kind: 'BANK', label: `${b.txnNumber} · ${b.type}`, inAmount: b.type === 'WITHDRAWAL' ? String(b.amount) : '0', outAmount: b.type === 'DEPOSIT' ? String(b.amount) : '0' });
     for (const p of payments) rows.push({ at: p.paidAt.toISOString(), kind: p.context === 'SERVICE' ? 'SERVICE' : 'SALES', label: `${p.receiptNumber ?? 'Receipt'} · ${p.context}`, inAmount: String(p.amount), outAmount: '0' });
     for (const a of adjustments) rows.push({ at: a.adjDate.toISOString(), kind: 'ADJUSTMENT', label: a.notes, inAmount: a.amount >= 0n ? String(a.amount) : '0', outAmount: a.amount < 0n ? String(-a.amount) : '0' });
-    for (const r of refunds) rows.push({ at: r.refundedAt.toISOString(), kind: 'REFUND', label: `${r.refundNumber} · Vehicle return refund`, inAmount: '0', outAmount: String(r.amount) });
+    for (const r of refunds) rows.push({ at: r.refundedAt.toISOString(), kind: 'REFUND', label: `${r.refundNumber} · ${r.accessorySaleId ? 'Accessory sale refund' : 'Vehicle return refund'}`, inAmount: '0', outAmount: String(r.amount) });
     return rows.sort((a, b) => a.at.localeCompare(b.at));
   }
 }

@@ -1,15 +1,18 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import {
   completeFreeServiceSchema,
   createWarrantySchema,
   listWarrantiesQuerySchema,
+  reviseWarrantyMonthsSchema,
   updateWarrantySchema,
   type CompleteFreeServiceInput,
   type CreateWarrantyInput,
   type ListWarrantiesQuery,
+  type ReviseWarrantyMonthsInput,
   type UpdateWarrantyInput,
+  type AuthUser,
 } from '@azad/shared';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -77,8 +80,16 @@ export class WarrantiesController {
   @Permissions('warranty.update')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Update coverage / notes / status' })
-  update(@Param('id') id: string, @Body(new ZodValidationPipe(updateWarrantySchema)) dto: UpdateWarrantyInput, @CurrentUser('id') userId: string) {
-    return this.warranty.update(id, dto, userId);
+  update(@Param('id') id: string, @Body(new ZodValidationPipe(updateWarrantySchema)) dto: UpdateWarrantyInput, @CurrentUser() user: AuthUser) {
+    return this.warranty.update(id, dto, { id: user.id, role: user.role });
+  }
+
+  @Patch(':id/months')
+  @Permissions('warranty.update')
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOperation({ summary: 'Owner only: change the motor / battery / controller / charger months and regenerate the card (same number)' })
+  reviseMonths(@Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodValidationPipe(reviseWarrantyMonthsSchema)) dto: ReviseWarrantyMonthsInput, @CurrentUser() user: AuthUser) {
+    return this.warranty.reviseMonths(id, dto, { id: user.id, role: user.role });
   }
 
   @Post(':id/cancel')

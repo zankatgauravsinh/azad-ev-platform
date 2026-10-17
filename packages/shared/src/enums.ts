@@ -219,6 +219,8 @@ export const PaymentContext = {
   BOOKING_ADVANCE: 'BOOKING_ADVANCE',
   SALE: 'SALE',
   SERVICE: 'SERVICE',
+  /** Payment against an accessory counter sale. */
+  ACCESSORY: 'ACCESSORY',
 } as const;
 export type PaymentContext = (typeof PaymentContext)[keyof typeof PaymentContext];
 export const PAYMENT_CONTEXTS = Object.values(PaymentContext);
@@ -494,6 +496,8 @@ export const AccessoryMovementType = {
   ADJUSTMENT: 'ADJUSTMENT',
   RESERVE: 'RESERVE',
   RELEASE: 'RELEASE',
+  /** Back in stock from a cancelled accessory counter sale. */
+  SALE_RETURN: 'SALE_RETURN',
 } as const;
 export type AccessoryMovementType = (typeof AccessoryMovementType)[keyof typeof AccessoryMovementType];
 export const ACCESSORY_MOVEMENT_TYPES = Object.values(AccessoryMovementType);

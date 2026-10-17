@@ -25,6 +25,8 @@ type RepoMock = jest.Mocked<
     | 'transaction'
     | 'lockUnit'
     | 'hasCommittedHistory'
+    | 'hasLiveWarranty'
+    | 'businessTimeZone'
     | 'findDetail'
     | 'findUsedIdentifiers'
     | 'createUnits'
@@ -73,6 +75,8 @@ describe('InventoryService', () => {
       // By default the locked row is the unit as read, and the vehicle has no committed history.
       lockUnit: jest.fn(() => repo.findByIdWithVariant('unit-1')),
       hasCommittedHistory: jest.fn().mockResolvedValue(false),
+      hasLiveWarranty: jest.fn().mockResolvedValue(false),
+      businessTimeZone: jest.fn().mockResolvedValue('Asia/Kolkata'),
       findDetail: jest.fn(),
       findUsedIdentifiers: jest.fn().mockResolvedValue({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() }),
       createUnits: jest.fn(async (rows: unknown[]) => rows.length),
@@ -105,6 +109,15 @@ describe('InventoryService', () => {
       sellingPrice: 200,
       status: 'AVAILABLE' as const,
     };
+
+    it('refuses a purchase date after today (company time zone); today is fine', async () => {
+      repo.findByVin.mockResolvedValue(null);
+      const tomorrow = new Date(Date.now() + 2 * 86_400_000);
+      await expect(service.create({ ...dto, purchaseDate: tomorrow }, 'user-1')).rejects.toThrow('Purchase date cannot be in the future');
+      await expect(service.update('unit-1', { purchaseDate: tomorrow }, 'user-1')).rejects.toThrow('Purchase date cannot be in the future');
+      expect(repo.createUnit).not.toHaveBeenCalled();
+      expect(repo.updateUnit).not.toHaveBeenCalled();
+    });
 
     it('rejects a duplicate VIN before creating', async () => {
       repo.findByVin.mockResolvedValue(unit as never);

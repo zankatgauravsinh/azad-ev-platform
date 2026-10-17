@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
-type SequenceKind = 'quotation' | 'booking' | 'invoice' | 'receipt' | 'service' | 'warranty' | 'amc' | 'claim' | 'expense' | 'vendor' | 'income' | 'bank' | 'return' | 'creditNote' | 'refund' | 'rtoInvoice';
+type SequenceKind = 'quotation' | 'booking' | 'invoice' | 'receipt' | 'service' | 'warranty' | 'amc' | 'claim' | 'expense' | 'vendor' | 'income' | 'bank' | 'return' | 'creditNote' | 'refund' | 'rtoInvoice' | 'accessoryInvoice';
 
 // Which CompanySetting prefix + InvoiceSetting counter each document series uses.
 const FIELDS: Record<SequenceKind, { prefix: keyof Prisma.CompanySettingUpdateInput; counter: keyof Prisma.InvoiceSettingUpdateInput }> = {
@@ -22,6 +22,7 @@ const FIELDS: Record<SequenceKind, { prefix: keyof Prisma.CompanySettingUpdateIn
   creditNote: { prefix: 'creditNotePrefix', counter: 'nextCreditNoteNumber' },
   refund: { prefix: 'refundPrefix', counter: 'nextRefundNumber' },
   rtoInvoice: { prefix: 'rtoInvoicePrefix', counter: 'nextRtoInvoiceNumber' },
+  accessoryInvoice: { prefix: 'accessoryInvoicePrefix', counter: 'nextAccessoryInvoiceNumber' },
 };
 
 /**

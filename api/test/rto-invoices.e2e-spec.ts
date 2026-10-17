@@ -150,7 +150,7 @@ describe('RTO invoices (e2e)', () => {
   it("a delivered booking's delivery date is the handover's calendar date", async () => {
     const b = await booking();
     await http().post(`/api/v1/bookings/${b.id}/invoice`).set('Authorization', as()).expect(201);
-    await prisma.$executeRaw`UPDATE "Booking" SET "createdAt" = ${new Date(Date.now() - 20 * 86_400_000)} WHERE id = ${b.id}`;
+    await prisma.$executeRaw`UPDATE "Booking" SET "createdAt" = ${new Date(Date.now() - 20 * 86_400_000)}::timestamptz AT TIME ZONE 'UTC' WHERE id = ${b.id}`;
     const day = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10);
     await http().post(`/api/v1/bookings/${b.id}/deliver`).set('Authorization', as()).send({ actualDelivery: day }).expect(201);
     const d = (await http().get(`/api/v1/rto-invoices/defaults?bookingId=${b.id}`).set('Authorization', as()).expect(200)).body;

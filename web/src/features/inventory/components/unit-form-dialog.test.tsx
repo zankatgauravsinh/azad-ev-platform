@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { ChangeEvent, ReactNode } from 'react';
 import { AxiosError, type AxiosResponse } from 'axios';
@@ -38,7 +38,7 @@ vi.mock('../hooks', () => ({
   useUpdateUnit: () => ({ mutateAsync: h.update }),
 }));
 vi.mock('../api', () => ({ inventoryApi: { checkVin: vi.fn().mockResolvedValue({ exists: false }) } }));
-vi.mock('@/features/settings/hooks', () => ({ useCompanySettings: () => ({ data: { taxPercentage: '5' } }) }));
+vi.mock('@/features/settings/hooks', () => ({ useCompanySettings: () => ({ data: { taxPercentage: '5', defaultWarrantyMonths: 36 } }) }));
 vi.mock('./vin-scanner', () => ({ VinScanner: () => null }));
 vi.mock('sonner', () => ({ toast: { success: (m: string) => h.toastSuccess(m), error: (m: string) => h.toastError(m) } }));
 // The existing catalogue dialog, stubbed: "creating" a variant adds it to the model's list and reports it back.
@@ -316,5 +316,98 @@ describe('UnitFormDialog — purchase cost (owner) and controller / charger numb
     await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
     expect(h.update.mock.calls[0]![0]).toMatchObject({ chargerNumber: 'CHG-9' });
     expect(h.update.mock.calls[0]![0]).not.toHaveProperty('controllerNumber');
+  });
+});
+
+describe('UnitFormDialog — component warranty months', () => {
+  const months = (label: string): HTMLInputElement => within(screen.getByRole('group', { name: 'Warranty months' })).getByLabelText(label) as HTMLInputElement;
+
+  it('a new scooter starts from the company default; the months entered are sent', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    await waitFor(() => expect(months('Motor').value).toBe('36'));
+    expect(months('Charger').value).toBe('36');
+    choose(0, M1);
+    choose(1, V1);
+    fill('VIN', 'VIN1');
+    fill('Motor number', 'M1');
+    fill('Battery number', 'B1');
+    fireEvent.change(months('Battery'), { target: { value: '60' } });
+    fireEvent.change(months('Charger'), { target: { value: '0' } });
+    fireEvent.change(months('Controller'), { target: { value: '' } });
+    submit('Add scooter');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
+    const input = h.create.mock.calls[0]![0];
+    expect(input).toMatchObject({ motorWarrantyMonths: 36, batteryWarrantyMonths: 60, chargerWarrantyMonths: 0 });
+    expect(input.controllerWarrantyMonths).toBeUndefined(); // blank → the company default
+    expect(input).not.toHaveProperty('warrantyExtras');
+  });
+
+  it('+ adds an item of your own (name + months) for the warranty card; × removes one', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    choose(0, M1);
+    choose(1, V1);
+    fill('VIN', 'VIN1');
+    fill('Motor number', 'M1');
+    fill('Battery number', 'B1');
+    fireEvent.click(screen.getByRole('button', { name: /Add warranty item/ }));
+    expect(field('Extra item 1 months').value).toBe('36'); // starts from the company default
+    fireEvent.change(field('Extra item 1 name'), { target: { value: ' Hub bearings ' } });
+    fireEvent.change(field('Extra item 1 months'), { target: { value: '18' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add warranty item/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove extra item 2' }));
+    submit('Add scooter');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
+    expect(h.create.mock.calls[0]![0].warrantyExtras).toEqual([{ name: 'Hub bearings', months: 18 }]);
+  });
+
+  it('an extra item needs a name', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    choose(0, M1);
+    choose(1, V1);
+    fill('VIN', 'VIN1');
+    fill('Motor number', 'M1');
+    fill('Battery number', 'B1');
+    fireEvent.click(screen.getByRole('button', { name: /Add warranty item/ }));
+    submit('Add scooter');
+    expect(await screen.findByText('Name is required')).toBeInTheDocument();
+    expect(h.create).not.toHaveBeenCalled();
+  });
+
+  it('an edit sends only the months that changed', async () => {
+    const u = { ...unit('AVAILABLE', policy()), motorWarrantyMonths: 36, batteryWarrantyMonths: 36, controllerWarrantyMonths: null, chargerWarrantyMonths: 12 } as UnitDetail;
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={u} />);
+    expect(months('Controller').value).toBe('');
+    fireEvent.change(months('Motor'), { target: { value: '48' } });
+    submit('Save changes');
+    await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
+    const input = h.update.mock.calls[0]![0];
+    expect(input).toMatchObject({ motorWarrantyMonths: 48 });
+    for (const key of ['batteryWarrantyMonths', 'controllerWarrantyMonths', 'chargerWarrantyMonths']) expect(input).not.toHaveProperty(key);
+  });
+
+  it('once the warranty card is issued the months are read-only and never sent', async () => {
+    const u = { ...unit('DELIVERED', policy({ committed: true, catalogueEditable: false, identificationEditable: false })), motorWarrantyMonths: 36, batteryWarrantyMonths: 36, controllerWarrantyMonths: 36, chargerWarrantyMonths: 36, warrantyExtras: [{ name: 'Mirror', months: 6 }], warrantyIssued: true } as UnitDetail;
+    render(<UnitFormDialog open onOpenChange={() => {}} unit={u} />);
+    expect(months('Motor').readOnly).toBe(true);
+    expect(field('Extra item 1 name').readOnly).toBe(true);
+    expect(screen.queryByRole('button', { name: /Add warranty item/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove extra item 1' })).toBeNull();
+    expect(screen.getByText(/owner changes these months and items from the warranty/)).toBeInTheDocument();
+    submit('Save changes');
+    await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
+    for (const key of ['motorWarrantyMonths', 'batteryWarrantyMonths', 'controllerWarrantyMonths', 'chargerWarrantyMonths', 'warrantyExtras']) expect(h.update.mock.calls[0]![0]).not.toHaveProperty(key);
+  });
+
+  it('refuses a purchase date in the future', async () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    choose(0, M1);
+    choose(1, V1);
+    fill('VIN', 'VIN9');
+    fill('Motor number', 'M9');
+    fill('Battery number', 'B9');
+    fill('Purchase date', new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10));
+    submit('Add scooter');
+    expect(await screen.findByText('Purchase date cannot be in the future')).toBeInTheDocument();
+    expect(h.create).not.toHaveBeenCalled();
   });
 });

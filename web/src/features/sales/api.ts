@@ -28,7 +28,8 @@ export interface AccessoryRef {
   /** GST classification assigned to the accessory (null / absent = not classified). */
   taxClassificationId?: string | null;
   sellPrice: string;
-  avgCost: string;
+  /** Present only for users with inventory.cost. */
+  avgCost?: string;
   isPart: boolean;
 }
 export interface CustomerRef {
@@ -136,8 +137,8 @@ export interface BookingDto {
   sale: { id: string; invoiceNumber: string | null; status: string; invoicedAt: string | null } | null;
   quotation: { id: string; code: string } | null;
   paymentSummary: { total: string; paid: string; balance: string; status: PaymentStatus };
-  /** The first date a delivery may be recorded on: the later of the booking and purchase dates. */
-  earliestDelivery: { date: string; label: string };
+  /** The scooter's purchase date — the first date a delivery may be recorded on (null = any past date). */
+  earliestDelivery: { date: string; label: string } | null;
   /** The booking's RTO invoice, when one has been generated (at most one per booking). */
   rtoInvoice: { id: string; invoiceNumber: string; total: string; revision: number } | null;
 }

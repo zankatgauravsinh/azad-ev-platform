@@ -1,17 +1,20 @@
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { WarrantyDetailDialog } from './warranty-detail-dialog';
 
-const h = vi.hoisted(() => ({ perms: { current: new Set<string>() } }));
-vi.mock('@/features/auth/auth-context', () => ({ useAuth: () => ({ can: (p: string) => h.perms.current.has(p) }) }));
+const h = vi.hoisted(() => ({ perms: { current: new Set<string>() }, role: { current: 'MANAGER' } }));
+vi.mock('@/features/auth/auth-context', () => ({ useAuth: () => ({ can: (p: string) => h.perms.current.has(p), user: { role: h.role.current } }) }));
 
 const data = {
   warranty: {
     id: 'w1', warrantyNumber: 'WR-1', status: 'ACTIVE', daysToExpiry: 100, customerName: 'Asha',
     model: 'VX', variant: 'Pro', vin: 'V1', motorNumber: 'M1', batteryNumber: 'B1', invoiceNumber: 'INV-1',
-    purchaseDate: '2026-01-01', startDate: '2026-01-01', endDate: '2027-01-01',
+    purchaseDate: '2026-01-01', startDate: '2026-01-01', endDate: '2029-01-01', periodMonths: 36, controllerNumber: 'CT1', chargerNumber: null,
   },
-  coverage: [],
+  coverage: [
+    { item: 'MOTOR', label: 'Motor', covered: true, remarks: null, months: 36, validUntil: '2029-01-01T00:00:00.000Z' },
+    { item: 'CHARGER', label: 'Charger', covered: false, remarks: null, months: null, validUntil: null },
+  ],
   freeServices: [{ id: 'fs1', serviceNumber: 1, dueDate: '2026-02-01', status: 'PENDING', technicianName: null }],
   claims: [{ id: 'cl1', claimNumber: 'CL-1', complaint: 'Noise', claimCost: 0n, status: 'PENDING' }],
   timeline: [],
@@ -22,15 +25,17 @@ vi.mock('../hooks', () => ({
   useWarrantyMutations: () => ({ cancel: stub, completeFreeService: stub, updateClaim: stub }),
 }));
 vi.mock('./create-claim-dialog', () => ({ CreateClaimDialog: () => null }));
+vi.mock('./warranty-months-dialog', () => ({ WarrantyMonthsDialog: () => null }));
 vi.mock('../api', () => ({ warrantyApi: {} }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-const renderWith = (perms: string[]): void => { cleanup(); h.perms.current = new Set(perms); render(<WarrantyDetailDialog id="w1" onOpenChange={() => {}} />); };
+const renderWith = (perms: string[], role = 'MANAGER'): void => { cleanup(); h.perms.current = new Set(perms); h.role.current = role; render(<WarrantyDetailDialog id="w1" onOpenChange={() => {}} />); };
 const q = {
   newClaim: () => screen.queryByRole('button', { name: /New claim/ }),
   cancel: () => screen.queryByRole('button', { name: /Cancel/ }),
   markDone: () => screen.queryByRole('button', { name: 'Mark done' }),
   approve: () => screen.queryByRole('button', { name: 'Approve' }),
+  editMonths: () => screen.queryByRole('button', { name: /Edit months/ }),
 };
 beforeEach(() => { h.perms.current = new Set(); });
 
@@ -65,5 +70,25 @@ describe('WarrantyDetailDialog permission gating (claims.manage / warranty.updat
     expect(q.cancel()).not.toBeNull();
     expect(q.newClaim()).toBeNull();
     expect(q.markDone()).toBeNull();
+  });
+});
+
+describe('WarrantyDetailDialog component months', () => {
+  it("shows each component's months and end date", () => {
+    renderWith(['warranty.view']);
+    expect(screen.getByRole('columnheader', { name: 'Months' })).toBeInTheDocument();
+    const cells = (label: string): string[] => within(screen.getByRole('row', { name: new RegExp(`^${label}`) })).getAllByRole('cell').map((c) => c.textContent ?? '');
+    expect(cells('Motor')).toEqual(['Motor', 'Covered', '36', new Date('2029-01-01T00:00:00.000Z').toLocaleDateString('en-IN'), '—']);
+    expect(cells('Charger')).toEqual(['Charger', 'Excluded', '—', '—', '—']);
+    expect(screen.getByText('CT1')).toBeInTheDocument();
+  });
+
+  it('only the owner (with warranty.update) can edit the months', () => {
+    renderWith(['warranty.view', 'warranty.update'], 'MANAGER');
+    expect(q.editMonths()).toBeNull();
+    renderWith(['warranty.view'], 'OWNER');
+    expect(q.editMonths()).toBeNull();
+    renderWith(['warranty.view', 'warranty.update'], 'OWNER');
+    expect(q.editMonths()).not.toBeNull();
   });
 });

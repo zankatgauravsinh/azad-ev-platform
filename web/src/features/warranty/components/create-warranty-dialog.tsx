@@ -40,14 +40,15 @@ export function CreateWarrantyDialog({ open, onOpenChange, onCreated }: { open: 
           <VehiclePicker search={search} onSearch={setSearch} value={unitId} onPick={(id, label) => { setUnitId(id); setUnitLabel(label); setSearch(label); }} />
           {unitLabel && <p className="text-sm text-muted-foreground">Selected: {unitLabel}</p>}
           <div className="space-y-1">
-            <Label>Warranty period (months)</Label>
-            <Input type="number" min={1} value={periodMonths} onChange={(e) => setPeriodMonths(e.target.value)} />
+            <Label htmlFor="new-warranty-months">Default months</Label>
+            <Input id="new-warranty-months" type="number" min={1} value={periodMonths} onChange={(e) => setPeriodMonths(e.target.value)} />
+            <p className="text-xs text-muted-foreground">For any part whose months were not entered on the scooter.</p>
           </div>
           <div className="space-y-1">
             <Label>Dealer notes</Label>
             <Textarea rows={2} value={dealerNotes} onChange={(e) => setDealerNotes(e.target.value)} placeholder="Optional" />
           </div>
-          <p className="text-xs text-muted-foreground">Standard coverage and three free services are added automatically. The customer is taken from the vehicle&apos;s booking.</p>
+          <p className="text-xs text-muted-foreground">Delivered scooters get their warranty card automatically on delivery — use this only for one that has none. The motor, battery, controller and charger months come from the scooter; the warranty starts on the delivery date. Three free services are added, and the customer is taken from the vehicle&apos;s booking.</p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

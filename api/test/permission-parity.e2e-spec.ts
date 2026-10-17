@@ -54,10 +54,10 @@ describe('Permission resolver parity (e2e)', () => {
     }
   });
 
-  it('OWNER is allow-all (the full 77-key catalog)', async () => {
+  it('OWNER is allow-all (the full 79-key catalog)', async () => {
     const owner = await resolver.resolve({ id: ownerId, role: Role.OWNER });
     expect(owner.size).toBe(PERMISSION_KEYS.length);
-    expect(owner.size).toBe(77);
+    expect(owner.size).toBe(79);
   });
 
   it('enforces the inventory.view / dashboard / export boundary (Sales denied dashboard+export)', async () => {

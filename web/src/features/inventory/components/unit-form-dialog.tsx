@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Controller, useForm } from 'react-hook-form';
+import { Controller, useFieldArray, useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { Lock, Pencil, Percent, Plus, ScanLine } from 'lucide-react';
+import { Lock, Pencil, Percent, Plus, ScanLine, ShieldCheck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { PURCHASE_COST_PERMISSION, UNIT_STATUSES, UnitStatus, computePurchaseCost, type CreateUnitInput, type UpdateUnitInput } from '@azad/shared';
+import { PURCHASE_COST_PERMISSION, UNIT_STATUSES, UNIT_WARRANTY_MONTH_FIELDS, UnitStatus, WARRANTY_EXTRAS_MAX, WARRANTY_MONTHS_MAX, computePurchaseCost, warrantyExtrasSchema, type CreateUnitInput, type UnitWarrantyMonthField, type UpdateUnitInput } from '@azad/shared';
 import { useCompanySettings } from '@/features/settings/hooks';
+import { todayDateInput } from '@/features/delivery/components/delivery-date-field';
 import { useAuth } from '@/features/auth/auth-context';
 import { VariantFormDialog } from '@/features/catalog/components/variant-form-dialog';
 import { apiErrorMessage } from '@/lib/api-client';
@@ -31,6 +32,16 @@ import { VinScanner } from './vin-scanner';
 
 /** Blank → '' (the field is left out of the request); otherwise whole rupees, never negative. */
 const optionalRupees = z.union([z.literal(''), z.coerce.number().min(0, 'Cannot be negative')]);
+/** Blank → the company default applies; 0 → not covered. */
+const optionalMonths = z.union([z.literal(''), z.coerce.number().int('Whole months').min(0, 'Cannot be negative').max(WARRANTY_MONTHS_MAX, `At most ${WARRANTY_MONTHS_MAX}`)]);
+
+/** The four component warranty inputs, in the order they are shown. */
+const WARRANTY_INPUTS: { field: UnitWarrantyMonthField; label: string }[] = [
+  { field: UNIT_WARRANTY_MONTH_FIELDS.MOTOR, label: 'Motor' },
+  { field: UNIT_WARRANTY_MONTH_FIELDS.BATTERY, label: 'Battery' },
+  { field: UNIT_WARRANTY_MONTH_FIELDS.CONTROLLER, label: 'Controller' },
+  { field: UNIT_WARRANTY_MONTH_FIELDS.CHARGER, label: 'Charger' },
+];
 
 const formSchema = z.object({
   modelId: z.string().uuid('Select a model'),
@@ -40,7 +51,14 @@ const formSchema = z.object({
   batteryNumber: z.string().trim().min(1, 'Required'),
   controllerNumber: z.string().max(64).optional(),
   chargerNumber: z.string().max(64).optional(),
-  purchaseDate: z.string().optional(),
+  motorWarrantyMonths: optionalMonths,
+  batteryWarrantyMonths: optionalMonths,
+  controllerWarrantyMonths: optionalMonths,
+  chargerWarrantyMonths: optionalMonths,
+  // Extra items typed in for the warranty card (name + months), added with the + button.
+  warrantyExtras: warrantyExtrasSchema,
+  // A scooter cannot have been bought after today (the server checks in the company's time zone too).
+  purchaseDate: z.string().optional().refine((v) => !v || v <= todayDateInput(), 'Purchase date cannot be in the future'),
   // Purchase cost — shown and sent only with inventory.cost (the owner, by default).
   purchasePrice: optionalRupees,
   purchaseGstRate: z.union([z.literal(''), z.coerce.number().min(0, 'Cannot be negative').max(100, 'At most 100%')]),
@@ -76,7 +94,8 @@ export function UnitFormDialog({
   const canCost = can(PURCHASE_COST_PERMISSION);
   // GST paid: worked out from a rate by default; the pencil switches to typing the amount.
   const [gstAsAmount, setGstAsAmount] = useState(false);
-  const { data: settings } = useCompanySettings(canCost);
+  // Settings give the default GST rate (owner) and the default warranty months (anyone who may read them).
+  const { data: settings } = useCompanySettings(canCost || can('settings.view'));
   const defaultGstRate = Number(settings?.taxPercentage ?? 0) > 0 ? Number(settings!.taxPercentage) : 5;
   const canCreateVariant = can('inventory.create');
   const { data: activeModels = [] } = useModels();
@@ -89,6 +108,9 @@ export function UnitFormDialog({
   // Locks for an edit (an add is always fully editable).
   const catalogueLocked = isEdit && !unit?.identity?.catalogueEditable;
   const identificationLocked = isEdit && !unit?.identity?.identificationEditable;
+  // Issued with the warranty card on delivery; from then on the owner changes them from the warranty.
+  const warrantyLocked = isEdit && Boolean(unit?.warrantyIssued);
+  const defaultWarrantyMonths = settings?.defaultWarrantyMonths;
 
   const {
     control,
@@ -102,6 +124,7 @@ export function UnitFormDialog({
     resolver: zodResolver(formSchema),
     defaultValues: emptyValues(),
   });
+  const extras = useFieldArray({ control, name: 'warrantyExtras' });
 
   useEffect(() => {
     if (!open) return;
@@ -110,6 +133,12 @@ export function UnitFormDialog({
     setGstAsAmount(Boolean(unit && unit.purchaseGstRateBp == null && unit.purchaseGst && unit.purchaseGst !== '0'));
     setVinTaken(false);
   }, [open, unit, reset]);
+
+  // A new scooter's warranty months start from the company default.
+  useEffect(() => {
+    if (!open || unit || !defaultWarrantyMonths) return;
+    for (const { field } of WARRANTY_INPUTS) if (watch(field) === '') setValue(field, defaultWarrantyMonths);
+  }, [open, unit, defaultWarrantyMonths, setValue, watch]);
 
   const modelId = watch('modelId');
   // A new rate field starts from the company's tax rate (5% when none is set).
@@ -188,6 +217,7 @@ export function UnitFormDialog({
       keyNumber: isEdit ? values.keyNumber ?? '' : values.keyNumber || undefined,
       notes: values.notes || undefined,
     };
+    const months = (field: UnitWarrantyMonthField): number | null => (values[field] === '' ? null : Number(values[field]));
     try {
       if (isEdit && unit) {
         // Only identity fields that actually change, and only those the policy allows.
@@ -203,7 +233,13 @@ export function UnitFormDialog({
           const next = normalise(values[field] ?? '') || null;
           if (next !== (unit[field] ?? null) && (!identificationLocked || !unit[field])) identity[field] = next;
         }
-        await updateUnit.mutateAsync({ ...details, ...identity });
+        // Warranty months: only those that change, and only until the warranty card is issued.
+        const warranty: UpdateUnitInput = {};
+        if (!warrantyLocked) {
+          for (const { field } of WARRANTY_INPUTS) if (months(field) !== (unit[field] ?? null)) warranty[field] = months(field);
+          if (JSON.stringify(values.warrantyExtras) !== JSON.stringify(unit.warrantyExtras ?? [])) warranty.warrantyExtras = values.warrantyExtras;
+        }
+        await updateUnit.mutateAsync({ ...details, ...identity, ...warranty });
         toast.success('Scooter updated');
       } else {
         const input: CreateUnitInput = {
@@ -214,6 +250,8 @@ export function UnitFormDialog({
           batteryNumber: normalise(values.batteryNumber),
           controllerNumber: normalise(values.controllerNumber ?? '') || undefined,
           chargerNumber: normalise(values.chargerNumber ?? '') || undefined,
+          ...Object.fromEntries(WARRANTY_INPUTS.map(({ field }) => [field, months(field) ?? undefined])),
+          ...(values.warrantyExtras.length ? { warrantyExtras: values.warrantyExtras } : {}),
           status: values.status,
         } as CreateUnitInput;
         await createUnit.mutateAsync(input);
@@ -330,9 +368,87 @@ export function UnitFormDialog({
           <Field label="Charger number" htmlFor="unit-charger" error={errors.chargerNumber?.message}>
             <Input id="unit-charger" className={`uppercase ${identificationLocked && unit?.chargerNumber ? 'bg-muted' : ''}`} placeholder="Optional" readOnly={identificationLocked && Boolean(unit?.chargerNumber)} {...register('chargerNumber')} />
           </Field>
-          <Field label="Purchase date" htmlFor="unit-purchase-date">
-            <Input id="unit-purchase-date" type="date" {...register('purchaseDate')} />
+          <Field label="Purchase date" htmlFor="unit-purchase-date" error={errors.purchaseDate?.message}>
+            <Input id="unit-purchase-date" type="date" max={todayDateInput()} {...register('purchaseDate')} />
           </Field>
+
+          <div className="space-y-3 rounded-lg border p-3 sm:col-span-2" role="group" aria-label="Warranty months">
+            <p className="flex items-center gap-1.5 text-sm font-semibold">
+              <ShieldCheck className="h-4 w-4 text-primary" aria-hidden />
+              Warranty (months)
+            </p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {WARRANTY_INPUTS.map(({ field, label }) => (
+                <Field key={field} label={label} htmlFor={`unit-${field}`} error={errors[field]?.message}>
+                  <Input
+                    id={`unit-${field}`}
+                    type="number"
+                    min={0}
+                    max={WARRANTY_MONTHS_MAX}
+                    step={1}
+                    inputMode="numeric"
+                    placeholder={defaultWarrantyMonths ? String(defaultWarrantyMonths) : 'Default'}
+                    className={warrantyLocked ? 'bg-muted' : undefined}
+                    readOnly={warrantyLocked}
+                    aria-readonly={warrantyLocked}
+                    {...register(field)}
+                  />
+                </Field>
+              ))}
+            </div>
+            {extras.fields.length > 0 && (
+              <ul className="space-y-2" aria-label="Extra warranty items">
+                {extras.fields.map((item, i) => {
+                  const err = errors.warrantyExtras?.[i];
+                  return (
+                    <li key={item.id} className="space-y-1">
+                      <div className="flex gap-2">
+                        <Input
+                          aria-label={`Extra item ${i + 1} name`}
+                          placeholder="Item name, e.g. Hub bearings"
+                          maxLength={60}
+                          className={`flex-1 ${warrantyLocked ? 'bg-muted' : ''}`}
+                          readOnly={warrantyLocked}
+                          {...register(`warrantyExtras.${i}.name`)}
+                        />
+                        <Input
+                          aria-label={`Extra item ${i + 1} months`}
+                          type="number"
+                          min={1}
+                          max={WARRANTY_MONTHS_MAX}
+                          step={1}
+                          inputMode="numeric"
+                          placeholder="Months"
+                          className={`w-24 ${warrantyLocked ? 'bg-muted' : ''}`}
+                          readOnly={warrantyLocked}
+                          {...register(`warrantyExtras.${i}.months`)}
+                        />
+                        {!warrantyLocked && (
+                          <Button type="button" variant="outline" size="icon" aria-label={`Remove extra item ${i + 1}`} onClick={() => extras.remove(i)}>
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                      {(err?.name?.message || err?.months?.message) && <p className="text-xs text-destructive">{err?.name?.message ?? err?.months?.message}</p>}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {(errors.warrantyExtras?.root?.message || errors.warrantyExtras?.message) && (
+              <p className="text-xs text-destructive">{errors.warrantyExtras?.root?.message ?? errors.warrantyExtras?.message}</p>
+            )}
+            {!warrantyLocked && extras.fields.length < WARRANTY_EXTRAS_MAX && (
+              <Button type="button" variant="outline" size="sm" onClick={() => extras.append({ name: '', months: defaultWarrantyMonths || 12 })}>
+                <Plus className="h-4 w-4" /> Add warranty item
+              </Button>
+            )}
+            <p className="text-xs text-muted-foreground">
+              {warrantyLocked
+                ? 'The warranty card has been issued. The owner changes these months and items from the warranty, which regenerates the card.'
+                : 'The warranty card is issued from these on delivery, starting on the delivery date. 0 = not covered; blank = the company default. Use + to add your own items to the card.'}
+            </p>
+          </div>
 
           {canCost && (
             <div className="space-y-3 rounded-lg border p-3 sm:col-span-2" aria-label="Purchase cost">
@@ -488,6 +604,11 @@ function emptyValues(): FormValues {
     batteryNumber: '',
     controllerNumber: '',
     chargerNumber: '',
+    motorWarrantyMonths: '',
+    batteryWarrantyMonths: '',
+    controllerWarrantyMonths: '',
+    chargerWarrantyMonths: '',
+    warrantyExtras: [],
     purchaseDate: '',
     purchasePrice: '',
     purchaseGstRate: '',
@@ -511,6 +632,11 @@ function toFormValues(unit: UnitDetail): FormValues {
     batteryNumber: unit.batteryNumber,
     controllerNumber: unit.controllerNumber ?? '',
     chargerNumber: unit.chargerNumber ?? '',
+    motorWarrantyMonths: unit.motorWarrantyMonths ?? '',
+    batteryWarrantyMonths: unit.batteryWarrantyMonths ?? '',
+    controllerWarrantyMonths: unit.controllerWarrantyMonths ?? '',
+    chargerWarrantyMonths: unit.chargerWarrantyMonths ?? '',
+    warrantyExtras: unit.warrantyExtras ?? [],
     purchaseDate: unit.purchaseDate ? unit.purchaseDate.slice(0, 10) : '',
     purchasePrice: unit.purchasePrice !== undefined ? paiseToRupees(unit.purchasePrice) : '',
     purchaseGstRate: unit.purchaseGstRateBp != null ? unit.purchaseGstRateBp / 100 : '',

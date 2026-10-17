@@ -87,15 +87,20 @@ describe('Authorization boundaries (e2e)', () => {
     });
   });
 
-  describe('Accessories (read O|M|S, write O|M)', () => {
-    it('allows SALES_EXECUTIVE to read but not write', async () => {
+  describe('Accessories (read O|M|S|A, write O|M; sell O|M|S, cancel O|M)', () => {
+    it('allows SALES_EXECUTIVE to read and sell, but not manage or cancel', async () => {
       await allowed('SALES_EXECUTIVE', 'get', '/accessories');
       await forbidden('SALES_EXECUTIVE', 'post', '/accessories', {});
+      await allowed('SALES_EXECUTIVE', 'post', '/accessory-sales', {});
+      await forbidden('SALES_EXECUTIVE', 'post', '/accessory-sales/00000000-0000-4000-8000-000000000000/cancel', {});
     });
-    it('allows OWNER to write; rejects TECHNICIAN/ACCOUNTANT read', async () => {
+    it('allows OWNER to write; the ACCOUNTANT reads (for accessory sales) but cannot sell; the TECHNICIAN sees nothing', async () => {
       await allowed('OWNER', 'post', '/accessories', {});
+      await allowed('MANAGER', 'post', '/accessory-sales/00000000-0000-4000-8000-000000000000/cancel', {});
+      await allowed('ACCOUNTANT', 'get', '/accessory-sales');
+      await forbidden('ACCOUNTANT', 'post', '/accessory-sales', {});
       await forbidden('TECHNICIAN', 'get', '/accessories');
-      await forbidden('ACCOUNTANT', 'get', '/accessories');
+      await forbidden('TECHNICIAN', 'get', '/accessory-sales');
     });
   });
 

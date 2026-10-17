@@ -50,6 +50,9 @@ export const updateCompanySettingsSchema = z
     gstDiscountTreatment: z.enum(GST_ADJUSTMENT_TREATMENTS as [GstAdjustmentTreatment, ...GstAdjustmentTreatment[]]).nullable().optional(),
     gstExchangeTreatment: z.enum(GST_ADJUSTMENT_TREATMENTS as [GstAdjustmentTreatment, ...GstAdjustmentTreatment[]]).nullable().optional(),
     taxPercentage: z.coerce.number().min(0).max(100).optional(),
+    // Accessory counter sales: GST on the invoice (prices include it) and the rate for an unclassified accessory.
+    accessoryGstEnabled: z.boolean().optional(),
+    accessoryGstRateBp: z.coerce.number().int().min(0).max(2800, 'At most 28%').optional(),
     // Prefixes
     invoicePrefix: prefix('Invoice prefix').optional(),
     bookingPrefix: prefix('Booking prefix').optional(),
@@ -57,6 +60,7 @@ export const updateCompanySettingsSchema = z
     receiptPrefix: prefix('Receipt prefix').optional(),
     jobCardPrefix: prefix('Job card prefix').optional(),
     rtoInvoicePrefix: prefix('RTO invoice prefix').optional(),
+    accessoryInvoicePrefix: prefix('Accessory invoice prefix').optional(),
     warrantyPrefix: prefix('Warranty prefix').optional(),
     amcPrefix: prefix('AMC prefix').optional(),
     claimPrefix: prefix('Claim prefix').optional(),
@@ -146,6 +150,11 @@ export interface CompanySettingsDto {
   receiptPrefix: string;
   jobCardPrefix: string;
   rtoInvoicePrefix: string;
+  accessoryInvoicePrefix: string;
+  /** GST on accessory counter-sale invoices (prices include it). */
+  accessoryGstEnabled: boolean;
+  /** GST rate for an accessory without a GST classification, in basis points. */
+  accessoryGstRateBp: number;
   warrantyPrefix: string;
   amcPrefix: string;
   claimPrefix: string;

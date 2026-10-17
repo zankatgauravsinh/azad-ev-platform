@@ -6,17 +6,12 @@ const IST = 'Asia/Kolkata';
 const NOW = new Date('2026-10-05T04:45:00.000Z');
 
 describe('deliveryLowerBound', () => {
-  it('is the booking date in the company time zone', () => {
-    // 23:00 on 19 September in UTC is already the 20th in India.
-    const booking = { createdAt: new Date('2026-09-19T23:00:00.000Z'), unit: { purchaseDate: null } };
-    expect(deliveryLowerBound(booking, IST)).toEqual({ date: '2026-09-20', label: 'booking date' });
-    expect(deliveryLowerBound(booking, 'UTC')).toEqual({ date: '2026-09-19', label: 'booking date' });
+  it("is the scooter's purchase date — the booking date is not a bound, so old handovers can be entered", () => {
+    expect(deliveryLowerBound({ unit: { purchaseDate: new Date('2026-09-25T00:00:00.000Z') } })).toEqual({ date: '2026-09-25', label: "scooter's purchase date" });
   });
 
-  it('is the purchase date when the scooter was bought after it was booked', () => {
-    const createdAt = new Date('2026-09-20T06:00:00.000Z');
-    expect(deliveryLowerBound({ createdAt, unit: { purchaseDate: new Date('2026-09-25T00:00:00.000Z') } }, IST)).toEqual({ date: '2026-09-25', label: "scooter's purchase date" });
-    expect(deliveryLowerBound({ createdAt, unit: { purchaseDate: new Date('2026-09-01T00:00:00.000Z') } }, IST)).toEqual({ date: '2026-09-20', label: 'booking date' });
+  it('is none when no purchase date is recorded', () => {
+    expect(deliveryLowerBound({ unit: { purchaseDate: null } })).toBeNull();
   });
 });
 
@@ -39,10 +34,10 @@ describe('resolveDeliveryDate', () => {
   });
 
   it('a date before the lower bound is refused, naming the bound', () => {
-    const booked = { date: '2026-09-20', label: 'booking date' };
+    const booked = { date: '2026-09-20', label: "scooter's purchase date" };
     expect(resolveDeliveryDate('2026-09-20', NOW, IST, booked).businessDate).toBe('2026-09-20');
     expect(() => resolveDeliveryDate('2026-09-19', NOW, IST, booked)).toThrow(EarlyDeliveryDateError);
-    expect(() => resolveDeliveryDate('2019-01-01', NOW, IST, booked)).toThrow('Delivery date cannot be before the booking date (20/09/2026)');
+    expect(() => resolveDeliveryDate('2019-01-01', NOW, IST, booked)).toThrow("Delivery date cannot be before the scooter's purchase date (20/09/2026)");
     // An instant from an older client is checked by its business date too.
     expect(() => resolveDeliveryDate(new Date('2026-09-19T06:30:00.000Z'), NOW, IST, booked)).toThrow(EarlyDeliveryDateError);
   });

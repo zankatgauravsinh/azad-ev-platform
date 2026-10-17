@@ -39,7 +39,7 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   'Vendor', 'ExpenseCategory', 'Income', 'BankTransaction', 'CashAdjustment',
   'RecurringExpense', 'MonthlyClosing', 'ExpenseAttachment',
   // Accessory inventory (child AccessoryPurchaseItem is scoped via its parent purchase)
-  'AccessoryPurchase', 'AccessoryStockMovement',
+  'AccessoryPurchase', 'AccessoryStockMovement', 'AccessorySale',
   // Vehicle return
   'VehicleReturn', 'CreditNote', 'Refund',
   // RTO invoice

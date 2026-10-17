@@ -47,11 +47,11 @@ describe('GET /auth/me effective permissions (e2e)', () => {
   const perms = async (t: string): Promise<string[]> => (await me(t).expect(200)).body.permissions as string[];
 
   it('returns the exact effective permission count per role', async () => {
-    expect((await perms(token.OWNER!)).length).toBe(77); // + rto.view / rto.generate / rto.edit, + inventory.cost
-    expect((await perms(token.MANAGER!)).length).toBe(72); // + rto.view / rto.generate (rto.edit is owner-only)
-    expect((await perms(token.SALES_EXECUTIVE!)).length).toBe(27);
+    expect((await perms(token.OWNER!)).length).toBe(79); // + rto.view / rto.generate / rto.edit, + inventory.cost, + accessories.sell / cancel
+    expect((await perms(token.MANAGER!)).length).toBe(74); // + rto.view / rto.generate (rto.edit is owner-only), + accessories.sell / cancel
+    expect((await perms(token.SALES_EXECUTIVE!)).length).toBe(28); // + accessories.sell
     expect((await perms(token.TECHNICIAN!)).length).toBe(15);
-    expect((await perms(token.ACCOUNTANT!)).length).toBe(11); // + rto.view
+    expect((await perms(token.ACCOUNTANT!)).length).toBe(12); // + rto.view, + accessories.view
   });
 
   it('OWNER receives the full catalog including admin + inventory.export (no "*")', async () => {

@@ -165,6 +165,8 @@ enum PaymentContext {
   BOOKING_ADVANCE
   SALE
   SERVICE
+  /// Payment against an accessory counter sale (AccessorySale).
+  ACCESSORY
 }
 
 enum ServiceJobType {
@@ -410,21 +412,22 @@ model Customer {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  documents   CustomerDocument[]
-  notes       CustomerNote[]
-  timeline    CustomerTimelineEntry[]
-  followUps   CustomerFollowUp[]
-  testRides   TestRide[]
-  bookings    Booking[]
-  quotations  Quotation[]
-  sales       Sale[]
-  serviceJobs ServiceJob[]
-  warranties  Warranty[]
-  amcPlans    AmcPlan[]
-  income      Income[]
-  returns     VehicleReturn[]
-  refunds     Refund[]
-  rtoInvoices RtoInvoice[]
+  documents      CustomerDocument[]
+  notes          CustomerNote[]
+  timeline       CustomerTimelineEntry[]
+  followUps      CustomerFollowUp[]
+  testRides      TestRide[]
+  bookings       Booking[]
+  quotations     Quotation[]
+  sales          Sale[]
+  serviceJobs    ServiceJob[]
+  warranties     Warranty[]
+  amcPlans       AmcPlan[]
+  income         Income[]
+  returns        VehicleReturn[]
+  refunds        Refund[]
+  rtoInvoices    RtoInvoice[]
+  accessorySales AccessorySale[]
 
   @@unique([companyId, phone]) // a mobile number is unique within a showroom, not across all of them
   @@index([leadStatus])
@@ -597,35 +600,44 @@ model ScooterVariant {
 }
 
 model InventoryUnit {
-  id                String         @id @default(uuid())
-  companyId         String         @default("")
-  variantId         String
-  variant           ScooterVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
-  vin               String         @unique
-  motorNumber       String         @unique
-  batteryNumber     String         @unique
+  id                       String         @id @default(uuid())
+  companyId                String         @default("")
+  variantId                String
+  variant                  ScooterVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  vin                      String         @unique
+  motorNumber              String         @unique
+  batteryNumber            String         @unique
   /// Motor controller and charger serial numbers. Optional; locked after sale like the motor / battery numbers
   /// (a blank one may still be filled in).
-  controllerNumber  String?
-  chargerNumber     String?
-  status            UnitStatus     @default(AVAILABLE)
-  purchaseDate      DateTime?
+  controllerNumber         String?
+  chargerNumber            String?
+  /// Warranty months per component, entered with the scooter. Delivery issues the warranty card from them
+  /// (starting on the delivery date); afterwards only the owner changes them, from the warranty.
+  motorWarrantyMonths      Int?
+  batteryWarrantyMonths    Int?
+  controllerWarrantyMonths Int?
+  chargerWarrantyMonths    Int?
+  /// Extra warranty items typed in with the scooter ([{ name, months }]), printed on the warranty card after the
+  /// four components. Locked once the card is issued, like the months above.
+  warrantyExtras           Json           @default("[]")
+  status                   UnitStatus     @default(AVAILABLE)
+  purchaseDate             DateTime?
   /// Total cost of buying the vehicle: purchasePrice + purchaseGst + transportCharge. Visible only with inventory.cost.
-  purchaseCost      BigInt         @default(0)
+  purchaseCost             BigInt         @default(0)
   /// Supplier's price before GST.
-  purchasePrice     BigInt         @default(0)
+  purchasePrice            BigInt         @default(0)
   /// GST rate used to work out purchaseGst, in basis points; null when the GST amount was typed in directly.
-  purchaseGstRateBp Int?
+  purchaseGstRateBp        Int?
   /// GST paid on the purchase.
-  purchaseGst       BigInt         @default(0)
+  purchaseGst              BigInt         @default(0)
   /// Transportation charge for bringing the vehicle in.
-  transportCharge   BigInt         @default(0)
-  sellingPrice      BigInt         @default(0)
-  location          String?
+  transportCharge          BigInt         @default(0)
+  sellingPrice             BigInt         @default(0)
+  location                 String?
   /// The ignition key's number (printed on the RTO invoice). Not part of the locked identity.
-  keyNumber         String?
-  supplier          String?
-  notes             String?
+  keyNumber                String?
+  supplier                 String?
+  notes                    String?
 
   createdById String?
   updatedById String?
@@ -710,7 +722,8 @@ model Accessory {
   id        String  @id @default(uuid())
   companyId String  @default("")
   name      String
-  sku       String? @unique
+  /// Stock-keeping code, unique within the company (upper-cased).
+  sku       String?
   category  String?
   sellPrice BigInt  @default(0)
   /// Weighted-average moving cost (system-maintained by purchases / opening stock only — never user-set).
@@ -738,7 +751,9 @@ model Accessory {
   saleAccessories      SaleAccessory[]
   purchaseItems        AccessoryPurchaseItem[]
   movements            AccessoryStockMovement[]
+  counterSaleItems     AccessorySaleItem[]
 
+  @@unique([companyId, sku])
   @@index([isPart])
   @@index([companyId])
 }
@@ -776,21 +791,22 @@ model TestRide {
 // ─────────────────────────── Booking ───────────────────────────
 
 model Booking {
-  id                String        @id @default(uuid())
-  companyId         String        @default("")
-  code              String        @unique
+  id                String          @id @default(uuid())
+  companyId         String          @default("")
+  code              String          @unique
   customerId        String
-  customer          Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customer          Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
   unitId            String
-  unit              InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  unit              InventoryUnit   @relation(fields: [unitId], references: [id], onDelete: Restrict)
   salesExecutiveId  String
-  salesExecutive    User          @relation("BookingSalesExecutive", fields: [salesExecutiveId], references: [id])
-  quotationId       String?       @unique
-  quotation         Quotation?    @relation(fields: [quotationId], references: [id])
+  salesExecutive    User            @relation("BookingSalesExecutive", fields: [salesExecutiveId], references: [id])
+  quotationId       String?         @unique
+  quotation         Quotation?      @relation(fields: [quotationId], references: [id])
   rtoInvoice        RtoInvoice?
-  status            BookingStatus @default(DRAFT)
-  financeRequired   Boolean       @default(false)
-  insuranceRequired Boolean       @default(false)
+  accessorySales    AccessorySale[]
+  status            BookingStatus   @default(DRAFT)
+  financeRequired   Boolean         @default(false)
+  insuranceRequired Boolean         @default(false)
 
   // Price breakup (paise)
   exShowroom       BigInt @default(0)
@@ -1044,6 +1060,8 @@ enum AccessoryMovementType {
   ADJUSTMENT
   RESERVE
   RELEASE
+  /// Pieces back in stock from a cancelled accessory counter sale.
+  SALE_RETURN
 }
 
 /// Accessory purchase (stock-in) header — supplier invoice. Reuses Vendor.
@@ -1154,22 +1172,24 @@ model InsuranceDetail {
 }
 
 model Payment {
-  id            String         @id @default(uuid())
-  companyId     String         @default("")
-  receiptNumber String?        @unique
-  context       PaymentContext
-  bookingId     String?
-  booking       Booking?       @relation(fields: [bookingId], references: [id])
-  saleId        String?
-  sale          Sale?          @relation(fields: [saleId], references: [id])
-  serviceJobId  String?
-  serviceJob    ServiceJob?    @relation(fields: [serviceJobId], references: [id])
-  amount        BigInt
-  mode          PaymentMode
-  reference     String?
-  receivedById  String
-  receivedBy    User           @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
-  paidAt        DateTime       @default(now())
+  id              String         @id @default(uuid())
+  companyId       String         @default("")
+  receiptNumber   String?        @unique
+  context         PaymentContext
+  bookingId       String?
+  booking         Booking?       @relation(fields: [bookingId], references: [id])
+  saleId          String?
+  sale            Sale?          @relation(fields: [saleId], references: [id])
+  serviceJobId    String?
+  serviceJob      ServiceJob?    @relation(fields: [serviceJobId], references: [id])
+  accessorySaleId String?
+  accessorySale   AccessorySale? @relation(fields: [accessorySaleId], references: [id])
+  amount          BigInt
+  mode            PaymentMode
+  reference       String?
+  receivedById    String
+  receivedBy      User           @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
+  paidAt          DateTime       @default(now())
 
   createdById String?
   updatedById String?
@@ -1179,6 +1199,7 @@ model Payment {
   @@index([saleId])
   @@index([bookingId])
   @@index([serviceJobId])
+  @@index([accessorySaleId])
   @@index([mode])
   @@index([paidAt])
   @@index([companyId])
@@ -1552,6 +1573,11 @@ model CompanySetting {
   creditNotePrefix        String  @default("CN")
   refundPrefix            String  @default("RF")
   rtoInvoicePrefix        String  @default("RTO")
+  accessoryInvoicePrefix  String  @default("ACC")
+  /// Accessory counter sales: whether the invoice carries GST (prices include it) and the rate used for an
+  /// accessory with no GST classification, in basis points (1800 = 18%).
+  accessoryGstEnabled     Boolean @default(false)
+  accessoryGstRateBp      Int     @default(1800)
   financeGstRate          Decimal @default(18) @db.Decimal(5, 2)
   financialYearStartMonth Int     @default(4)
   openingCash             BigInt  @default(0)
@@ -1603,24 +1629,25 @@ model CompanySetting {
 
 /// Per-company document sequence counters (state, not user-editable settings).
 model InvoiceSetting {
-  id                   String @id @default(uuid())
-  companyId            String @unique @default("")
-  nextInvoiceNumber    Int    @default(1)
-  nextBookingNumber    Int    @default(1)
-  nextQuotationNumber  Int    @default(1)
-  nextReceiptNumber    Int    @default(1)
-  nextServiceNumber    Int    @default(1)
-  nextWarrantyNumber   Int    @default(1)
-  nextAmcNumber        Int    @default(1)
-  nextClaimNumber      Int    @default(1)
-  nextExpenseNumber    Int    @default(1)
-  nextVendorNumber     Int    @default(1)
-  nextIncomeNumber     Int    @default(1)
-  nextBankNumber       Int    @default(1)
-  nextReturnNumber     Int    @default(1)
-  nextCreditNoteNumber Int    @default(1)
-  nextRefundNumber     Int    @default(1)
-  nextRtoInvoiceNumber Int    @default(1)
+  id                         String @id @default(uuid())
+  companyId                  String @unique @default("")
+  nextInvoiceNumber          Int    @default(1)
+  nextBookingNumber          Int    @default(1)
+  nextQuotationNumber        Int    @default(1)
+  nextReceiptNumber          Int    @default(1)
+  nextServiceNumber          Int    @default(1)
+  nextWarrantyNumber         Int    @default(1)
+  nextAmcNumber              Int    @default(1)
+  nextClaimNumber            Int    @default(1)
+  nextExpenseNumber          Int    @default(1)
+  nextVendorNumber           Int    @default(1)
+  nextIncomeNumber           Int    @default(1)
+  nextBankNumber             Int    @default(1)
+  nextReturnNumber           Int    @default(1)
+  nextCreditNoteNumber       Int    @default(1)
+  nextRefundNumber           Int    @default(1)
+  nextRtoInvoiceNumber       Int    @default(1)
+  nextAccessoryInvoiceNumber Int    @default(1)
 
   createdById String?
   updatedById String?
@@ -1729,21 +1756,24 @@ model CreditNote {
 /// Actual money returned to the customer for a completed return. Never alters the
 /// original Payment ledger.
 model Refund {
-  id           String        @id @default(uuid())
-  companyId    String        @default("")
-  refundNumber String
-  returnId     String
-  return       VehicleReturn @relation(fields: [returnId], references: [id], onDelete: Restrict)
-  saleId       String
-  sale         Sale          @relation(fields: [saleId], references: [id], onDelete: Restrict)
-  customerId   String
-  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  amount       BigInt        @default(0)
-  method       PaymentMode
-  reference    String?
-  note         String?
-  refundedById String?
-  refundedAt   DateTime      @default(now())
+  id              String         @id @default(uuid())
+  companyId       String         @default("")
+  refundNumber    String
+  /// A vehicle-return refund has returnId + saleId; a cancelled accessory sale's refund has accessorySaleId.
+  returnId        String?
+  return          VehicleReturn? @relation(fields: [returnId], references: [id], onDelete: Restrict)
+  saleId          String?
+  sale            Sale?          @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  accessorySaleId String?
+  accessorySale   AccessorySale? @relation(fields: [accessorySaleId], references: [id], onDelete: Restrict)
+  customerId      String
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  amount          BigInt         @default(0)
+  method          PaymentMode
+  reference       String?
+  note            String?
+  refundedById    String?
+  refundedAt      DateTime       @default(now())
 
   createdById String?
   updatedById String?
@@ -1754,6 +1784,7 @@ model Refund {
   @@index([companyId])
   @@index([returnId])
   @@index([saleId])
+  @@index([accessorySaleId])
 }
 
 // ─────────────────────────── Module 8 — Warranty & AMC ───────────────────────────
@@ -2468,4 +2499,80 @@ model RtoInvoice {
   @@index([companyId, invoiceDate])
   @@index([customerId])
   @@index([unitId])
+}
+
+// ─────────────────────────── Accessory counter sales ───────────────────────────
+
+enum AccessorySaleStatus {
+  ACTIVE
+  CANCELLED
+}
+
+/// An accessory counter sale: its own invoice, separate from any scooter invoice. Stock leaves at the sale; a
+/// cancellation puts it back and refunds what was paid. Prices include GST when the invoice carries GST.
+model AccessorySale {
+  id            String              @id @default(uuid())
+  companyId     String              @default("")
+  invoiceNumber String
+  invoiceDate   DateTime            @default(now())
+  status        AccessorySaleStatus @default(ACTIVE)
+  customerId    String
+  customer      Customer            @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  /// Optional: the customer's scooter booking this was sold with (for reference only — not on that invoice).
+  bookingId     String?
+  booking       Booking?            @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  /// Whether this invoice carries GST (the setting when it was made). INTRA → CGST + SGST; INTER → IGST.
+  gstApplied Boolean @default(false)
+  supplyType String?
+  /// Taxable value (total − GST), the GST split, and the total (what the customer pays).
+  subtotal   BigInt  @default(0)
+  cgst       BigInt  @default(0)
+  sgst       BigInt  @default(0)
+  igst       BigInt  @default(0)
+  gstAmount  BigInt  @default(0)
+  total      BigInt  @default(0)
+  notes      String?
+
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelReason  String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items    AccessorySaleItem[]
+  payments Payment[]
+  refunds  Refund[]
+
+  @@unique([companyId, invoiceNumber])
+  @@index([companyId, invoiceDate])
+  @@index([customerId])
+  @@index([bookingId])
+}
+
+model AccessorySaleItem {
+  id          String        @id @default(uuid())
+  saleId      String
+  sale        AccessorySale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  accessoryId String
+  accessory   Accessory     @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
+  /// Name, SKU and HSN as they were when sold (the catalogue may change later).
+  name        String
+  sku         String?
+  hsnCode     String?
+  qty         Int
+  /// Price per piece charged (GST included when the invoice carries GST).
+  unitPrice   BigInt
+  gstRateBp   Int           @default(0)
+  taxable     BigInt        @default(0)
+  gstAmount   BigInt        @default(0)
+  lineTotal   BigInt
+  /// Weighted-average cost per piece when sold — the cost of sales basis.
+  costAtSale  BigInt        @default(0)
+
+  @@index([saleId])
+  @@index([accessoryId])
 }
