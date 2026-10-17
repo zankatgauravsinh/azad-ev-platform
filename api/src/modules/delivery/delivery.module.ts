@@ -8,6 +8,6 @@ import { DeliveryPdfService } from './delivery-pdf.service';
   imports: [SalesModule], // BookingsService (markDelivered core); StorageModule + PdfBrandModule are @Global
   controllers: [DeliveryController],
   providers: [DeliveryService, DeliveryPdfService],
-  exports: [DeliveryService],
+  exports: [DeliveryService, DeliveryPdfService],
 })
 export class DeliveryModule {}

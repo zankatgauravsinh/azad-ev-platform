@@ -19,6 +19,7 @@ import { CustomersModule } from './modules/customers/customers.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { AccessoriesModule } from './modules/accessories/accessories.module';
 import { AccessorySalesModule } from './modules/accessory-sales/accessory-sales.module';
+import { DocumentShareModule } from './modules/document-share/document-share.module';
 import { ServiceModule } from './modules/service/service.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -60,6 +61,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     SalesModule,
     AccessoriesModule,
     AccessorySalesModule,
+    DocumentShareModule,
     ServiceModule,
     DashboardModule,
     ReportsModule,

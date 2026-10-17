@@ -1585,34 +1585,39 @@ model CompanySetting {
   warrantyReminderDays Int     @default(30)
 
   // Finance (Module 9)
-  financeEnabled          Boolean @default(true)
-  expensePrefix           String  @default("EXP")
-  vendorPrefix            String  @default("VND")
-  incomePrefix            String  @default("INC")
-  bankPrefix              String  @default("BNK")
-  returnPrefix            String  @default("RET")
-  creditNotePrefix        String  @default("CN")
-  refundPrefix            String  @default("RF")
-  rtoInvoicePrefix        String  @default("RTO")
-  accessoryInvoicePrefix  String  @default("ACC")
-  accessoryPurchasePrefix String  @default("APU")
+  financeEnabled           Boolean @default(true)
+  expensePrefix            String  @default("EXP")
+  vendorPrefix             String  @default("VND")
+  incomePrefix             String  @default("INC")
+  bankPrefix               String  @default("BNK")
+  returnPrefix             String  @default("RET")
+  creditNotePrefix         String  @default("CN")
+  refundPrefix             String  @default("RF")
+  rtoInvoicePrefix         String  @default("RTO")
+  accessoryInvoicePrefix   String  @default("ACC")
+  accessoryPurchasePrefix  String  @default("APU")
+  /// WhatsApp greeting per document, with {placeholders}; null = the built-in default text.
+  whatsappQuotationMessage String?
+  whatsappInvoiceMessage   String?
+  whatsappDeliveryMessage  String?
+  whatsappBookingMessage   String?
   /// Accessory counter sales: whether the invoice carries GST (prices include it) and the rate used for an
   /// accessory with no GST classification, in basis points (1800 = 18%).
-  accessoryGstEnabled     Boolean @default(false)
-  accessoryGstRateBp      Int     @default(1800)
-  financeGstRate          Decimal @default(18) @db.Decimal(5, 2)
-  financialYearStartMonth Int     @default(4)
-  openingCash             BigInt  @default(0)
-  openingBank             BigInt  @default(0)
-  lowCashThreshold        BigInt  @default(500000)
-  largeExpenseThreshold   BigInt  @default(5000000)
+  accessoryGstEnabled      Boolean @default(false)
+  accessoryGstRateBp       Int     @default(1800)
+  financeGstRate           Decimal @default(18) @db.Decimal(5, 2)
+  financialYearStartMonth  Int     @default(4)
+  openingCash              BigInt  @default(0)
+  openingBank              BigInt  @default(0)
+  lowCashThreshold         BigInt  @default(500000)
+  largeExpenseThreshold    BigInt  @default(5000000)
   // Free-service intervals (km / days) — configurable per company
-  freeService1Km          Int     @default(500)
-  freeService1Days        Int     @default(30)
-  freeService2Km          Int     @default(3000)
-  freeService2Days        Int     @default(90)
-  freeService3Km          Int     @default(6000)
-  freeService3Days        Int     @default(180)
+  freeService1Km           Int     @default(500)
+  freeService1Days         Int     @default(30)
+  freeService2Km           Int     @default(3000)
+  freeService2Days         Int     @default(90)
+  freeService3Km           Int     @default(6000)
+  freeService3Days         Int     @default(180)
 
   // Branding
   companyLogo    String?
@@ -2598,4 +2603,32 @@ model AccessorySaleItem {
 
   @@index([saleId])
   @@index([accessoryId])
+}
+
+// ─────────────────────────── Document share links (WhatsApp) ───────────────────────────
+
+enum DocumentShareType {
+  QUOTATION
+  INVOICE
+  DELIVERY_NOTE
+  BOOKING_CONFIRMATION
+}
+
+/// A link to one document's PDF, sent to the customer (e.g. on WhatsApp). Opens without signing in until it
+/// expires. Only the SHA-256 of the random token is stored, so the database alone never reveals a working link.
+model DocumentShareLink {
+  id           String            @id @default(uuid())
+  companyId    String            @default("")
+  tokenHash    String            @unique
+  docType      DocumentShareType
+  /// The quotation (QUOTATION) or the booking (INVOICE, DELIVERY_NOTE, BOOKING_CONFIRMATION).
+  entityId     String
+  expiresAt    DateTime
+  openCount    Int               @default(0)
+  lastOpenedAt DateTime?
+  createdById  String?
+  createdAt    DateTime          @default(now())
+
+  @@index([companyId])
+  @@index([docType, entityId])
 }

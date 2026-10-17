@@ -26,6 +26,17 @@ async function nativeOpenFile(blob: Blob, filename: string): Promise<void> {
   await Share.share({ title: filename, url: uri });
 }
 
+/**
+ * Native only: hands a file and a message to the OS share sheet (e.g. to attach a PDF in WhatsApp). The web cannot
+ * attach files to WhatsApp, so callers send a link instead there.
+ */
+export async function shareFileWithText(blob: Blob, filename: string, text: string): Promise<void> {
+  const data = await blobToBase64(blob);
+  await Filesystem.writeFile({ path: filename, data, directory: Directory.Cache });
+  const { uri } = await Filesystem.getUri({ path: filename, directory: Directory.Cache });
+  await Share.share({ title: filename, text, files: [uri] });
+}
+
 /** Triggers a download for an in-memory Blob (web) or the share/open sheet (native). */
 export function saveBlob(blob: Blob, filename: string): void {
   if (Capacitor.isNativePlatform()) {

@@ -17,6 +17,9 @@ export const envSchema = z.object({
   STORAGE_S3_REGION: z.string().optional(),
 
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
+  /** Where customers reach the API (e.g. https://app.example.com or http://1.2.3.4:3001), used in shared document
+   *  links. Unset → the address the request came in on. */
+  PUBLIC_API_URL: z.string().url().optional(),
 
   SEED_OWNER_EMAIL: z.string().email().default('owner@azadev.in'),
   SEED_OWNER_PASSWORD: z.string().min(8).default('Azad@12345'),

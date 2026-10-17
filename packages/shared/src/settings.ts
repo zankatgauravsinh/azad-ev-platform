@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { whatsappMessageField } from './whatsapp';
 import { BackupFrequency, BACKUP_FREQUENCIES } from './enums';
 import { GST_ADJUSTMENT_TREATMENTS, GST_STATE_CODE_PATTERN, type GstAdjustmentTreatment } from './tax';
 
@@ -62,6 +63,11 @@ export const updateCompanySettingsSchema = z
     rtoInvoicePrefix: prefix('RTO invoice prefix').optional(),
     accessoryInvoicePrefix: prefix('Accessory invoice prefix').optional(),
     accessoryPurchasePrefix: prefix('Accessory purchase prefix').optional(),
+    // WhatsApp greetings per document ('' or null → the built-in default).
+    whatsappQuotationMessage: whatsappMessageField,
+    whatsappInvoiceMessage: whatsappMessageField,
+    whatsappDeliveryMessage: whatsappMessageField,
+    whatsappBookingMessage: whatsappMessageField,
     warrantyPrefix: prefix('Warranty prefix').optional(),
     amcPrefix: prefix('AMC prefix').optional(),
     claimPrefix: prefix('Claim prefix').optional(),
@@ -153,6 +159,11 @@ export interface CompanySettingsDto {
   rtoInvoicePrefix: string;
   accessoryInvoicePrefix: string;
   accessoryPurchasePrefix: string;
+  /** WhatsApp greetings per document (null = the built-in default). */
+  whatsappQuotationMessage: string | null;
+  whatsappInvoiceMessage: string | null;
+  whatsappDeliveryMessage: string | null;
+  whatsappBookingMessage: string | null;
   /** GST on accessory counter-sale invoices (prices include it). */
   accessoryGstEnabled: boolean;
   /** GST rate for an accessory without a GST classification, in basis points. */

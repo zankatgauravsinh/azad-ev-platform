@@ -5,6 +5,7 @@ import { useDocumentDownload, type DocumentConsumer } from '@/hooks/use-document
 import { Button } from '@/components/ui/button';
 import { salesApi } from '@/features/sales/api';
 import { deliveryApi } from '../api';
+import { WhatsAppShareButton } from '@/features/whatsapp/components/whatsapp-share-button';
 
 interface Props {
   bookingId: string;
@@ -46,12 +47,14 @@ export function DocumentActions({ bookingId, invoiceNumber, bookingCode, deliver
           <Button size={size} variant="outline" disabled={isBusy('invoice:view')} onClick={() => invoice('invoice:view', openBlob)}><Eye className={icon} /> View invoice</Button>
           <Button size={size} variant="outline" disabled={isBusy('invoice:download')} onClick={() => invoice('invoice:download', saveBlob)}><Download className={icon} /> Download PDF</Button>
           <Button size={size} variant="outline" disabled={isBusy('invoice:print')} onClick={() => invoice('invoice:print', printBlob)}><Printer className={icon} /> Print</Button>
+          <WhatsAppShareButton docType="INVOICE" entityId={bookingId} size={size} label="WhatsApp invoice" />
         </>
       )}
       {showNote && (
         <>
           <Button size={size} variant="outline" disabled={isBusy('note:view')} onClick={() => note('note:view', openBlob)}><Eye className={icon} /> View delivery note</Button>
           <Button size={size} variant="outline" disabled={isBusy('note:download')} onClick={() => note('note:download', saveBlob)}><FileDown className={icon} /> Delivery note PDF</Button>
+          <WhatsAppShareButton docType="DELIVERY_NOTE" entityId={bookingId} size={size} label="WhatsApp delivery note" />
         </>
       )}
     </div>

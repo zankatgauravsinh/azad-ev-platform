@@ -404,6 +404,42 @@ export class BookingsService {
   }
 
   /**
+   * The booking confirmation PDF: the deal as booked (vehicle, price breakup, total), every payment received so
+   * far, the balance and the expected delivery. Re-rendered on demand; it changes as payments come in.
+   */
+  async confirmationPdf(id: string): Promise<{ buffer: Buffer; filename: string }> {
+    const booking = await this.getById(id);
+    const brand = await this.pdfBrand.resolve();
+    const paid = booking.payments.reduce((n, p) => n + p.amount, 0n);
+    const buffer = await this.pdf.render({
+      docType: 'BOOKING',
+      number: booking.code,
+      date: booking.createdAt,
+      brand,
+      customer: { name: booking.customer.name, phone: booking.customer.phone, address: booking.customer.address, city: booking.customer.city },
+      vehicle: { model: booking.unit.variant.model.name, variant: booking.unit.variant.name, colour: booking.unit.variant.colour, vin: booking.unit.vin },
+      lines: [
+        { label: 'Ex-showroom', amount: booking.exShowroom },
+        { label: 'Discount', amount: booking.discount, negative: true },
+        { label: 'Exchange', amount: booking.exchangeValue, negative: true },
+        { label: 'Accessories', amount: booking.accessoriesTotal },
+        { label: 'RTO', amount: booking.rto },
+        { label: 'Insurance', amount: booking.insuranceCharge },
+        { label: 'Registration', amount: booking.registration },
+        { label: 'Extended warranty', amount: booking.extendedWarranty },
+      ],
+      total: booking.total,
+      payments: {
+        rows: [...booking.payments].sort((a, b) => a.paidAt.getTime() - b.paidAt.getTime()).map((p) => ({ date: p.paidAt, receipt: p.receiptNumber, mode: p.mode, amount: p.amount })),
+        paid,
+        balance: booking.total - paid > 0n ? booking.total - paid : 0n,
+        expectedDelivery: booking.expectedDelivery,
+      },
+    });
+    return { buffer, filename: `booking-${booking.code}.pdf` };
+  }
+
+  /**
    * Renders the invoice PDF for an already-generated invoice. Idempotent and
    * side-effect free — it reads the immutable Sale and re-renders on demand, so
    * the PDF can be downloaded/printed unlimited times without regenerating the

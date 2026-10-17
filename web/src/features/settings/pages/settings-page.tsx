@@ -6,6 +6,7 @@ import { ChevronRight, ImagePlus, KeyRound, Receipt, Trash2 } from 'lucide-react
 import { toast } from 'sonner';
 import {
   BACKUP_FREQUENCIES, CURRENCIES, DATE_FORMATS, LANGUAGES, TIME_FORMATS, WEEKDAYS,
+  DEFAULT_WHATSAPP_MESSAGES, DOCUMENT_SHARE_LABEL, DOCUMENT_SHARE_TYPES, WHATSAPP_MESSAGE_FIELD, WHATSAPP_MESSAGE_MAX, WHATSAPP_PLACEHOLDERS,
   updateCompanySettingsSchema, type UpdateCompanySettingsInput,
 } from '@azad/shared';
 import { useAuth } from '@/features/auth/auth-context';
@@ -59,6 +60,8 @@ export function SettingsPage(): JSX.Element {
         rtoInvoicePrefix: settings.rtoInvoicePrefix, warrantyPrefix: settings.warrantyPrefix, amcPrefix: settings.amcPrefix,
         claimPrefix: settings.claimPrefix, returnPrefix: settings.returnPrefix, creditNotePrefix: settings.creditNotePrefix,
         refundPrefix: settings.refundPrefix,
+        whatsappQuotationMessage: settings.whatsappQuotationMessage ?? '', whatsappInvoiceMessage: settings.whatsappInvoiceMessage ?? '',
+        whatsappDeliveryMessage: settings.whatsappDeliveryMessage ?? '', whatsappBookingMessage: settings.whatsappBookingMessage ?? '',
         accessoryInvoicePrefix: settings.accessoryInvoicePrefix, accessoryPurchasePrefix: settings.accessoryPurchasePrefix, accessoryGstEnabled: settings.accessoryGstEnabled, accessoryGstRateBp: settings.accessoryGstRateBp,
         defaultWarrantyMonths: settings.defaultWarrantyMonths, serviceReminderDays: settings.serviceReminderDays,
         warrantyEnabled: settings.warrantyEnabled, amcEnabled: settings.amcEnabled, warrantyReminderDays: settings.warrantyReminderDays,
@@ -321,6 +324,37 @@ export function SettingsPage(): JSX.Element {
                   <SwitchRow control={control} name="emailEnabled" label="Email notifications" hint="Channel wiring is future-ready." />
                   <SwitchRow control={control} name="smsEnabled" label="SMS notifications" />
                   <SwitchRow control={control} name="whatsappEnabled" label="WhatsApp notifications" />
+                </div>
+              </Panel>
+              <Panel>
+                <div className="space-y-4" aria-label="WhatsApp messages">
+                  <div>
+                    <p className="text-sm font-semibold">WhatsApp messages</p>
+                    <p className="text-xs text-muted-foreground">
+                      The greeting sent with each document from its WhatsApp button. Leave a box empty to use the standard message shown in it. Fill-ins:{' '}
+                      {WHATSAPP_PLACEHOLDERS.map((p) => (
+                        <span key={p.key} title={p.description} className="mr-1 inline-block rounded bg-secondary px-1 font-mono">{`{${p.key}}`}</span>
+                      ))}
+                      — hover one to see what it becomes. {'{link}'} (the PDF) is added at the end if you leave it out.
+                    </p>
+                  </div>
+                  {DOCUMENT_SHARE_TYPES.map((type) => {
+                    const field = WHATSAPP_MESSAGE_FIELD[type];
+                    return (
+                      <Field key={type} label={DOCUMENT_SHARE_LABEL[type]} error={errors[field]?.message}>
+                        <div className="space-y-1">
+                          <Textarea rows={6} maxLength={WHATSAPP_MESSAGE_MAX} placeholder={DEFAULT_WHATSAPP_MESSAGES[type]} {...register(field)} />
+                          <div className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                            <span>{(values[field] ?? '').trim() ? 'Your message' : 'Standard message (shown faded above)'}</span>
+                            <span className="space-x-3">
+                              <button type="button" className="underline-offset-2 hover:underline" onClick={() => form.setValue(field, DEFAULT_WHATSAPP_MESSAGES[type], { shouldDirty: true })}>Start from the standard text</button>
+                              {(values[field] ?? '').trim() && <button type="button" className="underline-offset-2 hover:underline" onClick={() => form.setValue(field, '', { shouldDirty: true })}>Use the standard message</button>}
+                            </span>
+                          </div>
+                        </div>
+                      </Field>
+                    );
+                  })}
                 </div>
               </Panel>
             </TabsContent>

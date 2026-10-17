@@ -142,6 +142,17 @@ export class BookingsController {
     return this.bookings.generateInvoice(id, userId);
   }
 
+  @Get(':id/confirmation/pdf')
+  @Permissions('bookings.view')
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOperation({ summary: 'Download the booking confirmation (deal, payments so far, balance)' })
+  async confirmationPdf(@Param('id') id: string, @Res() res: Response): Promise<void> {
+    const { buffer, filename } = await this.bookings.confirmationPdf(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
+
   @Get(':id/invoice/pdf')
   @Permissions('bookings.view')
   @ApiParam({ name: 'id', format: 'uuid' })

@@ -10,7 +10,7 @@ export interface PdfLine {
 }
 
 export interface SalesDocInput {
-  docType: 'QUOTATION' | 'INVOICE';
+  docType: 'QUOTATION' | 'INVOICE' | 'BOOKING';
   number: string;
   date: Date;
   validUntil?: Date | null;
@@ -20,6 +20,8 @@ export interface SalesDocInput {
   lines: PdfLine[];
   total: bigint | number;
   finance?: { company: string; loanAmount: bigint | number; downPayment: bigint | number; emi: bigint | number; tenureMonths: number } | null;
+  /** Booking confirmation: what has been paid, the balance and the expected delivery. */
+  payments?: { rows: { date: Date; receipt: string | null; mode: string; amount: bigint }[]; paid: bigint; balance: bigint; expectedDelivery: Date | null } | null;
 }
 
 @Injectable()
@@ -37,7 +39,7 @@ export class SalesPdfService {
       const right = doc.page.width - doc.page.margins.right;
 
       drawBrandHeader(doc, input.brand, {
-        docType: input.docType === 'INVOICE' ? 'TAX INVOICE' : input.docType,
+        docType: input.docType === 'INVOICE' ? 'TAX INVOICE' : input.docType === 'BOOKING' ? 'BOOKING CONFIRMATION' : input.docType,
         infoLines: [
           `No: ${input.number}`,
           `Date: ${input.date.toLocaleDateString('en-IN')}`,
@@ -85,6 +87,35 @@ export class SalesPdfService {
       doc.text('On-road Total', left + 8, y + 6);
       doc.text(formatInrExact(input.total), right - 128, y + 6, { width: 120, align: 'right' });
       y += rowH + 14;
+
+      if (input.payments) {
+        const p = input.payments;
+        doc.fillColor(NAVY).font(FONT_BOLD).fontSize(10).text('Payments received', left, y);
+        y += 16;
+        doc.font(FONT_BODY).fontSize(9).fillColor('#000');
+        if (!p.rows.length) {
+          doc.fillColor('#555').text('No payment yet', left + 8, y);
+          y += 14;
+        }
+        for (const r of p.rows) {
+          doc.fillColor('#000').text(`${r.date.toLocaleDateString('en-IN')} · ${r.receipt ?? 'Receipt'} · ${r.mode.replace('_', ' ')}`, left + 8, y);
+          doc.text(formatInrExact(r.amount), right - 108, y, { width: 100, align: 'right' });
+          y += 14;
+        }
+        y += 4;
+        doc.font(FONT_BOLD).fontSize(10).fillColor(NAVY);
+        doc.text('Paid', left + 8, y);
+        doc.text(formatInrExact(p.paid), right - 128, y, { width: 120, align: 'right' });
+        y += 16;
+        doc.text('Balance due', left + 8, y);
+        doc.text(formatInrExact(p.balance), right - 128, y, { width: 120, align: 'right' });
+        y += 18;
+        if (p.expectedDelivery) {
+          doc.font(FONT_BODY).fontSize(9).fillColor('#000').text(`Expected delivery: ${p.expectedDelivery.toLocaleDateString('en-IN')}`, left, y);
+          y += 16;
+        }
+        y += 6;
+      }
 
       if (input.finance) {
         doc.fillColor(NAVY).font(FONT_BOLD).fontSize(10).text('Finance estimate', left, y);

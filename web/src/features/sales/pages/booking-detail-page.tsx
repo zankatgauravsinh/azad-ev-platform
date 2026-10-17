@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, Banknote, Bike, CalendarClock, CheckCircle2, Eye, FileBadge, FileText, Pencil, Shield, Truck, Undo2, User } from 'lucide-react';
+import { ArrowLeft, Ban, Banknote, Bike, CalendarClock, CheckCircle2, ClipboardCheck, Eye, FileBadge, FileText, Pencil, Shield, Truck, Undo2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookingStatus, PaymentStatus } from '@azad/shared';
 import { useCan } from '@/features/auth/auth-context';
@@ -21,6 +21,8 @@ import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { RtoInvoiceDetailDialog } from '@/features/rto-invoices/components/rto-invoice-detail-dialog';
 import { RtoInvoiceFormDialog } from '@/features/rto-invoices/components/rto-invoice-form-dialog';
 import { AccessorySalesPanel } from '@/features/accessory-sales/components/accessory-sales-panel';
+import { WhatsAppShareButton } from '@/features/whatsapp/components/whatsapp-share-button';
+import { saveBlob } from '@/lib/download';
 import { DocumentActions } from '@/features/delivery/components/document-actions';
 import { VehicleDetailsDialog } from '../components/vehicle-details-dialog';
 import { CustomerDetailDialog } from '@/features/customers/components/customer-detail-dialog';
@@ -100,7 +102,17 @@ export function BookingDetailPage(): JSX.Element {
           <p className="mt-1 text-sm text-muted-foreground">
             {b.unit.variant.model.name} {b.unit.variant.name} · {b.unit.variant.colour} · <span className="font-mono">{b.unit.vin}</span>
           </p>
-          <Button size="sm" variant="outline" className="mt-2" onClick={() => setVehicleOpen(true)}><Bike className="h-4 w-4" /> View vehicle details</Button>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => setVehicleOpen(true)}><Bike className="h-4 w-4" /> View vehicle details</Button>
+            {active && (
+              <>
+                <Button size="sm" variant="outline" onClick={() => void salesApi.confirmationPdf(b.id).then((blob) => saveBlob(blob, `booking-${b.code}.pdf`)).catch((e: unknown) => toast.error(apiErrorMessage(e)))}>
+                  <ClipboardCheck className="h-4 w-4" /> Booking confirmation
+                </Button>
+                <WhatsAppShareButton docType="BOOKING_CONFIRMATION" entityId={b.id} size="sm" label="WhatsApp booking" />
+              </>
+            )}
+          </div>
         </div>
         {active && (
           <div className="flex flex-wrap gap-2">

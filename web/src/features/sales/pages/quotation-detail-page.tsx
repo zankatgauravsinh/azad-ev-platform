@@ -15,6 +15,7 @@ import { useQuotation, useSalesInvalidate } from '../hooks';
 import { salesApi } from '../api';
 import { QuotationStatusBadge } from '../components/status-badges';
 import { ConvertQuotationDialog } from '../components/convert-quotation-dialog';
+import { WhatsAppShareButton } from '@/features/whatsapp/components/whatsapp-share-button';
 
 export function QuotationDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -56,6 +57,7 @@ export function QuotationDetailPage(): JSX.Element {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={pdf}><FileText className="h-4 w-4" /> PDF</Button>
+          <WhatsAppShareButton docType="QUOTATION" entityId={q.id} />
           {canCreate && <Button variant="outline" onClick={duplicate}><Copy className="h-4 w-4" /> Duplicate</Button>}
           {canConvert && !convertBlocker && <Button onClick={() => setConvertOpen(true)}><ShoppingCart className="h-4 w-4" /> Convert to booking</Button>}
           {q.booking && <Button variant="outline" onClick={() => navigate(`/bookings/${q.booking!.id}`)}>View {q.booking.status === BookingStatus.CANCELLED ? 'cancelled ' : ''}booking {q.booking.code}</Button>}
