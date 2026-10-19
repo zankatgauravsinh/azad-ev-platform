@@ -6,6 +6,7 @@ import { fillMonths } from '../dashboard/chart-utils';
 import { CashbookService } from './cashbook.service';
 import { PnlService } from './pnl.service';
 import { dayRange } from './finance.helpers';
+import { VendorBillsService } from '../vendor-payables/vendor-bills.service';
 
 interface MonthAmountRow {
   month: string;
@@ -19,6 +20,7 @@ export class FinanceDashboardService {
     private readonly tenant: TenantContext,
     private readonly cashbook: CashbookService,
     private readonly pnl: PnlService,
+    private readonly vendorBills: VendorBillsService,
   ) {}
 
   async dashboard(): Promise<FinanceDashboardDto> {
@@ -50,12 +52,17 @@ export class FinanceDashboardService {
       this.cashbook.bankBalance(),
       this.pnl.pnl({ from: monthStart, to: todayEnd }),
       this.prisma.expense.aggregate({ _sum: { amount: true, gstAmount: true }, where: { status: 'APPROVED', expenseDate: { gte: monthStart, lt: todayEnd } } }),
-      this.prisma.expense.aggregate({ _sum: { amount: true, gstAmount: true }, where: { status: 'APPROVED', paid: false } }),
-      this.prisma.expense.count({ where: { status: 'APPROVED', paid: false, dueDate: { not: null, lte: in7 } } }),
+      // Owed to vendors (scooters, accessory purchases, expenses with a vendor) + unpaid expenses without a vendor.
+      Promise.all([
+        this.vendorBills.payablesSummary(),
+        this.prisma.expense.aggregate({ _sum: { amount: true, gstAmount: true }, where: { status: 'APPROVED', paid: false, vendorId: null } }),
+      ]),
+      this.prisma.expense.count({ where: { status: 'APPROVED', paid: false, vendorId: null, dueDate: { not: null, lte: in7 } } }),
       this.monthlySeries(company, 'expense'),
       this.monthlySeries(company, 'income'),
       this.prisma.expense.groupBy({ by: ['categoryId'], _sum: { amount: true, gstAmount: true }, where: { status: 'APPROVED', expenseDate: { gte: monthStart, lt: todayEnd } } }),
-      this.prisma.expense.groupBy({ by: ['vendorId'], _sum: { amount: true, gstAmount: true }, where: { status: { not: 'REJECTED' }, vendorId: { not: null } } }),
+      // Everything bought from each vendor: scooters, accessory purchases and expenses (with GST).
+      this.vendorBills.list({ kinds: ['SCOOTER', 'ACCESSORY_PURCHASE', 'EXPENSE'] }),
     ]);
 
     const todayCollection = (todayPayments._sum.amount ?? 0n) + (todayIncome._sum.amount ?? 0n) + (todayIncome._sum.gstAmount ?? 0n);
@@ -67,8 +74,10 @@ export class FinanceDashboardService {
       .slice(0, 6)
       .map((c) => ({ name: c.name, amount: String(c.amount) }));
 
-    const topVendorIds = vendorRows
-      .map((v) => ({ id: v.vendorId as string, amount: (v._sum.amount ?? 0n) + (v._sum.gstAmount ?? 0n) }))
+    const byVendor = new Map<string, bigint>();
+    for (const b of vendorRows) byVendor.set(b.vendorId, (byVendor.get(b.vendorId) ?? 0n) + b.amount);
+    const topVendorIds = [...byVendor.entries()]
+      .map(([id, amount]) => ({ id, amount }))
       .sort((a, b) => Number(b.amount - a.amount))
       .slice(0, 5);
     const vendorNames = await this.prisma.vendor.findMany({ where: { id: { in: topVendorIds.map((v) => v.id) } }, select: { id: true, name: true } });
@@ -86,8 +95,8 @@ export class FinanceDashboardService {
       bankBalance: String(bankBalance),
       monthProfit: monthPnl.netProfit,
       monthExpense: String((monthExpense._sum.amount ?? 0n) + (monthExpense._sum.gstAmount ?? 0n)),
-      pendingVendorPayments: String((pendingVendor._sum.amount ?? 0n) + (pendingVendor._sum.gstAmount ?? 0n)),
-      upcomingPayments: upcoming,
+      pendingVendorPayments: String(BigInt(pendingVendor[0].billsDue) + (pendingVendor[1]._sum.amount ?? 0n) + (pendingVendor[1]._sum.gstAmount ?? 0n)),
+      upcomingPayments: upcoming + pendingVendor[0].dueIn7Days,
       monthlyExpenses: monthlyExpenses.map((m) => ({ month: m.month, label: m.label, amount: m.amount })),
       incomeVsExpense,
       categoryBreakdown,

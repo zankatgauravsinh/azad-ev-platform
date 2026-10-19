@@ -42,6 +42,9 @@ import { CatalogRepository, type VariantRow } from './catalog/catalog.repository
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { csvParseMessage, readCsvRows, type Catalogue, type CsvSourceRow } from './csv-import';
 import { buildCsvPreview, identifierCandidates, validateCsvFile } from './csv-preview';
+import { VendorPaymentsService } from '../vendor-payables/vendor-payments.service';
+import { VendorBillsService } from '../vendor-payables/vendor-bills.service';
+import { PurchaseOrderReceiptsService } from '../vendor-payables/purchase-order-receipts.service';
 
 const LOW_STOCK_THRESHOLD = 2;
 // High enough to export a whole dealership's stock in one file; a single
@@ -90,6 +93,7 @@ const MSG_CORRECTION_NOT_ELIGIBLE = 'Identification correction applies only to d
 const MSG_FUTURE_PURCHASE_DATE = 'Purchase date cannot be in the future';
 const MSG_WARRANTY_MONTHS_LOCKED = 'This scooter already has a warranty card — the owner changes its months and extra items from the warranty (Edit months).';
 const MSG_CHANGED_CONCURRENTLY = 'This vehicle was changed by someone else — reload and try again.';
+const MSG_PAYMENT_NEEDS_COST = 'Paying the vendor and receiving against a purchase order show what you paid — only the owner (purchase-cost permission) can do that';
 
 /**
  * The rules above, as the read-only policy the unit's detail carries for the UI (M4C). The same status
@@ -254,6 +258,9 @@ export class InventoryService {
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
     private readonly catalog: CatalogRepository,
     private readonly tenant: TenantContext,
+    private readonly vendorPayments: VendorPaymentsService,
+    private readonly vendorBills: VendorBillsService,
+    private readonly receipts: PurchaseOrderReceiptsService,
   ) {}
 
   // ── Reads ──────────────────────────────────────────────
@@ -353,6 +360,33 @@ export class InventoryService {
     return { exists: Boolean(found) };
   }
 
+  /**
+   * The vendor a scooter is bought from, and the supplier text that follows it. A picked vendor must exist (an
+   * inactive one only when it is already the scooter's); without one, a supplier text that names a vendor links
+   * it (older apps send text); a new scooter with neither gets the default scooter vendor. undefined = no change.
+   */
+  private async scooterVendor(
+    dto: { vendorId?: string | null; supplier?: string | null },
+    existing: { vendorId: string | null } | null,
+  ): Promise<{ vendorId: string | null; supplier: string | null } | undefined> {
+    const currentVendorId = existing?.vendorId ?? null;
+    if (dto.vendorId) {
+      const vendor = await this.repo.findVendor(dto.vendorId);
+      if (!vendor) throw new BadRequestException('That vendor was not found — pick one from the list');
+      if (vendor.status === 'INACTIVE' && vendor.id !== currentVendorId) throw new BadRequestException(`${vendor.name} is inactive — make it active under Vendors, or pick another vendor`);
+      return { vendorId: vendor.id, supplier: vendor.name };
+    }
+    if (dto.vendorId === null) return { vendorId: null, supplier: dto.supplier ?? null };
+    if (dto.supplier !== undefined) {
+      const named = dto.supplier ? await this.repo.findVendorsNamed(dto.supplier) : [];
+      return named[0] ? { vendorId: named[0].id, supplier: named[0].name } : { vendorId: null, supplier: dto.supplier ?? null };
+    }
+    if (existing) return undefined;
+    const defaultId = await this.repo.defaultScooterVendorId();
+    const vendor = defaultId ? await this.repo.findVendor(defaultId) : null;
+    return vendor ? { vendorId: vendor.id, supplier: vendor.name } : undefined;
+  }
+
   /** A scooter cannot have been bought after today (the company's calendar date); delivery dates start from it. */
   private async assertPurchaseDateNotFuture(purchaseDate: Date | null | undefined): Promise<void> {
     if (purchaseDate && isAfterBusinessToday(purchaseDate, new Date(), await this.repo.businessTimeZone())) throw new BadRequestException(MSG_FUTURE_PURCHASE_DATE);
@@ -364,13 +398,34 @@ export class InventoryService {
   }
 
   // ── Writes ─────────────────────────────────────────────
-  async create(dto: CreateUnitInput, userId: string, canSeeCost = false) {
-    assertMaySetPurchaseCost(dto, canSeeCost);
-    await this.assertPurchaseDateNotFuture(dto.purchaseDate);
-    await this.assertVinAvailable(dto.vin);
+  async create(input: CreateUnitInput, userId: string, canSeeCost = false) {
+    assertMaySetPurchaseCost(input, canSeeCost);
+    if ((input.purchasePayment || input.purchaseOrderLineId) && !canSeeCost) throw new ForbiddenException(MSG_PAYMENT_NEEDS_COST);
+    await this.assertPurchaseDateNotFuture(input.purchaseDate);
+    await this.assertVinAvailable(input.vin);
+    // Received against a purchase-order line: the order's vendor and variant, and the line's price unless typed.
+    const orderLine = input.purchaseOrderLineId
+      ? await this.repo.findOrderLine(input.purchaseOrderLineId)
+      : null;
+    if (input.purchaseOrderLineId && !orderLine) throw new NotFoundException('Purchase order line not found');
+    if (orderLine?.variantId && input.variantId && input.variantId !== orderLine.variantId) throw new BadRequestException(`${orderLine.description} on ${orderLine.purchaseOrder.poNumber} is another model / variant / colour`);
+    const dto: CreateUnitInput = orderLine
+      ? {
+          ...input,
+          vendorId: orderLine.purchaseOrder.vendorId,
+          variantId: input.variantId ?? orderLine.variantId ?? undefined,
+          ...(PURCHASE_COST_INPUTS.every((k) => input[k] === undefined) ? { purchasePrice: Number(orderLine.unitCost), purchaseGstRate: orderLine.gstRateBp / 100 } : {}),
+        }
+      : input;
+    const vendor = await this.scooterVendor(dto, null);
+    if (dto.purchasePayment && !vendor?.vendorId) throw new BadRequestException('Choose the vendor the scooter was bought from before marking it paid');
     // Curated: an existing active variant, checked against the tenant before anything is written.
     const curated = dto.variantId ? await this.curatedVariant(dto.variantId) : null;
     const unit = await this.repo.transaction(async (tx) => {
+      if (orderLine) {
+        const line = await this.receipts.lockLine(tx, orderLine.id, 'SCOOTER');
+        this.receipts.assertRoom(line, 1);
+      }
       const variant = curated ?? (await this.legacyVariant(tx, dto));
       // The list price is only the INITIAL value of a curated unit's selling price; the unit's own
       // price is independent from here on (a later list-price change never touches it).
@@ -389,7 +444,10 @@ export class InventoryService {
           purchaseDate: dto.purchaseDate ?? null,
           ...purchaseCostData(dto),
           sellingPrice,
-          supplier: dto.supplier ?? null,
+          ...(vendor?.vendorId ? { vendor: { connect: { id: vendor.vendorId } } } : {}),
+          supplier: vendor?.supplier ?? null,
+          vendorBillNumber: dto.vendorBillNumber ?? null,
+          ...(orderLine ? { purchaseOrderLine: { connect: { id: orderLine.id } } } : {}),
           location: dto.location ?? null,
           keyNumber: dto.keyNumber ?? null,
           notes: dto.notes ?? null,
@@ -403,12 +461,29 @@ export class InventoryService {
           unitId: created.id,
           fromStatus: null,
           toStatus: created.status,
-          note: 'Purchased / added to inventory',
+          note: orderLine ? `Received against ${orderLine.purchaseOrder.poNumber}` : 'Purchased / added to inventory',
           createdById: userId,
         },
         tx,
       );
-      return created;
+      if (dto.purchasePayment) {
+        if (created.purchaseCost <= 0n) throw new BadRequestException('Enter the purchase price before marking the scooter paid');
+        await this.vendorPayments.createInTx(
+          tx,
+          {
+            vendorId: vendor!.vendorId!,
+            paidAt: dto.purchasePayment.paidAt ?? dto.purchaseDate,
+            method: dto.purchasePayment.method,
+            reference: dto.purchasePayment.reference,
+            amount: Number(created.purchaseCost),
+            allocations: [{ kind: 'SCOOTER', billId: created.id, amount: Number(created.purchaseCost) }],
+          },
+          userId,
+          { canSeeCost: true, notBefore: dto.purchaseDate },
+        );
+      }
+      if (orderLine) await this.receipts.closeIfComplete(tx, orderLine.purchaseOrderId, userId);
+      return dto.purchasePayment ? ((await this.repo.findByIdWithVariant(created.id, tx)) ?? created) : created;
     });
     await this.activityLog.record({
       actorId: userId,
@@ -439,6 +514,16 @@ export class InventoryService {
     const extrasChanged = dto.warrantyExtras !== undefined && JSON.stringify(dto.warrantyExtras) !== JSON.stringify(existing.warrantyExtras ?? []);
     const monthsChanged = extrasChanged || (Object.keys(warrantyMonths) as UnitWarrantyMonthField[]).some((k) => existing[k] !== warrantyMonths[k]);
     if (monthsChanged && (await this.repo.hasLiveWarranty(id))) throw new ConflictException(MSG_WARRANTY_MONTHS_LOCKED);
+    const vendor = await this.scooterVendor(dto, existing);
+    // Vendor payments are tied to the vendor and to the cost: neither may move from under them.
+    const costChanged = PURCHASE_COST_INPUTS.some((k) => dto[k] !== undefined);
+    const vendorChanged = vendor !== undefined && vendor.vendorId !== existing.vendorId;
+    const alreadyPaid = (costChanged || vendorChanged) && !existing.costInExpenses ? await this.vendorBills.allocatedTo({ kind: 'SCOOTER', id }) : 0n;
+    if (alreadyPaid > 0n && vendorChanged) throw new ConflictException('This scooter is (partly) paid to its vendor — cancel that vendor payment before changing the vendor');
+    if (alreadyPaid > 0n && costChanged) {
+      const newCost = (purchaseCostData(dto, existing).purchaseCost ?? existing.purchaseCost);
+      if (newCost < alreadyPaid) throw new ConflictException(`${formatInr(alreadyPaid)} is already paid to the vendor for this scooter — the cost cannot be less (cancel that vendor payment first)`);
+    }
     // Curated selection is validated against the tenant first (404 / 409), before any status rule.
     const curated = dto.variantId !== undefined ? await this.curatedVariant(dto.variantId) : null;
 
@@ -490,13 +575,23 @@ export class InventoryService {
       if (dto.warrantyExtras !== undefined) data.warrantyExtras = dto.warrantyExtras as unknown as Prisma.InputJsonValue;
       Object.assign(data, purchaseCostData(dto, existing));
       if (dto.sellingPrice !== undefined) data.sellingPrice = BigInt(dto.sellingPrice);
-      if (dto.supplier !== undefined) data.supplier = dto.supplier ?? null;
+      if (vendor) {
+        data.vendor = vendor.vendorId ? { connect: { id: vendor.vendorId } } : { disconnect: true };
+        data.supplier = vendor.supplier;
+      }
+      if (dto.vendorBillNumber !== undefined) data.vendorBillNumber = dto.vendorBillNumber;
       if (dto.location !== undefined) data.location = dto.location ?? null;
       // Not part of the locked identity: editable whatever the status (keys are often numbered at delivery).
       if (dto.keyNumber !== undefined) data.keyNumber = dto.keyNumber;
       if (dto.notes !== undefined) data.notes = dto.notes ?? null;
 
-      return this.repo.updateUnit(id, data, tx);
+      const updated = await this.repo.updateUnit(id, data, tx);
+      // A new cost may settle the bill or leave some of it owed again.
+      if (alreadyPaid > 0n) {
+        await this.vendorBills.syncBill(tx, { kind: 'SCOOTER', id }, userId);
+        return (await this.repo.findByIdWithVariant(id, tx)) ?? updated;
+      }
+      return updated;
     });
 
     // One UPDATE entry per request; what changed about the vehicle's identity rides in the metadata.
@@ -597,13 +692,17 @@ export class InventoryService {
         `Cannot delete a ${unit.status.toLowerCase()} scooter — it is linked to a booking/sale`,
       );
     }
-    await this.repo.softDelete(id);
+    const released = await this.repo.transaction(async (tx) => {
+      await this.repo.softDelete(id, tx);
+      // What was paid to the vendor for it stays with the vendor as an advance (to apply to another bill).
+      return this.vendorBills.releaseAllocations(tx, { kind: 'SCOOTER', id });
+    });
     await this.activityLog.record({
       actorId: userId,
       action: ActivityAction.DELETE,
       entityType: 'InventoryUnit',
       entityId: id,
-      summary: `Deleted scooter ${unit.vin}`,
+      summary: `Deleted scooter ${unit.vin}${released > 0n ? ' (its vendor payment stays with the vendor as an advance)' : ''}`,
     });
   }
 
@@ -729,6 +828,7 @@ export class InventoryService {
           purchasePrice: u.purchaseCost, // the file gives one figure: the price, with no GST or transport recorded separately
           sellingPrice: u.sellingPrice,
           supplier: u.supplier,
+          vendorId: u.vendorId,
           location: u.location,
           createdById: userId,
           updatedById: userId,
@@ -813,11 +913,13 @@ export class InventoryService {
 
   /** The company's whole catalogue, active and inactive (inactive is reported as such). */
   private async csvCatalogue(companyId: string, db?: Prisma.TransactionClient): Promise<Catalogue> {
-    const [models, variants] = await Promise.all([
+    const [models, variants, vendors, defaultVendorId] = await Promise.all([
       db ? this.catalog.listModels(companyId, { status: 'all' }, db) : this.catalog.listModels(companyId, { status: 'all' }),
       db ? this.catalog.listVariants(companyId, { status: 'all' }, db) : this.catalog.listVariants(companyId, { status: 'all' }),
+      this.repo.listVendors(companyId, db),
+      this.repo.defaultScooterVendorId(db),
     ]);
-    return { models, variants };
+    return { models, variants, vendors, defaultVendorId };
   }
 
   // ── Export ─────────────────────────────────────────────
@@ -1050,6 +1152,7 @@ export class InventoryService {
       sellingprice: 'sellingPrice',
       price: 'sellingPrice',
       supplier: 'supplier',
+      vendor: 'supplier',
       location: 'location',
       status: 'status',
     };
@@ -1060,6 +1163,10 @@ export class InventoryService {
     const where: Prisma.InventoryUnitWhereInput = {};
     if (query.status) where.status = query.status;
     if (query.supplier) where.supplier = { contains: query.supplier, mode: 'insensitive' };
+    if (query.vendorId) where.vendorId = query.vendorId;
+    if (query.purchasePaid === true) where.purchasePaid = true;
+    if (query.purchasePaid === false) Object.assign(where, { purchasePaid: false, costInExpenses: false });
+    if (query.purchaseOrderLineId) where.purchaseOrderLineId = query.purchaseOrderLineId;
     if (query.modelId) where.variant = { modelId: query.modelId };
     if (query.q) {
       const q = query.q.trim();

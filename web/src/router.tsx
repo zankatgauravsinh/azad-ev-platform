@@ -26,6 +26,10 @@ import { ModelsPage } from '@/features/catalog/pages/models-page';
 import { ReportsPage } from '@/features/reports/pages/reports-page';
 import { WarrantyPage } from '@/features/warranty/pages/warranty-page';
 import { FinancePage } from '@/features/finance/pages/finance-page';
+import { VendorsPage } from '@/features/vendors/pages/vendors-page';
+import { VendorDetailPage } from '@/features/vendors/pages/vendor-detail-page';
+import { PurchaseOrdersPage } from '@/features/purchase-orders/pages/purchase-orders-page';
+import { PurchaseOrderDetailPage } from '@/features/purchase-orders/pages/purchase-order-detail-page';
 import { DeliveryPage } from '@/features/delivery/pages/delivery-page';
 import { ReturnsListPage } from '@/features/returns/pages/returns-list-page';
 import { RtoInvoicesPage } from '@/features/rto-invoices/pages/rto-invoices-page';
@@ -63,6 +67,10 @@ export const router = createBrowserRouter([
           { path: '/delivery', element: <DeliveryPage /> },
           { path: '/returns', element: <ReturnsListPage /> },
           { path: '/rto-invoices', element: <RtoInvoicesPage /> },
+          { path: '/vendors', element: <VendorsPage /> },
+          { path: '/vendors/:id', element: <VendorDetailPage /> },
+          { path: '/purchase-orders', element: <PurchaseOrdersPage /> },
+          { path: '/purchase-orders/:id', element: <PurchaseOrderDetailPage /> },
           { path: '/finance', element: <FinancePage /> },
           { path: '/reports', element: <ReportsPage /> },
           { path: '/settings', element: <SettingsPage /> },

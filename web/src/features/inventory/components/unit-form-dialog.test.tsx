@@ -26,7 +26,10 @@ const h = vi.hoisted(() => ({
   update: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
+  vendorOptions: { vendors: [] as unknown[], defaultScooterVendorId: null as string | null },
 }));
+vi.mock('@/features/vendors/hooks', () => ({ useVendorOptions: () => ({ data: h.vendorOptions }) }));
+vi.mock('@/features/vendors/components/vendor-form-dialog', () => ({ VendorFormDialog: () => null }));
 vi.mock('@/features/auth/auth-context', () => ({ useAuth: () => ({ can: (p: string) => h.perms.has(p) }) }));
 vi.mock('../hooks', () => ({
   useModels: () => ({ data: h.models }),
@@ -88,6 +91,7 @@ beforeEach(() => {
   h.models = [vx, mx];
   h.variants = { [M1]: [variant(V1, 'Pro', 'Teal'), variant(V2, 'Max', 'Red')], [M2]: [variant(V3, 'Lite', 'Blue', mx)] };
   h.fetchedVariantsOf = [];
+  h.vendorOptions = { vendors: [], defaultScooterVendorId: null };
   h.create.mockReset().mockResolvedValue({});
   h.update.mockReset().mockResolvedValue({});
   h.toastError.mockReset();
@@ -114,6 +118,32 @@ describe('UnitFormDialog — Add scooter', () => {
     // Without inventory.cost there is no purchase section and nothing about cost is sent.
     expect(screen.queryByText('Purchase cost')).toBeNull();
     for (const key of ['sellingPrice', 'modelId', 'variant', 'colour', 'hexColour', 'purchasePrice', 'purchaseGst', 'purchaseGstRate', 'transportCharge', 'purchaseCost']) expect(input).not.toHaveProperty(key);
+  });
+
+  it('a new scooter is bought from the default scooter vendor unless another is picked', async () => {
+    const COMPTECH = '99999999-9999-4999-8999-999999999991';
+    const TWIN = '99999999-9999-4999-8999-999999999992';
+    h.vendorOptions = {
+      vendors: [
+        { id: COMPTECH, vendorNumber: 'VND0001', name: 'COMPTECH', type: 'SCOOTER_SUPPLIER', status: 'ACTIVE' },
+        { id: TWIN, vendorNumber: 'VND0002', name: 'Twin Motors', type: 'SCOOTER_SUPPLIER', status: 'ACTIVE' },
+      ],
+      defaultScooterVendorId: COMPTECH,
+    };
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    const vendor = selects().find((el) => within(el).queryByText(/COMPTECH/))!;
+    await waitFor(() => expect(vendor.value).toBe(COMPTECH));
+    choose(0, M1);
+    choose(1, V1);
+    fillIdentifiers();
+    submit('Add scooter');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
+    expect(h.create.mock.calls[0]![0]).toMatchObject({ vendorId: COMPTECH });
+    expect(h.create.mock.calls[0]![0]).not.toHaveProperty('supplier');
+    fireEvent.change(vendor, { target: { value: TWIN } });
+    submit('Add scooter');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(2));
+    expect(h.create.mock.calls[1]![0].vendorId).toBe(TWIN);
   });
 
   it('keeps an explicit selling price, independent of the list price', async () => {
@@ -219,7 +249,10 @@ describe('UnitFormDialog — Edit scooter', () => {
     submit('Save changes');
     await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
     const input = h.update.mock.calls[0]![0];
-    expect(input).toMatchObject({ location: 'Bay 9', supplier: 'Acme' });
+    // The vendor is untouched by an edit that does not change it (no supplier text is sent any more).
+    expect(input).toMatchObject({ location: 'Bay 9' });
+    expect(input).not.toHaveProperty('supplier');
+    expect(input).not.toHaveProperty('vendorId');
     for (const key of ['variantId', 'vin', 'motorNumber', 'batteryNumber']) expect(input).not.toHaveProperty(key);
   });
 
@@ -316,6 +349,58 @@ describe('UnitFormDialog — purchase cost (owner) and controller / charger numb
     await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
     expect(h.update.mock.calls[0]![0]).toMatchObject({ chargerNumber: 'CHG-9' });
     expect(h.update.mock.calls[0]![0]).not.toHaveProperty('controllerNumber');
+  });
+});
+
+describe('UnitFormDialog — paying the vendor and receiving against an order (owner)', () => {
+  const fillIdentifiers = (): void => { fill('VIN', 'md9abc123'); fill('Motor number', 'm-1'); fill('Battery number', 'b-1'); };
+  const VENDOR = '99999999-9999-4999-8999-999999999991';
+
+  it('"Paid to the vendor now" sends the payment with the scooter', async () => {
+    h.perms = new Set(['inventory.create', 'inventory.update', 'inventory.cost']);
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    choose(0, M1);
+    choose(1, V1);
+    fillIdentifiers();
+    fill('Purchase price (₹)', '100000');
+    fill('Vendor bill no.', 'CT/77');
+    fireEvent.click(screen.getByLabelText('Paid to the vendor now'));
+    fill('Reference (optional)', 'UTR9');
+    submit('Add scooter');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
+    expect(h.create.mock.calls[0]![0]).toMatchObject({ vendorBillNumber: 'CT/77', purchasePayment: { method: 'BANK_TRANSFER', reference: 'UTR9' } });
+  });
+
+  it('without purchase cost there is no paying from the form', () => {
+    render(<UnitFormDialog open onOpenChange={() => {}} />);
+    expect(screen.queryByLabelText('Paid to the vendor now')).toBeNull();
+  });
+
+  it('receiving against an order line: variant, vendor and price come from the line and are locked', async () => {
+    h.perms = new Set(['inventory.create', 'inventory.update', 'inventory.cost']);
+    const line = { lineId: 'line-1', poNumber: 'PO0007', vendorId: VENDOR, modelId: M1, variantId: V2, description: 'Azad VX Max (Red)', unitCost: '9500000', gstRateBp: 500, remaining: 3 };
+    render(<UnitFormDialog open onOpenChange={() => {}} orderLine={line} />);
+    expect(screen.getByText('Receive scooter — PO0007')).toBeInTheDocument();
+    expect(selects()[0]!.disabled).toBe(true);
+    expect(selects()[1]!.disabled).toBe(true);
+    expect(field('Purchase price (₹)').value).toBe('95000');
+    fillIdentifiers();
+    submit('Receive scooter');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
+    expect(h.create.mock.calls[0]![0]).toMatchObject({ purchaseOrderLineId: 'line-1', variantId: V2, vendorId: VENDOR, purchasePrice: 9_500_000, purchaseGstRate: 5 });
+  });
+
+  it('"Save & next" keeps the dialog for the next scooter of the line, with fresh numbers', async () => {
+    h.perms = new Set(['inventory.create', 'inventory.update', 'inventory.cost']);
+    const onOpenChange = vi.fn();
+    const line = { lineId: 'line-1', poNumber: 'PO0007', vendorId: VENDOR, modelId: M1, variantId: V2, description: 'Azad VX Max (Red)', unitCost: '9500000', gstRateBp: 500, remaining: 3 };
+    render(<UnitFormDialog open onOpenChange={onOpenChange} orderLine={line} />);
+    fillIdentifiers();
+    submit('Save & next');
+    await waitFor(() => expect(h.create).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(field('VIN').value).toBe(''));
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(screen.getByText(/2 still to receive/)).toBeInTheDocument();
   });
 });
 

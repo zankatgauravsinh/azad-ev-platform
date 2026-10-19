@@ -95,7 +95,9 @@ export function csvStatus(raw: string | undefined): UnitStatus {
 
 export interface CatalogueModel { id: string; brand: string; name: string; isActive: boolean }
 export interface CatalogueVariant { id: string; modelId: string; name: string; colour: string; isActive: boolean; exShowroomPrice: bigint }
-export interface Catalogue { models: CatalogueModel[]; variants: CatalogueVariant[] }
+export interface CatalogueVendor { id: string; vendorNumber: string; name: string }
+/** Models and variants to match rows against, and the vendors a Supplier cell may name (blank → `defaultVendorId`). */
+export interface Catalogue { models: CatalogueModel[]; variants: CatalogueVariant[]; vendors?: CatalogueVendor[]; defaultVendorId?: string | null }
 
 const modelLabel = (m: CatalogueModel): string => `${m.brand} ${m.name}`;
 const variantLabel = (v: CatalogueVariant): string => `${v.name} / ${v.colour}`;
@@ -185,4 +187,23 @@ export function alreadyExistsMessage(field: IdentifierField, value: string, dele
  */
 export function unavailableMessage(field: IdentifierField, value: string): string {
   return `${IDENTIFIER_LABELS[field]} "${value}" is not available — it is already registered and cannot be used.`;
+}
+
+/**
+ * The vendor a row's Supplier names: by vendor number (VND0001) or by name (trimmed, any case). Blank → the default
+ * scooter vendor (null when there is none). An unknown name is a row error, so every imported scooter has a vendor
+ * that exists; two vendors with the same name need the vendor number.
+ */
+export function resolveCsvVendor(catalogue: Catalogue, raw: string | undefined): CatalogueVendor | null {
+  const vendors = catalogue.vendors ?? [];
+  const value = normaliseCatalogueText(raw ?? '');
+  if (!value) return vendors.find((v) => v.id === catalogue.defaultVendorId) ?? null;
+  const byNumber = vendors.find((v) => v.vendorNumber.toLowerCase() === value);
+  if (byNumber) return byNumber;
+  const byName = vendors.filter((v) => normaliseCatalogueText(v.name) === value);
+  if (byName.length === 1) return byName[0]!;
+  if (byName.length > 1) {
+    throw new CsvRowError(`More than one vendor is named "${raw!.trim()}" — use the vendor number instead (${listOf(byName.map((v) => v.vendorNumber))}).`, 'VENDOR_AMBIGUOUS', 'supplier');
+  }
+  throw new CsvRowError(`Vendor "${raw!.trim()}" was not found — add it under Vendors first, or leave Supplier blank for the default scooter vendor.`, 'VENDOR_NOT_FOUND', 'supplier');
 }

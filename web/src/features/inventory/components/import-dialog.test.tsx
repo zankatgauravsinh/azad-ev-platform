@@ -30,7 +30,7 @@ const deferred = <T,>() => {
 
 const validRow = (row: number, vin: string, over: Partial<CsvImportPreviewRow['unit']> = {}): CsvImportPreviewRow => ({
   row, status: 'VALID', vin, issues: [],
-  unit: { modelId: 'm1', variantId: 'v1', brand: 'GAMMA', model: 'Solo', variant: 'Pro', colour: 'Teal', status: 'AVAILABLE', sellingPrice: '12500000', sellingPriceSource: 'LIST_PRICE', purchaseCost: '0', purchaseDate: null, ...over },
+  unit: { modelId: 'm1', variantId: 'v1', brand: 'GAMMA', model: 'Solo', variant: 'Pro', colour: 'Teal', status: 'AVAILABLE', sellingPrice: '12500000', sellingPriceSource: 'LIST_PRICE', purchaseCost: '0', purchaseDate: null, vendorName: null, ...over } as NonNullable<CsvImportPreviewRow['unit']>,
 });
 const invalidRow = (row: number, vin: string | null, issues: CsvImportPreviewRow['issues']): CsvImportPreviewRow => ({ row, status: 'INVALID', vin, issues, unit: null });
 const makePreview = (rows: CsvImportPreviewRow[], fileSha256 = SHA_A, duplicate = 0): CsvImportPreview => {

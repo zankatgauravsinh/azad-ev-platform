@@ -24,6 +24,7 @@ vi.mock('../hooks', () => ({
   useModels: () => ({ data: [] }),
   useDeleteUnit: () => ({ mutateAsync: vi.fn() }),
 }));
+vi.mock('@/features/vendors/hooks', () => ({ useVendorOptions: () => ({ data: { vendors: [], defaultScooterVendorId: null } }) }));
 vi.mock('../components/inventory-widgets', () => ({ InventoryWidgets: () => <div data-testid="inv-widgets" /> }));
 vi.mock('../components/unit-form-dialog', () => ({ UnitFormDialog: () => null }));
 vi.mock('../components/change-status-dialog', () => ({ ChangeStatusDialog: () => null }));

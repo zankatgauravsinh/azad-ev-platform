@@ -58,7 +58,7 @@ describe('Finance & Expenses (e2e)', () => {
   });
 
   it('creates a vendor with zero outstanding', async () => {
-    const res = await http().post('/api/v1/vendors').set('Authorization', auth(accountantToken)).send({ name: `Vendor ${stamp}`, mobile: `98${stamp}`, gstNumber: '24ABCDE1234F1Z5' }).expect(201);
+    const res = await http().post('/api/v1/vendors').set('Authorization', auth(accountantToken)).send({ name: `Vendor ${stamp}`, mobile: `98${stamp}`, gstNumber: '24ABCDE1234F1Z6' }).expect(201);
     vendorId = res.body.id;
     expect(res.body.vendorNumber).toMatch(/^VND/);
     expect(res.body.outstanding).toBe('0');

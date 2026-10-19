@@ -26,6 +26,7 @@ import type {
   UpdateVendorInput,
   VendorDto,
   VendorLedgerDto,
+  VendorOptionsDto,
 } from '@azad/shared';
 import { apiClient } from '@/lib/api-client';
 
@@ -73,6 +74,10 @@ export const vendorsApi = {
   list: async (q: Partial<ListVendorsQuery>): Promise<Paginated<VendorDto>> => (await apiClient.get('/vendors', { params: clean(q) })).data,
   create: async (body: CreateVendorInput): Promise<VendorDto> => (await apiClient.post('/vendors', body)).data,
   update: async (id: string, body: UpdateVendorInput): Promise<VendorDto> => (await apiClient.patch(`/vendors/${id}`, body)).data,
+  get: async (id: string): Promise<VendorDto> => (await apiClient.get(`/vendors/${id}`)).data,
+  remove: async (id: string): Promise<void> => { await apiClient.delete(`/vendors/${id}`); },
+  /** Vendors for a picker — readable by anyone who records purchases. */
+  options: async (): Promise<VendorOptionsDto> => (await apiClient.get('/vendor-options')).data,
   ledger: async (id: string): Promise<VendorLedgerDto> => (await apiClient.get(`/vendors/${id}/ledger`)).data,
   ledgerPdf: async (id: string): Promise<Blob> => (await apiClient.get(`/vendors/${id}/ledger.pdf`, { responseType: 'blob' })).data,
 };

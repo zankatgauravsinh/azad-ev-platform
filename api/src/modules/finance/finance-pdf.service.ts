@@ -1,6 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
-import type { CashBookDto, ExpenseDto, IncomeDto, VendorLedgerDto } from '@azad/shared';
+import {
+  PURCHASE_ORDER_STATUS_LABEL,
+  type CashBookDto,
+  type ExpenseDto,
+  type IncomeDto,
+  type PurchaseOrderDetailDto,
+  type VendorLedgerDto,
+  type VendorPaymentDto,
+  type VendorStatementDto,
+} from '@azad/shared';
 import { formatInrExact } from '../../common/utils/money';
 import { drawBrandHeader, drawBrandFooter, useBrandFonts, NAVY, GOLD, FONT_BODY, FONT_BOLD, type PdfBrand } from '../../common/pdf/brand';
 
@@ -71,6 +80,98 @@ export class FinancePdfService {
     });
   }
 
+  /** What was paid to a vendor, and which bills it settled (the rest is an advance). */
+  vendorPaymentVoucher(brand: PdfBrand, p: VendorPaymentDto): Promise<Buffer> {
+    return this.build((doc, left, right) => {
+      drawBrandHeader(doc, brand, { docType: 'PAYMENT VOUCHER', infoLines: [`No: ${p.paymentNumber}`, `Date: ${d(p.paidAt)}`], badge: p.status === 'CANCELLED' ? 'CANCELLED' : undefined });
+      this.grid(doc, left, right, [
+        ['Paid to', p.vendorName],
+        ['Paid by', p.method.replace(/_/g, ' ')],
+        ['Reference', p.reference ?? '—'],
+        ['Against order', p.poNumber ?? '—'],
+      ]);
+      if (p.notes) doc.moveDown(0.4).fillColor('#555').font(FONT_BODY).fontSize(9).text(p.notes, left, doc.y, { width: right - left });
+      if (p.allocations.length) {
+        this.sectionTitle(doc, left, 'Bills settled');
+        this.table(doc, left, right, ['Bill', 'Details', 'Applied on', 'Amount'], [0.22, 0.44, 0.15, 0.19], p.allocations.map((a) => [a.billNumber, a.description, d(a.appliedAt), formatInrExact(BigInt(a.amount))]));
+      }
+      const lines: [string, string][] = [['Applied to bills', p.applied]];
+      if (BigInt(p.unapplied) > 0n) lines.push(['Advance', p.unapplied]);
+      lines.push(['Total', p.amount]);
+      this.amountBox(doc, left, right, lines);
+      if (p.status === 'CANCELLED') doc.moveDown(0.4).fillColor('#B91C1C').font(FONT_BOLD).fontSize(9).text(`Cancelled${p.cancelReason ? ` — ${p.cancelReason}` : ''}`, left, doc.y);
+      this.signatures(doc, left, right, ['Prepared by', 'Received by (vendor)']);
+      drawBrandFooter(doc, brand);
+    });
+  }
+
+  /** A vendor's account for a period: opening balance, bills and payments with the running balance, closing. */
+  vendorStatement(brand: PdfBrand, st: VendorStatementDto): Promise<Buffer> {
+    return this.build((doc, left, right) => {
+      const period = `${st.from ? d(st.from) : 'Beginning'} – ${d(st.to)}`;
+      drawBrandHeader(doc, brand, { docType: 'VENDOR STATEMENT', infoLines: [`Vendor: ${st.vendor.vendorNumber}`, st.vendor.name, period] });
+      this.grid(doc, left, right, [
+        ['GSTIN', st.vendor.gstNumber ?? '—'],
+        ['Address', st.vendor.address ?? '—'],
+        ['Opening balance', formatInrExact(BigInt(st.opening))],
+        ['Closing balance', formatInrExact(BigInt(st.closing))],
+      ]);
+      this.sectionTitle(doc, left, 'Account');
+      const money = (v: string): string => (BigInt(v) === 0n ? '' : formatInrExact(BigInt(v)));
+      this.table(doc, left, right, ['Date', 'Number', 'Particulars', 'Billed', 'Paid', 'Balance'], [0.11, 0.15, 0.32, 0.14, 0.14, 0.14], [
+        ['', '', 'Opening balance', '', '', formatInrExact(BigInt(st.opening))],
+        ...st.rows.map((r) => [d(r.date), r.number, r.description, money(r.billed), money(r.paid), formatInrExact(BigInt(r.balance))]),
+      ]);
+      this.amountBox(doc, left, right, [
+        ['Billed in period', st.totalBilled],
+        ['Paid in period', st.totalPaid],
+        ['Closing balance', st.closing],
+      ]);
+      doc.fillColor('#666').font(FONT_BODY).fontSize(8).text(
+        `Balance = owed to the vendor (a negative balance is an advance with the vendor).${st.costHidden ? ' Scooter and accessory purchase bills are not shown (purchase cost).' : ''}`,
+        left,
+        doc.y,
+        { width: right - left },
+      );
+      drawBrandFooter(doc, brand);
+    });
+  }
+
+  /** The order sent to the vendor: lines with price before GST, GST and total; PI reference and expected date. */
+  purchaseOrder(brand: PdfBrand, po: PurchaseOrderDetailDto, vendor: { name: string; gstNumber: string | null; address: string | null; mobile: string | null }): Promise<Buffer> {
+    return this.build((doc, left, right) => {
+      drawBrandHeader(doc, brand, { docType: 'PURCHASE ORDER', infoLines: [`No: ${po.poNumber}`, `Date: ${d(po.orderDate)}`], badge: po.status === 'DRAFT' || po.status === 'CANCELLED' ? PURCHASE_ORDER_STATUS_LABEL[po.status].toUpperCase() : undefined });
+      this.grid(doc, left, right, [
+        ['Vendor', vendor.name],
+        ['Vendor GSTIN', vendor.gstNumber ?? '—'],
+        ['Vendor address', vendor.address ?? '—'],
+        ['Vendor phone', vendor.mobile ?? '—'],
+        ['Proforma invoice', po.piNumber ? `${po.piNumber}${po.piDate ? ` · ${d(po.piDate)}` : ''}` : '—'],
+        ['Expected by', po.expectedDate ? d(po.expectedDate) : '—'],
+      ]);
+      this.sectionTitle(doc, left, 'Items');
+      this.table(doc, left, right, ['#', 'Item', 'Qty', 'Rate', 'GST', 'Amount'], [0.06, 0.4, 0.08, 0.16, 0.14, 0.16], po.lines.map((l, i) => [
+        String(i + 1),
+        l.description,
+        String(l.quantity),
+        formatInrExact(BigInt(l.unitCost)),
+        `${(l.gstRateBp / 100).toFixed(l.gstRateBp % 100 ? 2 : 0)}% · ${formatInrExact(BigInt(l.gstAmount))}`,
+        formatInrExact(BigInt(l.lineTotal)),
+      ]));
+      this.amountBox(doc, left, right, [
+        ['Before GST', po.subtotal],
+        ['GST', po.gstAmount],
+        ['Total', po.total],
+      ]);
+      if (po.notes) {
+        this.sectionTitle(doc, left, 'Notes');
+        doc.fillColor('#333').font(FONT_BODY).fontSize(9).text(po.notes, left, doc.y, { width: right - left });
+      }
+      this.signatures(doc, left, right, ['Authorised signatory']);
+      drawBrandFooter(doc, brand);
+    });
+  }
+
   cashBook(brand: PdfBrand, cb: CashBookDto): Promise<Buffer> {
     return this.build((doc, left, right) => {
       drawBrandHeader(doc, brand, { docType: 'CASH BOOK', infoLines: [`Date: ${d(cb.date)}`] });
@@ -127,13 +228,25 @@ export class FinancePdfService {
     const x = right - boxW;
     let y = doc.y + 10;
     for (const [label, amount] of lines) {
-      const bold = label === 'Total';
+      const bold = label === 'Total' || label === 'Closing balance';
       doc.fillColor(bold ? NAVY : '#555').font(bold ? FONT_BOLD : FONT_BODY).fontSize(bold ? 12 : 10);
       doc.text(label, x, y, { width: 100 });
       doc.text(formatInrExact(BigInt(amount)), x + 100, y, { width: boxW - 100, align: 'right' });
       y += bold ? 20 : 16;
     }
     doc.y = y + 4;
+  }
+
+  private signatures(doc: PDFKit.PDFDocument, left: number, right: number, labels: string[]): void {
+    if (doc.y > doc.page.height - 160) doc.addPage();
+    const y = doc.y + 46;
+    const w = (right - left) / labels.length;
+    labels.forEach((label, i) => {
+      const x = left + i * w + (labels.length === 1 ? w - 180 : 0);
+      doc.moveTo(x, y).lineTo(x + 160, y).strokeColor('#999').lineWidth(0.5).stroke();
+      doc.fillColor('#555').font(FONT_BODY).fontSize(8).text(label, x, y + 4, { width: 160, align: 'center' });
+    });
+    doc.y = y + 20;
   }
 
   private sectionTitle(doc: PDFKit.PDFDocument, left: number, title: string): void {

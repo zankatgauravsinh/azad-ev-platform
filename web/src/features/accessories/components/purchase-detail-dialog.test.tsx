@@ -12,7 +12,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const purchase: AccessoryPurchaseDetailDto = {
   id: 'p1', purchaseNumber: 'APU0001', vendorInvoiceNumber: 'SD/221', vendorId: 'v1', vendorName: 'Studds', purchaseDate: '2026-10-16T00:00:00.000Z', notes: null, status: 'ACTIVE',
-  subtotal: '600000', gstAmount: '108000', total: '708000', paid: false, paidAt: null, paymentMethod: null, paymentReference: null, itemCount: 5, itemsSummary: 'Helmet × 5',
+  subtotal: '600000', gstAmount: '108000', total: '708000', paid: false, paidAt: null, paymentMethod: null, paymentReference: null, allocated: '0', purchaseOrderId: null, poNumber: null, itemCount: 5, itemsSummary: 'Helmet × 5',
   cancelledAt: null, cancelReason: null, cancelledByName: null, createdByName: 'Owner', createdAt: '',
   items: [{ id: 'i1', accessoryId: 'h1', accessoryName: 'Helmet', sku: null, quantity: 5, unitCost: '120000', gstRateBp: 1800, gstAmount: '108000', lineTotal: '708000' }],
 };

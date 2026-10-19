@@ -16,7 +16,7 @@ vi.mock('../purchases-hooks', () => ({
   useAccessoryPurchaseMutations: () => ({ create: { mutateAsync: h.create, isPending: false } }),
   usePurchaseDefaults: () => ({ data: { rates: { [H1]: { gstRateBp: 1800, hsnCode: null }, [G1]: { gstRateBp: 500, hsnCode: null } } } }),
 }));
-vi.mock('@/features/finance/hooks', () => ({ useVendors: () => ({ data: { data: [{ id: V1, name: 'Studds' }] } }) }));
+vi.mock('@/features/vendors/hooks', () => ({ useVendorOptions: () => ({ data: { vendors: [{ id: V1, vendorNumber: 'VND0002', name: 'Studds', type: 'OTHER', status: 'ACTIVE' }], defaultScooterVendorId: null } }) }));
 vi.mock('sonner', () => ({ toast: { success: (m: string) => h.toastSuccess(m), error: (m: string) => h.toastError(m) } }));
 vi.mock('@/components/ui/select', async () => {
   const React = await import('react');

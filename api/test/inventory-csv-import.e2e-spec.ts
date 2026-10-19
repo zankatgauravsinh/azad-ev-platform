@@ -62,6 +62,8 @@ describe('Inventory CSV import — all or nothing (e2e)', () => {
   const addScooter = (co: TestCompany, body: object) => http().post('/api/v1/inventory/units').set('Authorization', co.auth()).send(body).expect(201).then((r) => r.body);
   const setActive = (variantId: string, isActive: boolean) => http().patch(`/api/v1/inventory/variants/${variantId}/active`).set('Authorization', A.auth()).send({ isActive });
 
+  let depotVendorId = '';
+
   beforeAll(async () => {
     app = await createE2eApp();
     prisma = app.get(PrismaService);
@@ -69,6 +71,8 @@ describe('Inventory CSV import — all or nothing (e2e)', () => {
     B = await createTestCompany(app, 'ImpB');
     const send = (url: string, body: object, co: TestCompany = A) => http().post(url).set('Authorization', co.auth()).send(body);
     cat.solo = (await send('/api/v1/inventory/models', { brand: 'GAMMA', name: 'Solo' }).expect(201)).body.id;
+    // A Supplier cell must name one of the company's vendors.
+    depotVendorId = (await send('/api/v1/vendors', { name: 'Depot', type: 'SCOOTER_SUPPLIER' }).expect(201)).body.id;
     cat.pro = (await send(`/api/v1/inventory/models/${cat.solo}/variants`, { name: 'Pro', colour: 'Teal', exShowroomPrice: Number(LIST_PRICE) }).expect(201)).body.id;
     cat.maxX = (await send(`/api/v1/inventory/models/${cat.solo}/variants`, { name: 'Max X', colour: 'Red', exShowroomPrice: 9_900_000 }).expect(201)).body.id;
     cat.lite = (await send(`/api/v1/inventory/models/${cat.solo}/variants`, { name: 'Lite', colour: 'Blue', exShowroomPrice: 1 }).expect(201)).body.id;
@@ -104,7 +108,7 @@ describe('Inventory CSV import — all or nothing (e2e)', () => {
     const csv = csvOf(...rows);
     const res = result(await importCsv(csv, A, { expectedSha256: sha(csv) }).expect(200));
     expect(res).toEqual({ status: 'IMPORTED', created: 3, failed: 0, errors: [], fileSha256: sha(csv), preview: null });
-    expect(await unitByVin(rows[0]!.vin)).toMatchObject({ companyId: A.id, variantId: cat.pro, status: 'AVAILABLE', sellingPrice: LIST_PRICE, purchaseCost: 11_000_000n, supplier: 'Depot', location: 'Bay 1', purchaseDate: new Date('2026-06-01T00:00:00.000Z') });
+    expect(await unitByVin(rows[0]!.vin)).toMatchObject({ companyId: A.id, variantId: cat.pro, status: 'AVAILABLE', sellingPrice: LIST_PRICE, purchaseCost: 11_000_000n, supplier: 'Depot', vendorId: depotVendorId, location: 'Bay 1', purchaseDate: new Date('2026-06-01T00:00:00.000Z') });
     expect(await unitByVin(rows[1]!.vin)).toMatchObject({ variantId: cat.maxX, sellingPrice: 0n, purchaseDate: new Date('2026-06-02T00:00:00.000Z') });
     expect(await unitByVin(rows[2]!.vin)).toMatchObject({ variantId: cat.vxBetaPro, sellingPrice: 13_000_050n, purchaseDate: null });
     const after = await snapshot();
@@ -142,7 +146,7 @@ describe('Inventory CSV import — all or nothing (e2e)', () => {
   });
 
   it('row numbers in a rejection are the source lines (blank lines, a multi-line cell, CRLF)', async () => {
-    const res = result(await importCsv(`${HEAD}\r\n${row().line}\r\n\r\n${row({ model: 'Nope', supplier: '"Depot\r\nNorth wing"' }).line}\r\n\r\n${row({ colour: 'Pink' }).line}\r\n`).expect(200));
+    const res = result(await importCsv(`${HEAD}\r\n${row().line}\r\n\r\n${row({ model: 'Nope', location: '"Bay 1\r\nNorth wing"' }).line}\r\n\r\n${row({ colour: 'Pink' }).line}\r\n`).expect(200));
     expect(res.errors.map((e) => e.row)).toEqual([4, 7]);
   });
 

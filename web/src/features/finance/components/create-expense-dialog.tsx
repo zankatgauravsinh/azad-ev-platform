@@ -9,7 +9,8 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useCategories, useFinanceMutations, useVendors } from '../hooks';
+import { useCategories, useFinanceMutations } from '../hooks';
+import { NO_VENDOR, VendorSelect } from '@/features/vendors/components/vendor-select';
 import { payMethodLabel } from '../meta';
 import { todayDateInput } from '@/features/delivery/components/delivery-date-field';
 
@@ -20,7 +21,6 @@ function FieldError({ message }: { message: string | null }): JSX.Element | null
 export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }): JSX.Element {
   const { createExpense } = useFinanceMutations();
   const { data: categories } = useCategories();
-  const { data: vendors } = useVendors({ pageSize: 100, status: 'ACTIVE' });
   const [categoryId, setCategoryId] = useState('');
   const [vendorId, setVendorId] = useState('');
   const [amount, setAmount] = useState('');
@@ -84,10 +84,7 @@ export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onO
             </div>
             <div className="space-y-1">
               <Label>Vendor (optional)</Label>
-              <Select value={vendorId || 'none'} onValueChange={(v) => setVendorId(v === 'none' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
-                <SelectContent><SelectItem value="none">None</SelectItem>{vendors?.data.map((v) => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}</SelectContent>
-              </Select>
+              <VendorSelect value={vendorId || NO_VENDOR} onChange={(v) => setVendorId(v === NO_VENDOR ? '' : v)} noneLabel="None" />
             </div>
             <div className="space-y-1">
               <Label htmlFor="expense-amount">Amount (₹)</Label>

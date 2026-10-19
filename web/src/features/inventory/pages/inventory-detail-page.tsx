@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Bike, FileCheck2, Pencil, RefreshCw, Trash2, User, Wrench } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Bike, FileCheck2, IndianRupee, Pencil, RefreshCw, Trash2, User, Wrench } from 'lucide-react';
+import { PayVendorDialog } from '@/features/vendors/components/pay-vendor-dialog';
+import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { useAuth } from '@/features/auth/auth-context';
 import { apiErrorMessage } from '@/lib/api-client';
@@ -32,6 +34,7 @@ export function InventoryDetailPage(): JSX.Element {
   const [statusOpen, setStatusOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [correctOpen, setCorrectOpen] = useState(false);
+  const [payOpen, setPayOpen] = useState(false);
 
   if (isLoading || !unit) {
     return (
@@ -148,7 +151,30 @@ export function InventoryDetailPage(): JSX.Element {
                   value={warrantyMonthsText(unit)}
                 />
                 <Info label="Selling price" value={formatPaise(unit.sellingPrice)} />
-                <Info label="Supplier" value={unit.supplier ?? '—'} />
+                <Info
+                  label="Bought from"
+                  value={unit.vendor && can('vendors.view') ? <Link to={`/vendors/${unit.vendor.id}`} className="hover:underline">{unit.vendor.name}</Link> : (unit.vendor?.name ?? unit.supplier ?? '—')}
+                />
+                {unit.vendorBillNumber && <Info label="Vendor bill no." value={unit.vendorBillNumber} mono />}
+                {unit.purchaseCost !== undefined && (
+                  <Info
+                    label="Paid to vendor"
+                    value={
+                      unit.costInExpenses ? (
+                        <Badge variant="muted" title="Bought before per-scooter tracking — its cost was recorded as a Vehicle Purchase expense">Expensed earlier</Badge>
+                      ) : unit.purchasePaid ? (
+                        <Badge variant="success">Paid{unit.purchasePaidAt ? ` · ${new Date(unit.purchasePaidAt).toLocaleDateString('en-IN')}` : ''}</Badge>
+                      ) : (
+                        <span className="flex flex-wrap items-center gap-2">
+                          <Badge variant="warning">Not paid</Badge>
+                          {unit.vendor && can('vendors.manage') && Number(unit.purchaseCost) > 0 && (
+                            <Button size="sm" variant="outline" onClick={() => setPayOpen(true)}><IndianRupee className="h-3.5 w-3.5" /> Pay vendor</Button>
+                          )}
+                        </span>
+                      )
+                    }
+                  />
+                )}
                 <Info label="Location" value={unit.location ?? '—'} />
                 <Info label="Added" value={new Date(unit.createdAt).toLocaleDateString('en-IN')} />
                 {unit.notes && <Info className="col-span-2 sm:col-span-3" label="Notes" value={unit.notes} />}
@@ -247,6 +273,9 @@ export function InventoryDetailPage(): JSX.Element {
       <UnitFormDialog open={editOpen} onOpenChange={setEditOpen} unit={unit} />
       {canCorrect && <IdentificationCorrectionDialog open={correctOpen} onOpenChange={setCorrectOpen} unit={unit} />}
       <ChangeStatusDialog open={statusOpen} onOpenChange={setStatusOpen} unitId={unit.id} current={unit.status} />
+      {unit.vendor && (
+        <PayVendorDialog open={payOpen} onOpenChange={setPayOpen} vendorId={unit.vendor.id} vendorName={unit.vendor.name} preselect={[{ kind: 'SCOOTER', id: unit.id }]} />
+      )}
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
@@ -267,7 +296,7 @@ function Info({
   className,
 }: {
   label: string;
-  value: string;
+  value: React.ReactNode;
   mono?: boolean;
   className?: string;
 }): JSX.Element {

@@ -100,6 +100,8 @@ const purchaseItem = z.object({
   gstRate: z.coerce.number().min(0, 'Cannot be negative').max(28, 'At most 28%').optional(),
   /** GST amount for the whole line (paise), typed from the bill — wins over the rate. */
   gstAmount: paise.optional(),
+  /** The purchase-order line these pieces are received against (needs `purchaseOrderId`). */
+  purchaseOrderLineId: z.string().uuid().optional(),
 });
 export type AccessoryPurchaseItemInput = z.infer<typeof purchaseItem>;
 
@@ -123,6 +125,8 @@ export const createAccessoryPurchaseSchema = z.object({
     .refine((lines) => new Set(lines.map((l) => l.accessoryId)).size === lines.length, { message: 'Each accessory once — change its quantity instead' }),
   /** Present = paid now; absent = unpaid (the vendor's outstanding). */
   payment: paymentSchema.optional(),
+  /** Received against this purchase order: the vendor is the order's, and lines may name its accessory lines. */
+  purchaseOrderId: z.string().uuid().optional(),
 });
 export type CreateAccessoryPurchaseInput = z.infer<typeof createAccessoryPurchaseSchema>;
 
@@ -234,6 +238,11 @@ export interface AccessoryPurchaseDto {
   paidAt: string | null;
   paymentMethod: FinancePayMethod | null;
   paymentReference: string | null;
+  /** Paid so far through vendor payments (part or all of the total). */
+  allocated: string;
+  /** The purchase order it was received against. */
+  purchaseOrderId: string | null;
+  poNumber: string | null;
   itemCount: number;
   /** "Helmet × 10, Guard × 5" — for lists. */
   itemsSummary: string;

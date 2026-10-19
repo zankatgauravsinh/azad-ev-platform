@@ -62,7 +62,7 @@ export function SettingsPage(): JSX.Element {
         refundPrefix: settings.refundPrefix,
         whatsappQuotationMessage: settings.whatsappQuotationMessage ?? '', whatsappInvoiceMessage: settings.whatsappInvoiceMessage ?? '',
         whatsappDeliveryMessage: settings.whatsappDeliveryMessage ?? '', whatsappBookingMessage: settings.whatsappBookingMessage ?? '',
-        accessoryInvoicePrefix: settings.accessoryInvoicePrefix, accessoryPurchasePrefix: settings.accessoryPurchasePrefix, accessoryGstEnabled: settings.accessoryGstEnabled, accessoryGstRateBp: settings.accessoryGstRateBp,
+        accessoryInvoicePrefix: settings.accessoryInvoicePrefix, accessoryPurchasePrefix: settings.accessoryPurchasePrefix, vendorPaymentPrefix: settings.vendorPaymentPrefix, purchaseOrderPrefix: settings.purchaseOrderPrefix, accessoryGstEnabled: settings.accessoryGstEnabled, accessoryGstRateBp: settings.accessoryGstRateBp,
         defaultWarrantyMonths: settings.defaultWarrantyMonths, serviceReminderDays: settings.serviceReminderDays,
         warrantyEnabled: settings.warrantyEnabled, amcEnabled: settings.amcEnabled, warrantyReminderDays: settings.warrantyReminderDays,
         financeEnabled: settings.financeEnabled, expensePrefix: settings.expensePrefix, vendorPrefix: settings.vendorPrefix,
@@ -253,6 +253,8 @@ export function SettingsPage(): JSX.Element {
                   <p className="text-xs text-muted-foreground sm:col-span-2">Used for an accessory without a GST classification; a classified accessory uses its own rate.</p>
                   <Field label="Accessory invoice prefix" error={errors.accessoryInvoicePrefix?.message}><Input {...register('accessoryInvoicePrefix')} /></Field>
                   <Field label="Accessory purchase prefix" error={errors.accessoryPurchasePrefix?.message}><Input {...register('accessoryPurchasePrefix')} /></Field>
+                  <Field label="Vendor payment prefix" error={errors.vendorPaymentPrefix?.message}><Input {...register('vendorPaymentPrefix')} /></Field>
+                  <Field label="Purchase order prefix" error={errors.purchaseOrderPrefix?.message}><Input {...register('purchaseOrderPrefix')} /></Field>
                 </Grid>
               </Panel>
             </TabsContent>

@@ -100,7 +100,10 @@ describe('Accessory purchases (e2e)', () => {
     expect(res.body).toMatchObject({ paid: true, paymentMethod: 'CASH', paymentReference: 'Voucher 7' });
     expect((await vendor()).vendor.outstanding).toBe('0');
     const book = await http().get(`/api/v1/finance/cash-book?date=${day(0)}`).set('Authorization', A.auth()).expect(200);
-    expect(book.body.rows.some((r: { kind: string; label: string; outAmount: string }) => r.kind === 'EXPENSE' && r.label.startsWith(`${firstNumber} · Accessory purchase`) && r.outAmount === '944000')).toBe(true);
+    // A vendor's bill is paid through a vendor payment: the cash leaves as that payment, once (not as the bill too).
+    const rows = book.body.rows as { kind: string; label: string; outAmount: string }[];
+    expect(rows.filter((r) => r.kind === 'EXPENSE' && r.label.includes('· Paid to ') && r.outAmount === '944000')).toHaveLength(1);
+    expect(rows.some((r) => r.label.startsWith(`${firstNumber} · Accessory purchase`))).toBe(false);
     await http().post(`/api/v1/accessory-purchases/${firstId}/pay`).set('Authorization', A.auth()).send({ method: 'CASH' }).expect(409);
   });
 

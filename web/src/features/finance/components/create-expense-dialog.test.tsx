@@ -7,8 +7,8 @@ const h = vi.hoisted(() => ({ create: vi.fn(), toastSuccess: vi.fn(), toastError
 vi.mock('../hooks', () => ({
   useFinanceMutations: () => ({ createExpense: { mutateAsync: h.create, isPending: false } }),
   useCategories: () => ({ data: [{ id: 'cat1', name: 'Rent', active: true }] }),
-  useVendors: () => ({ data: { data: [] } }),
 }));
+vi.mock('@/features/vendors/hooks', () => ({ useVendorOptions: () => ({ data: { vendors: [], defaultScooterVendorId: null } }) }));
 vi.mock('sonner', () => ({ toast: { success: (m: string) => h.toastSuccess(m), error: (m: string) => h.toastError(m) } }));
 // Radix Select does not run in jsdom: a native <select> stands in (as in staff-list-page.test).
 interface MockSelectProps { value?: string; onValueChange?: (v: string) => void; children?: React.ReactNode }

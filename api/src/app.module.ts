@@ -26,6 +26,8 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { WarrantyModule } from './modules/warranty/warranty.module';
 import { FinanceModule } from './modules/finance/finance.module';
+import { VendorPayablesModule } from './modules/vendor-payables/vendor-payables.module';
+import { PurchaseOrdersModule } from './modules/purchase-orders/purchase-orders.module';
 import { DeliveryModule } from './modules/delivery/delivery.module';
 import { RtoInvoicesModule } from './modules/rto-invoices/rto-invoices.module';
 import { PurchaseCostInterceptor } from './common/interceptors/purchase-cost.interceptor';
@@ -68,6 +70,8 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     NotificationsModule,
     WarrantyModule,
     FinanceModule,
+    VendorPayablesModule,
+    PurchaseOrdersModule,
     DeliveryModule,
     RtoInvoicesModule,
     CompanySettingsModule,

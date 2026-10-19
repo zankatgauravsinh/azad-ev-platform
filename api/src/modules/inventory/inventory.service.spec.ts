@@ -77,6 +77,11 @@ describe('InventoryService', () => {
       hasCommittedHistory: jest.fn().mockResolvedValue(false),
       hasLiveWarranty: jest.fn().mockResolvedValue(false),
       businessTimeZone: jest.fn().mockResolvedValue('Asia/Kolkata'),
+      findVendor: jest.fn().mockResolvedValue(null),
+      findVendorsNamed: jest.fn().mockResolvedValue([]),
+      // CSV Supplier cells are matched to these (the fixtures name "Depot").
+      listVendors: jest.fn().mockResolvedValue([{ id: 'vendor-depot', vendorNumber: 'VND0002', name: 'Depot' }]),
+      defaultScooterVendorId: jest.fn().mockResolvedValue(null),
       findDetail: jest.fn(),
       findUsedIdentifiers: jest.fn().mockResolvedValue({ vin: new Map(), motorNumber: new Map(), batteryNumber: new Map() }),
       createUnits: jest.fn(async (rows: unknown[]) => rows.length),
@@ -94,6 +99,9 @@ describe('InventoryService', () => {
       {} as StorageService,
       catalog as unknown as CatalogRepository,
       { requireCompanyId: () => 'company-1' } as unknown as TenantContext,
+      { createInTx: jest.fn() } as never,
+      { allocatedTo: jest.fn().mockResolvedValue(0n), releaseAllocations: jest.fn().mockResolvedValue(0n), syncBill: jest.fn() } as never,
+      { lockLine: jest.fn(), assertRoom: jest.fn(), closeIfComplete: jest.fn() } as never,
     );
   });
 
@@ -698,7 +706,7 @@ describe('InventoryService', () => {
       expect(catalog.listModels).toHaveBeenCalledTimes(2); // before and after the lock
       const units = repo.createUnits.mock.calls[0]![0] as unknown as Record<string, unknown>[];
       expect(units).toEqual([
-        expect.objectContaining({ variantId: 'variant-pro', vin: 'VIN1', status: 'AVAILABLE', sellingPrice: 12_500_000n, purchaseCost: 100_000n, purchaseDate: new Date('2026-06-01T00:00:00.000Z'), supplier: 'Depot', location: null, createdById: 'user-1' }),
+        expect.objectContaining({ variantId: 'variant-pro', vin: 'VIN1', status: 'AVAILABLE', sellingPrice: 12_500_000n, purchaseCost: 100_000n, purchaseDate: new Date('2026-06-01T00:00:00.000Z'), supplier: 'Depot', vendorId: 'vendor-depot', location: null, createdById: 'user-1' }),
         expect.objectContaining({ vin: 'VIN2', sellingPrice: 0n, purchaseCost: 0n, purchaseDate: new Date('2026-06-02T00:00:00.000Z'), supplier: null }),
       ]);
       expect(repo.createUnits.mock.calls[0]![1]).toBe(TX);
@@ -936,7 +944,7 @@ describe('InventoryService', () => {
     it('soft-deletes an AVAILABLE unit', async () => {
       repo.findByIdWithVariant.mockResolvedValue({ ...unit, status: 'AVAILABLE' } as never);
       await service.remove('unit-1', 'user-1');
-      expect(repo.softDelete).toHaveBeenCalledWith('unit-1');
+      expect(repo.softDelete).toHaveBeenCalledWith('unit-1', expect.anything());
     });
   });
 

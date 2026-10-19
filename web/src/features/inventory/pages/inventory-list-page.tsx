@@ -16,6 +16,7 @@ import {
 import { toast } from 'sonner';
 import { UnitStatus, type InventoryUnitDto, type ListUnitsQuery } from '@azad/shared';
 import { useAuth } from '@/features/auth/auth-context';
+import { useVendorOptions } from '@/features/vendors/hooks';
 import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaise } from '@/lib/money';
 import { saveBlob } from '@/lib/download';
@@ -78,6 +79,7 @@ export function InventoryListPage(): JSX.Element {
   const debouncedSearch = useDebounce(search);
   const [status, setStatus] = useState<UnitStatus | 'ALL'>('ALL');
   const [modelId, setModelId] = useState<string>('ALL');
+  const [vendorId, setVendorId] = useState<string>('ALL');
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<ListUnitsQuery['sort']>('createdAt');
   const [order, setOrder] = useState<'asc' | 'desc'>('desc');
@@ -90,6 +92,8 @@ export function InventoryListPage(): JSX.Element {
   const [exporting, setExporting] = useState(false);
 
   const { data: models = [] } = useModels();
+  const { data: vendorOptions } = useVendorOptions();
+  const vendors = (vendorOptions?.vendors ?? []).filter((v) => v.type === 'SCOOTER_SUPPLIER' || v.status === 'ACTIVE');
   const { data: dashboard } = useInventoryDashboard(canDashboard);
   const deleteMutation = useDeleteUnit();
 
@@ -102,8 +106,9 @@ export function InventoryListPage(): JSX.Element {
       q: debouncedSearch || undefined,
       status: status === 'ALL' ? undefined : status,
       modelId: modelId === 'ALL' ? undefined : modelId,
+      vendorId: vendorId === 'ALL' ? undefined : vendorId,
     }),
-    [page, sort, order, debouncedSearch, status, modelId],
+    [page, sort, order, debouncedSearch, status, modelId, vendorId],
   );
   const { data, isLoading, isFetching } = useInventoryList(query);
 
@@ -173,7 +178,7 @@ export function InventoryListPage(): JSX.Element {
       align: 'right',
       render: (u) => <span className="tabular-nums">{formatPaise(u.sellingPrice)}</span>,
     },
-    { key: 'supplier', header: 'Supplier', render: (u) => u.supplier ?? '—' },
+    { key: 'vendor', header: 'Vendor', render: (u) => u.vendor?.name ?? u.supplier ?? '—' },
     {
       key: 'purchaseDate',
       header: 'Purchased',
@@ -327,6 +332,27 @@ export function InventoryListPage(): JSX.Element {
             ))}
           </SelectContent>
         </Select>
+        {vendors.length > 1 && (
+          <Select
+            value={vendorId}
+            onValueChange={(v) => {
+              setVendorId(v);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="sm:w-48" aria-label="Vendor">
+              <SelectValue placeholder="All vendors" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All vendors</SelectItem>
+              {vendors.map((v) => (
+                <SelectItem key={v.id} value={v.id}>
+                  {v.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Select
           value={status}
           onValueChange={(v) => {
@@ -363,7 +389,7 @@ export function InventoryListPage(): JSX.Element {
           <EmptyState
             title="No scooters found"
             description={
-              search || status !== 'ALL' || modelId !== 'ALL'
+              search || status !== 'ALL' || modelId !== 'ALL' || vendorId !== 'ALL'
                 ? 'Try clearing filters.'
                 : 'Add your first scooter to get started.'
             }

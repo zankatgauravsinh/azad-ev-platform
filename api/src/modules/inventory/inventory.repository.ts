@@ -12,6 +12,7 @@ export class InventoryRepository {
 
   readonly unitInclude = {
     variant: { include: { model: true } },
+    vendor: { select: { id: true, vendorNumber: true, name: true } },
   } satisfies Prisma.InventoryUnitInclude;
 
   // ── Units ──────────────────────────────────────────────
@@ -32,8 +33,19 @@ export class InventoryRepository {
     return this.prisma.inventoryUnit.findUnique({ where: { vin } });
   }
 
-  findByIdWithVariant(id: string) {
-    return this.prisma.inventoryUnit.findFirst({ where: { id }, include: this.unitInclude });
+  findByIdWithVariant(id: string, db: Db = this.prisma) {
+    return db.inventoryUnit.findFirst({ where: { id }, include: this.unitInclude });
+  }
+
+  /** A purchase-order line with its order's number and vendor (a scooter is received against it). */
+  async findOrderLine(id: string) {
+    const line = await this.prisma.purchaseOrderLine.findFirst({
+      where: { id },
+      select: { id: true, purchaseOrderId: true, variantId: true, description: true, unitCost: true, gstRateBp: true },
+    });
+    // The line has no company of its own: its order (company-scoped) must be visible.
+    const order = line ? await this.prisma.purchaseOrder.findFirst({ where: { id: line.purchaseOrderId }, select: { poNumber: true, vendorId: true } }) : null;
+    return line && order ? { ...line, purchaseOrder: order } : null;
   }
 
   /** A live (confirmed/invoiced, not yet delivered) booking holding this unit, if any. */
@@ -49,6 +61,7 @@ export class InventoryRepository {
       where: { id },
       include: {
         variant: { include: { model: true } },
+        vendor: { select: { id: true, vendorNumber: true, name: true } },
         events: { orderBy: { createdAt: 'asc' } },
         photos: { orderBy: { createdAt: 'desc' } },
         documents: { orderBy: { createdAt: 'desc' } },
@@ -76,9 +89,9 @@ export class InventoryRepository {
     return db.inventoryUnit.update({ where: { id }, data, include: this.unitInclude });
   }
 
-  softDelete(id: string) {
+  softDelete(id: string, db: Db = this.prisma) {
     // PrismaService middleware rewrites delete → set deletedAt.
-    return this.prisma.inventoryUnit.delete({ where: { id } });
+    return db.inventoryUnit.delete({ where: { id } });
   }
 
   async stats(): Promise<Record<UnitStatus, number> & { total: number }> {
@@ -296,6 +309,28 @@ export class InventoryRepository {
   }
 
   /** The company's time zone, in which "today" (e.g. for a purchase date) is read. */
+  // ── Vendors (who a scooter was bought from) ─────────────
+  findVendor(id: string, db: Db = this.prisma) {
+    return db.vendor.findFirst({ where: { id }, select: { id: true, vendorNumber: true, name: true, status: true } });
+  }
+
+  /** Live vendors whose name is `name` (trimmed, any case). */
+  findVendorsNamed(name: string, db: Db = this.prisma) {
+    return db.vendor.findMany({ where: { name: { equals: name.trim(), mode: 'insensitive' } }, select: { id: true, vendorNumber: true, name: true, status: true }, orderBy: { createdAt: 'asc' } });
+  }
+
+  /** Every live vendor of the company, to match CSV Supplier cells against. */
+  listVendors(companyId: string, db: Db = this.prisma) {
+    return db.vendor.findMany({ where: { companyId, deletedAt: null }, select: { id: true, vendorNumber: true, name: true }, orderBy: { createdAt: 'asc' } });
+  }
+
+  /** The vendor new scooters default to (Settings), when it still exists. */
+  async defaultScooterVendorId(db: Db = this.prisma): Promise<string | null> {
+    const setting = await db.companySetting.findFirst({ select: { defaultScooterVendorId: true } });
+    const id = setting?.defaultScooterVendorId ?? null;
+    return id && (await db.vendor.findFirst({ where: { id }, select: { id: true } })) ? id : null;
+  }
+
   async businessTimeZone(): Promise<string> {
     const setting = await this.prisma.companySetting.findFirst({ select: { timezone: true } });
     return resolveTimeZone(setting?.timezone);

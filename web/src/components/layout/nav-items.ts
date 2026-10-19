@@ -19,6 +19,8 @@ import {
   Layers,
   Puzzle,
   ShoppingBag,
+  Truck,
+  ClipboardCheck,
   type LucideIcon,
 } from 'lucide-react';
 import type { Role } from '@azad/shared';
@@ -40,6 +42,8 @@ export interface NavItem {
    * each still independently gated inside the page. Takes precedence over `permission`/`roles`.
    */
   anyPermission?: string[];
+  /** AND of effective-permission keys — shown only when the user has ALL of them. Takes precedence over `permission`. */
+  allPermissions?: string[];
   /**
    * LEGACY role gate — still used by nav items whose module has not yet been migrated to
    * permissions (later batches). Ignored when `permission` is set. Empty = all authenticated roles.
@@ -68,6 +72,9 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Service', to: '/service', icon: Wrench, enabled: true, permission: 'service.view' },
   { label: 'Spare Parts', to: '/service/spare-parts', icon: Package, enabled: true, permission: 'spareparts.view' },
   { label: 'Warranty & AMC', to: '/warranty', icon: ShieldCheck, enabled: true, permission: 'warranty.view' },
+  { label: 'Vendors', to: '/vendors', icon: Truck, enabled: true, permission: 'vendors.view' },
+  // Orders carry prices — purchase cost — so they need inventory.cost too (the owner, by default).
+  { label: 'Purchase Orders', to: '/purchase-orders', icon: ClipboardCheck, enabled: true, allPermissions: ['vendors.view', 'inventory.cost'] },
   { label: 'Finance', to: '/finance', icon: Wallet, enabled: true, anyPermission: ['finance.view', 'expenses.view', 'income.view', 'vendors.view', 'bank.view'] },
   { label: 'Reports', to: '/reports', icon: BarChart3, enabled: true, permission: 'reports.view' },
   { label: 'Staff', to: '/staff', icon: UserCog, enabled: true, permission: 'staff.manage' },
@@ -82,6 +89,7 @@ export const NAV_ITEMS: NavItem[] = [
 export function visibleNavItems(role: Role, can: (permission: string) => boolean): NavItem[] {
   return NAV_ITEMS.filter((item) => {
     if (item.anyPermission) return item.anyPermission.some((p) => can(p));
+    if (item.allPermissions) return item.allPermissions.every((p) => can(p));
     if (item.permission) return can(item.permission);
     if (item.roles) return item.roles.includes(role);
     return true;

@@ -20,6 +20,10 @@ import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.serv
 import { SequenceService } from '../sales/sequence.service';
 import { formatInr } from '../../common/utils/money';
 import { MonthlyClosingService } from './monthly-closing.service';
+import { VendorBillsService } from '../vendor-payables/vendor-bills.service';
+
+/** Scooter purchases used to be recorded as expenses in this category; since the cutover they live on the scooter. */
+const VEHICLE_PURCHASE_CATEGORY = 'Vehicle Purchase';
 
 const expenseInclude = {
   category: { select: { name: true } },
@@ -44,6 +48,7 @@ export class ExpensesService {
     private readonly activityLog: ActivityLogService,
     private readonly closing: MonthlyClosingService,
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
+    private readonly vendorBills: VendorBillsService,
   ) {}
 
   async list(query: ListExpensesQuery): Promise<Paginated<ExpenseDto>> {
@@ -70,6 +75,7 @@ export class ExpensesService {
     const expenseDate = dto.expenseDate ?? new Date();
     await this.assertNotFuture(dto.expenseDate);
     await this.closing.assertOpen(expenseDate);
+    await this.assertNotScooterPurchase(category.name, expenseDate);
     const amount = BigInt(dto.amount);
     const gstAmount = BigInt(dto.gstAmount);
 
@@ -145,6 +151,7 @@ export class ExpensesService {
     await this.closing.assertOpen(existing.expenseDate);
     // A settled expense is final — its approval state can't be reversed.
     if (existing.paid) throw new BadRequestException('A settled (paid) expense cannot change approval status');
+    if ((await this.vendorBills.allocatedTo({ kind: 'EXPENSE', id })) > 0n) throw new BadRequestException('Part of this expense is paid through a vendor payment — cancel that payment before changing its approval');
     const updated = await this.prisma.expense.update({ where: { id }, data: { status: dto.status, updatedById: userId }, include: expenseInclude });
     await this.activityLog.record({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'Expense', entityId: id, summary: `Expense ${updated.expenseNumber} ${dto.status.toLowerCase()}` });
     return this.toDto(updated);
@@ -155,6 +162,7 @@ export class ExpensesService {
     // Only an approved expense can be marked paid (a draft/pending/rejected can't).
     if (existing.status !== 'APPROVED') throw new BadRequestException('Only an approved expense can be marked paid');
     await this.closing.assertOpen(existing.expenseDate);
+    if ((await this.vendorBills.allocatedTo({ kind: 'EXPENSE', id })) > 0n) throw new BadRequestException('Part of this expense is paid through a vendor payment — pay the rest from the vendor’s page');
     const updated = await this.prisma.expense.update({ where: { id }, data: { paid: true, settledDate: new Date(), updatedById: userId }, include: expenseInclude });
     await this.activityLog.record({ actorId: userId, action: 'PAYMENT', entityType: 'Expense', entityId: id, summary: `Settled expense ${updated.expenseNumber}` });
     return this.toDto(updated);
@@ -163,8 +171,12 @@ export class ExpensesService {
   async remove(id: string, userId: string): Promise<void> {
     const existing = await this.getRowOrThrow(id);
     await this.closing.assertOpen(existing.expenseDate);
-    await this.prisma.expense.update({ where: { id }, data: { deletedAt: new Date(), updatedById: userId } });
-    await this.activityLog.record({ actorId: userId, action: 'DELETE', entityType: 'Expense', entityId: id, summary: 'Deleted expense' });
+    const released = await this.prisma.$transaction(async (tx) => {
+      await tx.expense.update({ where: { id }, data: { deletedAt: new Date(), updatedById: userId } });
+      // What vendor payments applied to it stays with the vendor as an advance.
+      return this.vendorBills.releaseAllocations(tx, { kind: 'EXPENSE', id });
+    });
+    await this.activityLog.record({ actorId: userId, action: 'DELETE', entityType: 'Expense', entityId: id, summary: `Deleted expense${released > 0n ? ' (its vendor payment stays with the vendor as an advance)' : ''}` });
   }
 
   // ── Attachments (Invoice / GST Bill / Photo / PDF) ──
@@ -273,6 +285,16 @@ export class ExpensesService {
   }
 
   /** An expense is recorded for a day it was incurred — today or earlier; a bill due later carries a due date. */
+  /** Since per-scooter purchase tracking, a scooter's cost is entered on the scooter — never again as an expense. */
+  private async assertNotScooterPurchase(categoryName: string, expenseDate: Date): Promise<void> {
+    if (categoryName !== VEHICLE_PURCHASE_CATEGORY) return;
+    const setting = await this.prisma.companySetting.findFirst({ select: { scooterCostCutoverAt: true } });
+    const cutover = setting?.scooterCostCutoverAt;
+    if (cutover && expenseDate.toISOString().slice(0, 10) >= cutover.toISOString().slice(0, 10)) {
+      throw new BadRequestException('Scooter purchases are recorded on the scooter now: add it under Inventory with its vendor and purchase price (its cost reaches the P&L when it is sold, and the vendor is owed until paid)');
+    }
+  }
+
   private async assertNotFuture(expenseDate: Date | undefined): Promise<void> {
     if (!expenseDate) return;
     const setting = await this.prisma.companySetting.findFirst({ select: { timezone: true } });

@@ -130,7 +130,15 @@ const unitFields = {
   purchaseGst: paise.optional(),
   transportCharge: paise.optional(),
   sellingPrice: paise.optional(),
+  /**
+   * The vendor the scooter was bought from. Omitted on a new scooter → the default scooter vendor (or the vendor
+   * named by `supplier`); null clears it. The supplier text follows the vendor's name.
+   */
+  vendorId: z.string().uuid().nullable().optional(),
+  /** Legacy free text, kept for old clients: matched to a vendor by name when no vendorId is given. */
   supplier: optionalTrimmed,
+  /** The vendor's bill (invoice) number for this scooter. '' clears it. */
+  vendorBillNumber: z.string().trim().max(60).nullable().optional().transform((v) => (v == null ? v : v || null)),
   location: optionalTrimmed,
   /** The ignition key's number (printed on the RTO invoice); upper-cased. '' clears it. */
   keyNumber: z.string().trim().max(30).nullable().optional().transform((v) => (v == null ? v : v.toUpperCase() || null)),
@@ -139,9 +147,27 @@ const unitFields = {
 };
 const unitObject = z.object(unitFields);
 
+/** Paid to the vendor when the scooter is added: a vendor payment of its purchase cost (inventory.cost only). */
+export const unitPurchasePaymentSchema = z.object({
+  method: z.enum(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CHEQUE']),
+  /** Defaults to the purchase date (or today). */
+  paidAt: z.coerce.date().optional(),
+  reference: z.string().trim().max(120).optional(),
+});
+export type UnitPurchasePaymentInput = z.infer<typeof unitPurchasePaymentSchema>;
+
 /** Either shape; a create must identify its variant one way or the other. */
-export const createUnitSchema = unitObject.superRefine((v, ctx) => {
-  if (v.variantId) return;
+export const createUnitSchema = unitObject.extend({
+  /** Present = paid to the vendor now (needs inventory.cost and a vendor); absent = owed to the vendor. */
+  purchasePayment: unitPurchasePaymentSchema.optional(),
+  /**
+   * Received against this purchase-order line (inventory.cost only): the vendor becomes the order's vendor, the
+   * variant must match the line, and the price / GST default to the line's.
+   */
+  purchaseOrderLineId: z.string().uuid().optional(),
+}).superRefine((v, ctx) => {
+  // A scooter received against an order line takes the line's variant.
+  if (v.variantId || v.purchaseOrderLineId) return;
   if (!v.modelId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['modelId'], message: 'Select a model' });
   if (!v.variant) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['variant'], message: 'Variant is required' });
   if (!v.colour) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['colour'], message: 'Colour is required' });
@@ -198,6 +224,10 @@ export const listUnitsQuerySchema = paginationQuerySchema.extend({
   status: z.enum(UNIT_STATUSES as [UnitStatus, ...UnitStatus[]]).optional(),
   modelId: z.string().uuid().optional(),
   supplier: z.string().trim().optional(),
+  vendorId: z.string().uuid().optional(),
+  /** 'true': paid to the vendor (or expensed before per-scooter tracking); 'false': still owed. */
+  purchasePaid: z.enum(['true', 'false']).optional().transform((v) => (v === undefined ? undefined : v === 'true')),
+  purchaseOrderLineId: z.string().uuid().optional(),
   sort: z
     .enum(['createdAt', 'vin', 'status', 'sellingPrice', 'purchaseDate'])
     .default('createdAt'),
@@ -243,6 +273,11 @@ export interface InventoryModelRef {
   name: string;
   brand: string;
 }
+export interface InventoryVendorRef {
+  id: string;
+  vendorNumber: string;
+  name: string;
+}
 export interface InventoryVariantRef {
   id: string;
   name: string;
@@ -274,6 +309,16 @@ export interface InventoryUnitDto {
   transportCharge?: string;
   sellingPrice: string;
   supplier: string | null;
+  vendorId: string | null;
+  /** The vendor it was bought from. */
+  vendor: InventoryVendorRef | null;
+  vendorBillNumber: string | null;
+  /** Paid to the vendor in full (true for scooters expensed before per-scooter tracking). */
+  purchasePaid: boolean;
+  purchasePaidAt: string | null;
+  /** Its cost was recorded as a 'Vehicle Purchase' expense (before per-scooter purchase tracking). */
+  costInExpenses: boolean;
+  purchaseOrderLineId: string | null;
   location: string | null;
   keyNumber: string | null;
   notes: string | null;
@@ -364,6 +409,8 @@ export type CsvImportField =
  * - MODEL_INACTIVE / VARIANT_INACTIVE: it exists but is inactive.
  * - MODEL_AMBIGUOUS / VARIANT_AMBIGUOUS: more than one active entry matches (add a Brand column for a
  *   model name used by several brands; names that differ only in case need fixing in the catalogue).
+ * - VENDOR_NOT_FOUND: the Supplier names no vendor (by name or vendor number) — add it under Vendors first.
+ *   A blank Supplier means the default scooter vendor.
  * - DUPLICATE_IN_FILE: another row of this file has the same VIN, motor or battery number — every row
  *   involved is invalid, none is chosen.
  * - ALREADY_EXISTS: that VIN, motor or battery number is already used by a scooter in YOUR company's
@@ -375,6 +422,7 @@ export type CsvImportIssueCode =
   | 'INVALID_VALUE' | 'INVALID_DATE' | 'STATUS_NOT_ALLOWED'
   | 'MODEL_NOT_FOUND' | 'MODEL_INACTIVE' | 'MODEL_AMBIGUOUS'
   | 'VARIANT_NOT_FOUND' | 'VARIANT_INACTIVE' | 'VARIANT_AMBIGUOUS'
+  | 'VENDOR_NOT_FOUND' | 'VENDOR_AMBIGUOUS'
   | 'DUPLICATE_IN_FILE' | 'ALREADY_EXISTS' | 'IDENTIFIER_UNAVAILABLE';
 
 export interface CsvImportIssue {
@@ -398,6 +446,8 @@ export interface CsvImportPreviewUnit {
   purchaseCost: string;
   /** Calendar date, YYYY-MM-DD. */
   purchaseDate: string | null;
+  /** The vendor the scooter will be linked to (the Supplier column, or the default scooter vendor when blank). */
+  vendorName: string | null;
 }
 
 export interface CsvImportPreviewRow {

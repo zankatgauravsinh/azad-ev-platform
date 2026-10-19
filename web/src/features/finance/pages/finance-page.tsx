@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { Download, FileDown, Paperclip, Plus, Search } from 'lucide-react';
 import { toast } from 'sonner';
@@ -28,9 +29,8 @@ import { useBank, useCashBook, useClosings, useExpenses, useFinanceDashboard, us
 import { bankDirectionTone, expenseStatusTone, payMethodLabel, reconStatusTone, vendorStatusTone } from '../meta';
 import { CreateExpenseDialog } from '../components/create-expense-dialog';
 import { CreateIncomeDialog } from '../components/create-income-dialog';
-import { CreateVendorDialog } from '../components/create-vendor-dialog';
+import { VendorFormDialog } from '@/features/vendors/components/vendor-form-dialog';
 import { CreateBankDialog } from '../components/create-bank-dialog';
-import { VendorDetailDialog } from '../components/vendor-detail-dialog';
 import { ExpenseDetailDialog } from '../components/expense-detail-dialog';
 import { RecurringDialog } from '../components/recurring-dialog';
 
@@ -57,6 +57,7 @@ function ExportMenu({ type }: { type: ReportType }): JSX.Element {
 
 export function FinancePage(): JSX.Element {
   const { can } = useAuth();
+  const navigate = useNavigate();
   // Independent permission families — each module gates its own view/manage; finance.* also covers
   // the cross-cutting Cash Book, P&L, GST, Closing and Recurring areas (finance controller).
   const canViewFinance = can('finance.view');
@@ -65,7 +66,6 @@ export function FinancePage(): JSX.Element {
   const manage = { expenses: can('expenses.manage'), income: can('income.manage'), vendors: can('vendors.manage'), bank: can('bank.manage') };
   const { data: dash } = useFinanceDashboard(canViewFinance);
   const [dialog, setDialog] = useState<null | 'expense' | 'income' | 'vendor' | 'bank' | 'recurring'>(null);
-  const [vendorId, setVendorId] = useState<string | null>(null);
   const [expenseId, setExpenseId] = useState<string | null>(null);
 
   const defaultTab = view.expenses ? 'expenses' : view.income ? 'income' : view.vendors ? 'vendors' : view.bank ? 'bank' : 'cashbook';
@@ -104,7 +104,7 @@ export function FinancePage(): JSX.Element {
 
         {view.expenses && <TabsContent value="expenses"><ExpensesTab canManage={manage.expenses} canManageRecurring={canManageFinance} onNew={() => setDialog('expense')} onRecurring={() => setDialog('recurring')} onOpen={setExpenseId} /></TabsContent>}
         {view.income && <TabsContent value="income"><IncomeTab canManage={manage.income} onNew={() => setDialog('income')} /></TabsContent>}
-        {view.vendors && <TabsContent value="vendors"><VendorsTab canManage={manage.vendors} onNew={() => setDialog('vendor')} onOpen={setVendorId} /></TabsContent>}
+        {view.vendors && <TabsContent value="vendors"><VendorsTab canManage={manage.vendors} onNew={() => setDialog('vendor')} onOpen={(id) => navigate(`/vendors/${id}`)} /></TabsContent>}
         {view.bank && <TabsContent value="bank"><BankTab canManage={manage.bank} onNew={() => setDialog('bank')} /></TabsContent>}
         {canViewFinance && <TabsContent value="cashbook"><CashBookTab canManage={canManageFinance} /></TabsContent>}
         {canViewFinance && <TabsContent value="pnl"><PnlTab /></TabsContent>}
@@ -114,10 +114,9 @@ export function FinancePage(): JSX.Element {
 
       {manage.expenses && <CreateExpenseDialog open={dialog === 'expense'} onOpenChange={(o) => setDialog(o ? 'expense' : null)} />}
       {manage.income && <CreateIncomeDialog open={dialog === 'income'} onOpenChange={(o) => setDialog(o ? 'income' : null)} />}
-      {manage.vendors && <CreateVendorDialog open={dialog === 'vendor'} onOpenChange={(o) => setDialog(o ? 'vendor' : null)} />}
+      {manage.vendors && <VendorFormDialog open={dialog === 'vendor'} onOpenChange={(o) => setDialog(o ? 'vendor' : null)} />}
       {manage.bank && <CreateBankDialog open={dialog === 'bank'} onOpenChange={(o) => setDialog(o ? 'bank' : null)} />}
       {canManageFinance && <RecurringDialog open={dialog === 'recurring'} onOpenChange={(o) => setDialog(o ? 'recurring' : null)} />}
-      <VendorDetailDialog id={vendorId} onOpenChange={(o) => { if (!o) setVendorId(null); }} />
       <ExpenseDetailDialog id={expenseId} onOpenChange={(o) => { if (!o) setExpenseId(null); }} />
     </div>
   );

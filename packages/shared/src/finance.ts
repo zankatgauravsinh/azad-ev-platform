@@ -7,6 +7,7 @@ import {
   FINANCE_PAY_METHODS,
   INCOME_SOURCES,
   VENDOR_STATUSES,
+  VENDOR_TYPES,
   type BankDirection,
   type BankReconStatus,
   type BankTxnType,
@@ -15,13 +16,16 @@ import {
   type FinancePayMethod,
   type IncomeSource,
   type VendorStatus,
+  type VendorType,
 } from './enums';
+import { isValidGstin, optionalIdentity } from './identity';
 
 const paise = z.coerce.number().int().min(0);
 const payMethodTuple = FINANCE_PAY_METHODS as [FinancePayMethod, ...FinancePayMethod[]];
 const expenseStatusTuple = EXPENSE_STATUSES as [ExpenseStatus, ...ExpenseStatus[]];
 const incomeSourceTuple = INCOME_SOURCES as [IncomeSource, ...IncomeSource[]];
 const vendorStatusTuple = VENDOR_STATUSES as [VendorStatus, ...VendorStatus[]];
+const vendorTypeTuple = VENDOR_TYPES as [VendorType, ...VendorType[]];
 const bankTypeTuple = BANK_TXN_TYPES as [BankTxnType, ...BankTxnType[]];
 const bankDirTuple = BANK_DIRECTIONS as [BankDirection, ...BankDirection[]];
 const bankReconTuple = BANK_RECON_STATUSES as [BankReconStatus, ...BankReconStatus[]];
@@ -49,9 +53,47 @@ export interface VendorDto {
   city: string | null;
   state: string | null;
   status: VendorStatus;
+  type: VendorType;
+  contactPerson: string | null;
+  altMobile: string | null;
+  pan: string | null;
+  /** A bill is due this many days after its date (0 = at once). */
+  creditDays: number;
+  bankAccountName: string | null;
+  bankAccountNumber: string | null;
+  bankIfsc: string | null;
+  bankName: string | null;
+  upiId: string | null;
+  notes: string | null;
+  /** New scooters are bought from this vendor unless another is picked. */
+  isDefaultScooterVendor: boolean;
+  /** Scooters bought from this vendor (any status). */
+  scooterCount: number;
+  /** Still owed on bills (scooters, accessory purchases, expenses) — before any advance. */
   outstanding: string;
+  /** Owed on bills past their due date. */
+  overdue: string;
+  /** Paid in advance and not yet applied to a bill. */
+  advance: string;
+  /** Every bill, with GST. */
   totalPurchases: string;
+  /** True when the caller cannot see purchase cost: scooter and accessory-purchase bills are left out of the figures. */
+  costHidden: boolean;
   createdAt: string;
+}
+
+/** A vendor as a picker shows it — readable by anyone who records purchases, not only vendors.view. */
+export interface VendorOptionDto {
+  id: string;
+  vendorNumber: string;
+  name: string;
+  type: VendorType;
+  status: VendorStatus;
+}
+export interface VendorOptionsDto {
+  vendors: VendorOptionDto[];
+  /** The vendor new scooters default to, if any. */
+  defaultScooterVendorId: string | null;
 }
 
 export interface VendorLedgerRow {
@@ -192,13 +234,48 @@ export const updateExpenseCategorySchema = z.object({
 });
 export type UpdateExpenseCategoryInput = z.infer<typeof updateExpenseCategorySchema>;
 
+const optionalText = (max: number) => z.string().trim().max(max).optional();
+/** A blank optional text field clears it. */
+const clearable = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .nullable()
+    .optional()
+    .transform((v) => (v == null ? v : v || null));
+
+export const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+export const UPI_PATTERN = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
+const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+
 const contactShape = {
-  mobile: z.string().trim().max(20).optional(),
+  mobile: optionalText(20),
   email: z.string().trim().email().max(120).optional().or(z.literal('')),
-  gstNumber: z.string().trim().max(20).optional(),
-  address: z.string().trim().max(300).optional(),
-  city: z.string().trim().max(80).optional(),
-  state: z.string().trim().max(80).optional(),
+  // Upper-cased, spaces removed; '' clears it. The PAN is taken from it when none is given.
+  gstNumber: optionalIdentity(isValidGstin, 'Enter a valid 15-character GSTIN'),
+  address: optionalText(300),
+  city: optionalText(80),
+  state: optionalText(80),
+  type: z.enum(vendorTypeTuple).optional(),
+  contactPerson: clearable(120),
+  altMobile: clearable(20),
+  pan: optionalIdentity((v) => PAN_PATTERN.test(v), 'Enter a valid 10-character PAN'),
+  creditDays: z.coerce.number().int().min(0).max(365, 'At most 365 days').optional(),
+  bankAccountName: clearable(120),
+  bankAccountNumber: z
+    .string()
+    .trim()
+    .nullable()
+    .optional()
+    .transform((v) => (v == null ? v : v.replace(/\s/g, '') || null))
+    .refine((v) => v == null || /^\d{6,18}$/.test(v), 'Account number is 6 to 18 digits'),
+  bankIfsc: optionalIdentity((v) => IFSC_PATTERN.test(v), 'Enter a valid 11-character IFSC (e.g. SBIN0001234)'),
+  bankName: clearable(120),
+  upiId: clearable(120).refine((v) => v == null || UPI_PATTERN.test(v), 'Enter a UPI ID like name@bank'),
+  notes: clearable(1000),
+  /** Make this the vendor new scooters default to (true), or stop it being the default (false). */
+  defaultForScooters: z.boolean().optional(),
 };
 
 export const createVendorSchema = z.object({
@@ -218,6 +295,7 @@ export const listVendorsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(vendorStatusTuple).optional(),
+  type: z.enum(vendorTypeTuple).optional(),
   q: z.string().trim().max(120).optional(),
 });
 export type ListVendorsQuery = z.infer<typeof listVendorsQuerySchema>;

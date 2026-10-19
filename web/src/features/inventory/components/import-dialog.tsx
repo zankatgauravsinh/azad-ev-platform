@@ -325,6 +325,7 @@ function PreviewRow({ row }: { row: CsvImportPreviewRow }): JSX.Element {
           {unit.brand} {unit.model} · {unit.variant} / {unit.colour} · {formatPaise(unit.sellingPrice)}{' '}
           ({unit.sellingPriceSource === 'LIST_PRICE' ? 'list price' : 'from file'})
           {unit.purchaseDate ? ` · bought ${unit.purchaseDate}` : ''}
+          {unit.vendorName ? ` · from ${unit.vendorName}` : ''}
         </p>
       )}
     </li>

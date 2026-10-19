@@ -22,10 +22,9 @@ vi.mock('../hooks', () => ({
 }));
 vi.mock('../components/create-expense-dialog', () => ({ CreateExpenseDialog: () => null }));
 vi.mock('../components/create-income-dialog', () => ({ CreateIncomeDialog: () => null }));
-vi.mock('../components/create-vendor-dialog', () => ({ CreateVendorDialog: () => null }));
+vi.mock('@/features/vendors/components/vendor-form-dialog', () => ({ VendorFormDialog: () => null }));
 vi.mock('../components/create-bank-dialog', () => ({ CreateBankDialog: () => null }));
 vi.mock('../components/recurring-dialog', () => ({ RecurringDialog: () => null }));
-vi.mock('../components/vendor-detail-dialog', () => ({ VendorDetailDialog: () => null }));
 vi.mock('../components/expense-detail-dialog', () => ({ ExpenseDetailDialog: () => null }));
 vi.mock('@/features/reports/api', () => ({ reportsApi: { exportReport: vi.fn() } }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

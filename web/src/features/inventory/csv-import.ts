@@ -27,7 +27,7 @@ export const CSV_COLUMNS: CsvColumnDoc[] = [
   { header: 'Purchase Date', field: 'purchaseDate', required: false, help: 'YYYY-MM-DD, D/M/YYYY or DD/MM/YYYY. Dates with slashes are day first: 3/12/2026 is 3 December 2026.' },
   { header: 'Purchase Cost', field: 'purchaseCost', required: false, help: 'Owner only — leave blank otherwise. The purchase price in rupees, digits only (no commas or ₹); GST paid and transport can be added on the scooter afterwards. Blank means 0.' },
   { header: 'Selling Price', field: 'sellingPrice', required: false, help: "Rupees, digits only. Blank takes the variant's list price; 0 is kept as 0." },
-  { header: 'Supplier', field: 'supplier', required: false, help: 'Free text.' },
+  { header: 'Supplier', field: 'supplier', required: false, help: 'The vendor it was bought from: its name as under Vendors (or its number, e.g. VND0001). Blank means the default scooter vendor; an unknown name is refused — add the vendor first.' },
   { header: 'Location', field: 'location', required: false, help: 'Where the scooter is kept, e.g. a showroom bay.' },
   { header: 'Status', field: 'status', required: false, help: 'Leave blank or write AVAILABLE — imported scooters are always Available; any other status is refused.' },
 ];

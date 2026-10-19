@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { ACCESSORY_PURCHASE_MAX_LINES, computePurchaseLine, createAccessoryPurchaseSchema, type AccessoryDto, type FinancePayMethod } from '@azad/shared';
 import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaiseExact, rupeesToPaise } from '@/lib/money';
-import { useVendors } from '@/features/finance/hooks';
+import { NO_VENDOR, VendorSelect } from '@/features/vendors/components/vendor-select';
 import { todayDateInput } from '@/features/delivery/components/delivery-date-field';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -24,7 +24,6 @@ export const PAY_METHODS: { value: FinancePayMethod; label: string }[] = [
   { value: 'CHEQUE', label: 'Cheque' },
   { value: 'CARD', label: 'Card' },
 ];
-const NO_VENDOR = '__none__';
 
 interface Line {
   accessoryId: string;
@@ -48,7 +47,6 @@ export function PurchaseFormDialog({ open, onOpenChange, onDone }: { open: boole
   // Accessories added from this form, usable before the catalogue list reloads.
   const [added, setAdded] = useState<AccessoryDto[]>([]);
   const catalogue = useMemo(() => [...listed, ...added.filter((a) => !listed.some((l) => l.id === a.id))], [listed, added]);
-  const { data: vendors } = useVendors({ pageSize: 100, status: 'ACTIVE' });
   const { data: defaults } = usePurchaseDefaults(open);
   const [vendorId, setVendorId] = useState(NO_VENDOR);
   const [billNo, setBillNo] = useState('');
@@ -154,19 +152,7 @@ export function PurchaseFormDialog({ open, onOpenChange, onDone }: { open: boole
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-1.5">
             <Label htmlFor="apur-vendor">Vendor</Label>
-            <Select value={vendorId} onValueChange={setVendorId}>
-              <SelectTrigger id="apur-vendor" aria-label="Vendor">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_VENDOR}>No vendor</SelectItem>
-                {(vendors?.data ?? []).map((v) => (
-                  <SelectItem key={v.id} value={v.id}>
-                    {v.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <VendorSelect id="apur-vendor" value={vendorId} onChange={setVendorId} prefer="ACCESSORIES" />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="apur-bill">Bill no. (optional)</Label>

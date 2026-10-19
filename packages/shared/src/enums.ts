@@ -442,6 +442,26 @@ export const VendorStatus = {
 export type VendorStatus = (typeof VendorStatus)[keyof typeof VendorStatus];
 export const VENDOR_STATUSES = Object.values(VendorStatus);
 
+/** What a vendor supplies — groups the vendor list and picks sensible defaults (scooters come from a SCOOTER_SUPPLIER). */
+export const VendorType = {
+  SCOOTER_SUPPLIER: 'SCOOTER_SUPPLIER',
+  ACCESSORIES: 'ACCESSORIES',
+  SPARE_PARTS: 'SPARE_PARTS',
+  SERVICES: 'SERVICES',
+  UTILITIES: 'UTILITIES',
+  OTHER: 'OTHER',
+} as const;
+export type VendorType = (typeof VendorType)[keyof typeof VendorType];
+export const VENDOR_TYPES = Object.values(VendorType);
+export const VENDOR_TYPE_LABEL: Record<VendorType, string> = {
+  SCOOTER_SUPPLIER: 'Scooter supplier',
+  ACCESSORIES: 'Accessories',
+  SPARE_PARTS: 'Spare parts',
+  SERVICES: 'Services',
+  UTILITIES: 'Utilities',
+  OTHER: 'Other',
+};
+
 /** How a finance transaction was settled. */
 export const FinancePayMethod = {
   CASH: 'CASH',

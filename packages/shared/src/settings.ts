@@ -63,6 +63,8 @@ export const updateCompanySettingsSchema = z
     rtoInvoicePrefix: prefix('RTO invoice prefix').optional(),
     accessoryInvoicePrefix: prefix('Accessory invoice prefix').optional(),
     accessoryPurchasePrefix: prefix('Accessory purchase prefix').optional(),
+    vendorPaymentPrefix: prefix('Vendor payment prefix').optional(),
+    purchaseOrderPrefix: prefix('Purchase order prefix').optional(),
     // WhatsApp greetings per document ('' or null → the built-in default).
     whatsappQuotationMessage: whatsappMessageField,
     whatsappInvoiceMessage: whatsappMessageField,
@@ -159,6 +161,8 @@ export interface CompanySettingsDto {
   rtoInvoicePrefix: string;
   accessoryInvoicePrefix: string;
   accessoryPurchasePrefix: string;
+  vendorPaymentPrefix: string;
+  purchaseOrderPrefix: string;
   /** WhatsApp greetings per document (null = the built-in default). */
   whatsappQuotationMessage: string | null;
   whatsappInvoiceMessage: string | null;

@@ -11,8 +11,10 @@ import {
   issueMessage,
   parseCsvDate,
   resolveCsvVariant,
+  resolveCsvVendor,
   type Catalogue,
   type CatalogueVariant,
+  type CatalogueVendor,
   type CsvSourceRow,
   type IdentifierField,
 } from './csv-import';
@@ -44,6 +46,7 @@ export interface ImportableUnit {
   purchaseCost: bigint;
   purchaseDate: Date | null;
   supplier: string | null;
+  vendorId: string | null;
   location: string | null;
 }
 
@@ -122,6 +125,8 @@ export function validateCsvFile(
     let variant: CatalogueVariant | null = null;
     const names = { brand: text(record.brand), model: text(record.model), variant: text(record.variant), colour: text(record.colour) };
     if (names.model && names.variant && names.colour) check(() => { variant = resolveCsvVariant(catalogue, names); });
+    let vendor: CatalogueVendor | null = null;
+    check(() => { vendor = resolveCsvVendor(catalogue, typeof record.supplier === 'string' ? record.supplier : undefined); });
     // 5. Identifiers: used by another row of this file (every row involved is invalid), or already in use.
     for (const field of IDENTIFIER_FIELDS) {
       const value = normaliseIdentifier(record[field]);
@@ -152,6 +157,7 @@ export function validateCsvFile(
       sellingPriceSource: data.sellingPrice !== undefined ? 'FILE' : 'LIST_PRICE',
       purchaseCost: rupeesToPaise(data.purchaseCost).toString(),
       purchaseDate: purchaseDate ? isoDate(purchaseDate) : null,
+      vendorName: (vendor as CatalogueVendor | null)?.name ?? null,
     };
     units.push({
       line,
@@ -162,7 +168,9 @@ export function validateCsvFile(
       sellingPrice: BigInt(unit.sellingPrice),
       purchaseCost: BigInt(unit.purchaseCost),
       purchaseDate,
-      supplier: data.supplier || null,
+      // The supplier text follows the vendor's name (kept for lists and exports).
+      supplier: (vendor as CatalogueVendor | null)?.name ?? (data.supplier || null),
+      vendorId: (vendor as CatalogueVendor | null)?.id ?? null,
       location: data.location || null,
     });
     return { row: line, status: 'VALID', vin, issues: [], unit };

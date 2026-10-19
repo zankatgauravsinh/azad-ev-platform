@@ -20,12 +20,17 @@ import { SequenceService } from '../sales/sequence.service';
 import { isAfterBusinessToday, resolveTimeZone } from '../../common/utils/business-date';
 import { avgCostAfterRemoval, weightedAvgCost } from '../../common/utils/inventory-cost';
 import { accessoryGstRates, type AccessoryGstRate } from './accessory-gst-rates';
+import { VendorPaymentsService } from '../vendor-payables/vendor-payments.service';
+import { VendorBillsService } from '../vendor-payables/vendor-bills.service';
+import { PurchaseOrderReceiptsService, type LockedOrderLine } from '../vendor-payables/purchase-order-receipts.service';
 
 type Tx = Prisma.TransactionClient;
 
 const purchaseInclude = {
   vendor: { select: { id: true, name: true } },
+  purchaseOrder: { select: { poNumber: true } },
   items: { include: { accessory: { select: { name: true, sku: true } } }, orderBy: { id: 'asc' } },
+  vendorAllocations: { where: { payment: { status: 'ACTIVE' } }, select: { amount: true } },
 } satisfies Prisma.AccessoryPurchaseInclude;
 type PurchaseRow = Prisma.AccessoryPurchaseGetPayload<{ include: typeof purchaseInclude }>;
 
@@ -47,6 +52,10 @@ const calendarDay = (d: Date): Date => new Date(Date.UTC(d.getUTCFullYear(), d.g
  * vendor's outstanding — and marked paid later. A wrong purchase is cancelled only while all its pieces are still
  * available: they leave stock again and the average cost is reversed. Purchases follow month-close. Everything
  * here is purchase cost, so the controller lets only inventory.cost holders in.
+ *
+ * A bill with a vendor is paid through a vendor payment (so one payment can also settle it with others, and the
+ * cash book counts it once); one without a vendor keeps its own paid record. A purchase may be received against a
+ * purchase order: the vendor is then the order's, and lines name the order's accessory lines.
  */
 @Injectable()
 export class AccessoryPurchasesService {
@@ -56,6 +65,9 @@ export class AccessoryPurchasesService {
     private readonly sequence: SequenceService,
     private readonly activityLog: ActivityLogService,
     private readonly closing: MonthlyClosingService,
+    private readonly vendorPayments: VendorPaymentsService,
+    private readonly vendorBills: VendorBillsService,
+    private readonly receipts: PurchaseOrderReceiptsService,
   ) {}
 
   /** The GST rate to suggest per active accessory (its classification, else the accessory default in Settings). */
@@ -102,8 +114,13 @@ export class AccessoryPurchasesService {
     if (dto.purchaseDate && isAfterBusinessToday(dto.purchaseDate, now, timeZone)) throw new BadRequestException('The bill date cannot be in the future');
     const paidAt = dto.payment ? this.paidAtOf(dto.payment.paidAt, purchaseDate, timeZone) : null;
 
-    const vendor = dto.vendorId ? await this.prisma.vendor.findFirst({ where: { id: dto.vendorId, deletedAt: null }, select: { id: true, name: true } }) : null;
-    if (dto.vendorId && !vendor) throw new NotFoundException('Vendor not found');
+    const order = dto.purchaseOrderId ? await this.prisma.purchaseOrder.findFirst({ where: { id: dto.purchaseOrderId }, select: { id: true, vendorId: true, poNumber: true } }) : null;
+    if (dto.purchaseOrderId && !order) throw new NotFoundException('Purchase order not found');
+    if (order && dto.vendorId && dto.vendorId !== order.vendorId) throw new BadRequestException(`${order.poNumber} is with another vendor`);
+    if (!order && dto.items.some((l) => l.purchaseOrderLineId)) throw new BadRequestException('A purchase-order line needs its purchase order');
+    const vendorId = order?.vendorId ?? dto.vendorId;
+    const vendor = vendorId ? await this.prisma.vendor.findFirst({ where: { id: vendorId, deletedAt: null }, select: { id: true, name: true } }) : null;
+    if (vendorId && !vendor) throw new NotFoundException('Vendor not found');
     const accessories = await this.prisma.accessory.findMany({ where: { id: { in: dto.items.map((l) => l.accessoryId) } }, select: { id: true, name: true, isActive: true } });
     const byId = new Map(accessories.map((a) => [a.id, a]));
     for (const line of dto.items) {
@@ -113,6 +130,7 @@ export class AccessoryPurchasesService {
     }
     const lines = dto.items.map((l) => ({
       accessoryId: l.accessoryId,
+      purchaseOrderLineId: l.purchaseOrderLineId ?? null,
       quantity: l.quantity,
       unitCost: BigInt(l.unitCost),
       ...computePurchaseLine(BigInt(l.unitCost), l.quantity, l.gstAmount !== undefined ? { amount: BigInt(l.gstAmount) } : { rateBp: Math.round((l.gstRate ?? 0) * 100) }),
@@ -121,6 +139,15 @@ export class AccessoryPurchasesService {
     if (paidAt) await this.closing.assertOpen(paidAt);
 
     const created = await this.prisma.$transaction(async (tx) => {
+      // Order lines first (each is checked against what it still expects), then the stock rows.
+      const orderLines: LockedOrderLine[] = [];
+      for (const l of [...lines].filter((x) => x.purchaseOrderLineId).sort((a, b) => a.purchaseOrderLineId!.localeCompare(b.purchaseOrderLineId!))) {
+        const line = await this.receipts.lockLine(tx, l.purchaseOrderLineId!, 'ACCESSORY');
+        if (line.purchaseOrderId !== order!.id) throw new BadRequestException(`That line is not on ${order!.poNumber}`);
+        if (line.accessoryId !== l.accessoryId) throw new BadRequestException(`${line.description} on ${line.poNumber} is another accessory`);
+        this.receipts.assertRoom(line, l.quantity);
+        orderLines.push(line);
+      }
       const locked = new Map<string, LockedStock>();
       for (const id of [...byId.keys()].sort()) locked.set(id, await lockStock(tx, companyId, id));
       const purchaseNumber = await this.sequence.next('accessoryPurchase', tx);
@@ -135,13 +162,15 @@ export class AccessoryPurchasesService {
           subtotal: sum(lines.map((l) => l.taxable)),
           gstAmount: sum(lines.map((l) => l.gst)),
           total: sum(lines.map((l) => l.lineTotal)),
-          paid: Boolean(dto.payment),
-          paidAt,
-          paymentMethod: dto.payment?.method ?? null,
-          paymentReference: dto.payment?.reference || null,
+          // A vendor's bill is paid through a vendor payment (below); one without a vendor keeps its own record.
+          paid: Boolean(dto.payment) && !vendor,
+          paidAt: vendor ? null : paidAt,
+          paymentMethod: vendor ? null : (dto.payment?.method ?? null),
+          paymentReference: vendor ? null : dto.payment?.reference || null,
+          purchaseOrderId: order?.id ?? null,
           createdById: userId,
           updatedById: userId,
-          items: { create: lines.map((l) => ({ accessoryId: l.accessoryId, quantity: l.quantity, unitCost: l.unitCost, gstRateBp: l.gstRateBp, gstAmount: l.gst, lineTotal: l.lineTotal })) },
+          items: { create: lines.map((l) => ({ accessoryId: l.accessoryId, purchaseOrderLineId: l.purchaseOrderLineId, quantity: l.quantity, unitCost: l.unitCost, gstRateBp: l.gstRateBp, gstAmount: l.gst, lineTotal: l.lineTotal })) },
         },
       });
       for (const l of lines) {
@@ -154,17 +183,40 @@ export class AccessoryPurchasesService {
         s.onHand = onHand; // a later line of the same accessory is impossible (refused by the schema), but keep the lock state true
       }
       // No amounts in the summary: the activity log is read by people who may not see purchase cost.
-      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.CREATE, entityType: 'AccessoryPurchase', entityId: purchase.id, summary: `Accessory purchase ${purchaseNumber}${vendor ? ` from ${vendor.name}` : ''}: ${lines.length} item${lines.length === 1 ? '' : 's'}, ${lines.reduce((n, l) => n + l.quantity, 0)} pieces${dto.payment ? ' (paid)' : ' (unpaid)'}` }, tx);
+      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.CREATE, entityType: 'AccessoryPurchase', entityId: purchase.id, summary: `Accessory purchase ${purchaseNumber}${vendor ? ` from ${vendor.name}` : ''}${order ? ` against ${order.poNumber}` : ''}: ${lines.length} item${lines.length === 1 ? '' : 's'}, ${lines.reduce((n, l) => n + l.quantity, 0)} pieces${dto.payment ? ' (paid)' : ' (unpaid)'}` }, tx);
+      if (dto.payment && vendor && purchase.total > 0n) {
+        await this.vendorPayments.createInTx(
+          tx,
+          { vendorId: vendor.id, paidAt: paidAt ?? undefined, method: dto.payment.method, reference: dto.payment.reference, amount: Number(purchase.total), allocations: [{ kind: 'ACCESSORY_PURCHASE', billId: purchase.id, amount: Number(purchase.total) }] },
+          userId,
+          { canSeeCost: true, notBefore: purchaseDate },
+        );
+      }
+      if (order) await this.receipts.closeIfComplete(tx, order.id, userId);
       return purchase;
     });
     return this.getById(created.id);
   }
 
+  /**
+   * Pays what is still owed on the bill: through a vendor payment when it has a vendor (so part of it may already
+   * have been paid that way), otherwise on the bill itself.
+   */
   async markPaid(id: string, dto: MarkAccessoryPurchasePaidInput, userId: string): Promise<AccessoryPurchaseDetailDto> {
     const row = await this.getRowOrThrow(id);
     if (row.status === 'CANCELLED') throw new BadRequestException('This purchase is cancelled');
     if (row.paid) throw new ConflictException('This purchase is already paid');
     const paidAt = this.paidAtOf(dto.paidAt, row.purchaseDate, await this.businessTimeZone());
+    if (row.vendorId) {
+      const balance = row.total - (await this.vendorBills.allocatedTo({ kind: 'ACCESSORY_PURCHASE', id }));
+      if (balance <= 0n) throw new ConflictException('This purchase is already paid');
+      await this.vendorPayments.create(
+        { vendorId: row.vendorId, paidAt, method: dto.method, reference: dto.reference, amount: Number(balance), allocations: [{ kind: 'ACCESSORY_PURCHASE', billId: id, amount: Number(balance) }] },
+        userId,
+        { canSeeCost: true, notBefore: row.purchaseDate },
+      );
+      return this.getById(id);
+    }
     await this.closing.assertOpen(paidAt);
     const { count } = await this.prisma.accessoryPurchase.updateMany({ where: { id, status: 'ACTIVE', paid: false }, data: { paid: true, paidAt, paymentMethod: dto.method, paymentReference: dto.reference || null, updatedById: userId } });
     if (count !== 1) throw new ConflictException('This purchase was changed by someone else — reload and try again');
@@ -188,6 +240,8 @@ export class AccessoryPurchasesService {
     await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.accessoryPurchase.updateMany({ where: { id, status: 'ACTIVE' }, data: { status: 'CANCELLED', cancelledAt: now, cancelledById: userId, cancelReason: dto.reason, updatedById: userId } });
       if (claimed.count !== 1) throw new ConflictException('This purchase is already cancelled');
+      // What vendor payments applied to it stays with the vendor as an advance (to apply to another bill).
+      await this.vendorBills.releaseAllocations(tx, { kind: 'ACCESSORY_PURCHASE', id });
       for (const item of [...row.items].sort((a, b) => a.accessoryId.localeCompare(b.accessoryId))) {
         const s = await lockStock(tx, companyId, item.accessoryId);
         const available = s.onHand - s.reserved;
@@ -250,6 +304,9 @@ export class AccessoryPurchasesService {
       paidAt: r.paidAt?.toISOString() ?? null,
       paymentMethod: r.paymentMethod,
       paymentReference: r.paymentReference,
+      allocated: String(r.vendorAllocations.reduce((a, x) => a + x.amount, 0n)),
+      purchaseOrderId: r.purchaseOrderId,
+      poNumber: r.purchaseOrder?.poNumber ?? null,
       itemCount: r.items.reduce((n, i) => n + i.quantity, 0),
       itemsSummary: r.items.map((i) => `${i.accessory.name} × ${i.quantity}`).join(', '),
       cancelledAt: r.cancelledAt?.toISOString() ?? null,

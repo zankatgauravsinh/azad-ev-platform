@@ -4,6 +4,23 @@ All notable changes to the AZAD EV POINT Showroom Management System are document
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses semantic-ish versioning during the module build-out.
 
 ## [Unreleased]
+### Added — Vendor management (release/3.4)
+- **Vendors menu + vendor page** (`/vendors`, `/vendors/:id`): profile with type, contact person, PAN (taken from the GSTIN), credit days, bank / UPI; one default scooter vendor. Tabs: Overview (owed, overdue ageing 1–30 / 31–60 / 61–90 / 90+ days, advance, net payable, scooters bought / in stock / sold), Bills, Payments, Scooters, Statement, Purchase orders.
+- **Vendor picker everywhere a supplier is entered**: scooter form, CSV import (Supplier column must name a vendor; blank = default vendor), accessory purchases, expenses (`GET /vendor-options`, readable by anyone who records purchases). Existing scooters were linked to the vendor named in their supplier text, otherwise to COMPTECH.
+- **Scooter purchases owed per scooter**: a scooter bought from a vendor is a bill (price + GST + transport) until paid, due after the vendor's credit days; vendor bill number on the scooter; "Paid to the vendor now" when adding it; paid / not paid on the scooter page with a Pay vendor button.
+- **Vendor payments** (`/vendor-payments`, `VPY` numbering): one payment settles several bills — scooters, accessory purchases, expenses — in full or in part; anything paid above them is an advance, applied to bills later; cancelling a payment makes its bills unpaid again; payment voucher PDF. Cash payments leave the cash book once (the bills they settle no longer add their own cash row).
+- **Vendor statement** for a date range (`GET /vendors/:id/statement`, `.pdf`): opening balance, bills and payments with the running balance, closing balance.
+- **Purchase orders** (`/purchase-orders`, `PO` numbering): scooter lines (model / variant / colour) and accessory lines with price before GST and GST %; Draft → Ordered → Closed / Cancelled; PO PDF for the vendor; the vendor's PI, tax invoice, challan attached; advance against the order. Scooters are received against a line from the scooter form (vendor, variant and price from the order, "Save & next"), accessories as an accessory purchase; received quantities are counted from those records and a fully received order closes itself.
+- **Books**: P&L counts *Scooter cost of sales* — price + transport (before GST) of scooters invoiced in the period, less scooters restocked by a return; scooter purchase GST is input GST in the GST summary. The finance dashboard's vendor payable and top vendors include scooters and accessory purchases.
+- Settings: vendor payment and purchase order prefixes.
+
+### Changed
+- **Cutover from 'Vehicle Purchase' expenses**: every scooter that existed before this release is marked as expensed and paid (`costInExpenses`) — never a vendor bill, cost of sales or input GST again, so nothing is counted twice. The Vehicle Purchase category is deactivated and new Vehicle Purchase expenses dated after the cutover are refused.
+- An accessory purchase with a vendor is paid through a vendor payment (also when marked paid later).
+- Purchase cost stays the owner's (`inventory.cost`): without it, vendor figures leave out scooter and accessory purchase bills, and purchase orders are hidden.
+
+Migrations: `20261020090000_vendor_profile_and_scooter_vendor`, `20261021090000_vendor_payments_and_purchase_orders`. Tests: `vendors.e2e-spec.ts`, `vendor-payables.e2e-spec.ts` (25); 777 unit, all e2e suites, 527 web green.
+
 ### Planned
 - Test Rides module; more finance dashboard charts; S3 storage driver for attachments (interface already S3-ready).
 

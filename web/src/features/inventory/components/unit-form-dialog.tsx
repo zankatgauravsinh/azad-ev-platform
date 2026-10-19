@@ -1,14 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useFieldArray, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Lock, Pencil, Percent, Plus, ScanLine, ShieldCheck, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { PURCHASE_COST_PERMISSION, UNIT_STATUSES, UNIT_WARRANTY_MONTH_FIELDS, UnitStatus, WARRANTY_EXTRAS_MAX, WARRANTY_MONTHS_MAX, computePurchaseCost, warrantyExtrasSchema, type CreateUnitInput, type UnitWarrantyMonthField, type UpdateUnitInput } from '@azad/shared';
+import { PURCHASE_COST_PERMISSION, UNIT_STATUSES, UNIT_WARRANTY_MONTH_FIELDS, UnitStatus, WARRANTY_EXTRAS_MAX, WARRANTY_MONTHS_MAX, computePurchaseCost, warrantyExtrasSchema, type CreateUnitInput, type FinancePayMethod, type UnitWarrantyMonthField, type UpdateUnitInput } from '@azad/shared';
 import { useCompanySettings } from '@/features/settings/hooks';
 import { todayDateInput } from '@/features/delivery/components/delivery-date-field';
 import { useAuth } from '@/features/auth/auth-context';
 import { VariantFormDialog } from '@/features/catalog/components/variant-form-dialog';
+import { NO_VENDOR, VendorSelect } from '@/features/vendors/components/vendor-select';
+import { VendorFormDialog } from '@/features/vendors/components/vendor-form-dialog';
+import { useVendorOptions } from '@/features/vendors/hooks';
+import { PAY_METHODS } from '@/features/accessories/components/purchase-form-dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { apiErrorMessage } from '@/lib/api-client';
 import { formatPaise, paiseToRupees, rupeesToPaise } from '@/lib/money';
 import { unitStatusLabel } from '@/lib/labels';
@@ -65,7 +70,15 @@ const formSchema = z.object({
   purchaseGstAmount: optionalRupees,
   transportCharge: optionalRupees,
   sellingPrice: optionalRupees,
-  supplier: z.string().optional(),
+  /** A vendor id, NO_VENDOR, or '' (a new scooter not yet given one: the server uses the default vendor). */
+  vendorId: z.string(),
+  /** The vendor's bill (invoice) number for this scooter. */
+  vendorBillNumber: z.string().max(60).optional(),
+  // Paid to the vendor when added (owner only): a vendor payment of its purchase cost.
+  paidNow: z.boolean(),
+  payMethod: z.enum(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CHEQUE']),
+  paidOn: z.string().optional().refine((v) => !v || v <= todayDateInput(), 'The payment date cannot be in the future'),
+  payReference: z.string().max(120).optional(),
   location: z.string().optional(),
   keyNumber: z.string().max(30).optional(),
   notes: z.string().optional(),
@@ -75,21 +88,44 @@ type FormValues = z.infer<typeof formSchema>;
 
 const normalise = (value: string): string => value.trim().toUpperCase();
 
+/** A purchase-order line a new scooter is received against: its vendor, variant and price fill the form. */
+export interface ReceiveAgainstLine {
+  lineId: string;
+  poNumber: string;
+  vendorId: string;
+  modelId: string;
+  variantId: string;
+  description: string;
+  /** Price per scooter before GST (paise). */
+  unitCost: string;
+  gstRateBp: number;
+  /** Still to receive on the line. */
+  remaining: number;
+}
+
 /**
  * Add / edit a scooter. The vehicle's catalogue identity is always a curated variant (model → variant,
  * the colour comes with the variant); nothing is created from free text. Which identity fields an edit
  * may change comes from the server's `unit.identity` policy — the server re-checks every change.
+ * With `orderLine` it receives a scooter against a purchase order: vendor and variant come from the order,
+ * the price from the line, and "Save & next" keeps them for the next scooter of the line.
  */
 export function UnitFormDialog({
   open,
   onOpenChange,
   unit,
+  orderLine,
+  onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   unit?: UnitDetail;
+  orderLine?: ReceiveAgainstLine;
+  onSaved?: () => void;
 }): JSX.Element {
   const isEdit = Boolean(unit);
+  const receiving = !isEdit && Boolean(orderLine);
+  const [receivedHere, setReceivedHere] = useState(0);
   const { can } = useAuth();
   const canCost = can(PURCHASE_COST_PERMISSION);
   // GST paid: worked out from a rate by default; the pencil switches to typing the amount.
@@ -104,6 +140,9 @@ export function UnitFormDialog({
   const [scannerOpen, setScannerOpen] = useState(false);
   const [vinTaken, setVinTaken] = useState(false);
   const [addVariantOpen, setAddVariantOpen] = useState(false);
+  const [addVendorOpen, setAddVendorOpen] = useState(false);
+  const canAddVendor = can('vendors.manage');
+  const { data: vendorOptions } = useVendorOptions(open);
 
   // Locks for an edit (an add is always fully editable).
   const catalogueLocked = isEdit && !unit?.identity?.catalogueEditable;
@@ -128,11 +167,18 @@ export function UnitFormDialog({
 
   useEffect(() => {
     if (!open) return;
-    reset(unit ? toFormValues(unit) : emptyValues());
+    reset(unit ? toFormValues(unit) : orderLine ? fromOrderLine(orderLine) : emptyValues());
+    setReceivedHere(0);
     // A typed GST amount (no rate stored) opens in amount mode; otherwise the rate, defaulting for a new one.
     setGstAsAmount(Boolean(unit && unit.purchaseGstRateBp == null && unit.purchaseGst && unit.purchaseGst !== '0'));
     setVinTaken(false);
-  }, [open, unit, reset]);
+  }, [open, unit, orderLine, reset]);
+
+  // A new scooter is bought from the default scooter vendor unless another is picked.
+  const defaultVendorId = vendorOptions?.defaultScooterVendorId;
+  useEffect(() => {
+    if (open && !unit && defaultVendorId && watch('vendorId') === '') setValue('vendorId', defaultVendorId);
+  }, [open, unit, defaultVendorId, setValue, watch]);
 
   // A new scooter's warranty months start from the company default.
   useEffect(() => {
@@ -143,8 +189,8 @@ export function UnitFormDialog({
   const modelId = watch('modelId');
   // A new rate field starts from the company's tax rate (5% when none is set).
   useEffect(() => {
-    if (open && canCost && watch('purchaseGstRate') === '' && !(unit && unit.purchaseGstRateBp == null && unit.purchaseGst && unit.purchaseGst !== '0')) setValue('purchaseGstRate', defaultGstRate);
-  }, [open, canCost, defaultGstRate, unit, setValue, watch]);
+    if (open && canCost && !orderLine && watch('purchaseGstRate') === '' && !(unit && unit.purchaseGstRateBp == null && unit.purchaseGst && unit.purchaseGst !== '0')) setValue('purchaseGstRate', defaultGstRate);
+  }, [open, canCost, defaultGstRate, unit, orderLine, setValue, watch]);
   const [price, gstRate, gstAmount, transport] = watch(['purchasePrice', 'purchaseGstRate', 'purchaseGstAmount', 'transportCharge']);
   // The same calculation the server stores (computePurchaseCost), previewed as the owner types.
   const purchaseBreakdown = useMemo(() => {
@@ -192,6 +238,11 @@ export function UnitFormDialog({
     return () => clearTimeout(timer);
   }, [vin, isEdit, unit?.vin]);
 
+  // "Save & next" (receiving several scooters of an order line): keeps the dialog open for the next one.
+  const keepOpen = useRef(false);
+  const remainingOnLine = orderLine ? orderLine.remaining - receivedHere : 0;
+  const paidNow = watch('paidNow');
+
   const onSubmit = handleSubmit(async (values) => {
     if (vinTaken) {
       toast.error('This VIN already exists');
@@ -211,7 +262,10 @@ export function UnitFormDialog({
         : {}),
       // Blank selling price: left out (a new unit then takes the variant's list price; an edit keeps its price).
       ...(values.sellingPrice === '' ? {} : { sellingPrice: Number(rupeesToPaise(values.sellingPrice)) }),
-      supplier: values.supplier || undefined,
+      // The vendor: on an edit only when it changes; NO_VENDOR clears it.
+      ...(!isEdit || values.vendorId !== (unit?.vendorId ?? NO_VENDOR) ? { vendorId: values.vendorId === NO_VENDOR ? null : values.vendorId || undefined } : {}),
+      // The vendor's bill number: sent even when empty on an edit, so a wrong one can be removed.
+      vendorBillNumber: isEdit ? values.vendorBillNumber?.trim() ?? '' : values.vendorBillNumber?.trim() || undefined,
       location: values.location || undefined,
       // Sent even when empty on an edit, so a wrong key number can be removed.
       keyNumber: isEdit ? values.keyNumber ?? '' : values.keyNumber || undefined,
@@ -253,9 +307,19 @@ export function UnitFormDialog({
           ...Object.fromEntries(WARRANTY_INPUTS.map(({ field }) => [field, months(field) ?? undefined])),
           ...(values.warrantyExtras.length ? { warrantyExtras: values.warrantyExtras } : {}),
           status: values.status,
+          ...(orderLine ? { purchaseOrderLineId: orderLine.lineId } : {}),
+          ...(canCost && values.paidNow ? { purchasePayment: { method: values.payMethod, paidAt: values.paidOn ? new Date(values.paidOn) : undefined, reference: values.payReference?.trim() || undefined } } : {}),
         } as CreateUnitInput;
         await createUnit.mutateAsync(input);
-        toast.success('Scooter added');
+        toast.success(orderLine ? `Scooter received against ${orderLine.poNumber}` : values.paidNow ? 'Scooter added — paid to the vendor' : 'Scooter added');
+        onSaved?.();
+        if (orderLine && keepOpen.current && remainingOnLine > 1) {
+          setReceivedHere((n) => n + 1);
+          // Same order line, vendor and price: only the vehicle's own numbers change.
+          for (const field of ['vin', 'motorNumber', 'batteryNumber', 'controllerNumber', 'chargerNumber', 'vendorBillNumber', 'keyNumber'] as const) setValue(field, '');
+          keepOpen.current = false;
+          return;
+        }
       }
       onOpenChange(false);
     } catch (error) {
@@ -269,9 +333,13 @@ export function UnitFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit scooter' : 'Add scooter'}</DialogTitle>
+          <DialogTitle>{isEdit ? 'Edit scooter' : receiving ? `Receive scooter — ${orderLine!.poNumber}` : 'Add scooter'}</DialogTitle>
           <DialogDescription>
-            {isEdit ? `VIN ${unit?.vin}` : 'Register a new unit in inventory.'}
+            {isEdit
+              ? `VIN ${unit?.vin}`
+              : receiving
+                ? `${orderLine!.description} · ${remainingOnLine} still to receive on this line. Vendor, variant and price come from the order.`
+                : 'Register a new unit in inventory.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -290,7 +358,7 @@ export function UnitFormDialog({
               render={({ field }) => (
                 <Select
                   value={field.value}
-                  disabled={catalogueLocked}
+                  disabled={catalogueLocked || receiving}
                   onValueChange={(value) => {
                     field.onChange(value);
                     setValue('variantId', ''); // a variant belongs to one model
@@ -316,7 +384,7 @@ export function UnitFormDialog({
                 control={control}
                 name="variantId"
                 render={({ field }) => (
-                  <Select value={field.value} disabled={catalogueLocked || !modelId} onValueChange={field.onChange}>
+                  <Select value={field.value} disabled={catalogueLocked || !modelId || receiving} onValueChange={field.onChange}>
                     <SelectTrigger id="unit-variant" aria-label="Variant">
                       <SelectValue placeholder={modelId ? 'Select variant' : 'Select a model first'} />
                     </SelectTrigger>
@@ -333,7 +401,7 @@ export function UnitFormDialog({
                   </Select>
                 )}
               />
-              {canCreateVariant && !catalogueLocked && modelIsActive && (
+              {canCreateVariant && !catalogueLocked && !receiving && modelIsActive && (
                 <Button type="button" variant="outline" size="icon" aria-label="Add variant" title="Add a variant to this model" onClick={() => setAddVariantOpen(true)}>
                   <Plus className="h-4 w-4" />
                 </Button>
@@ -480,6 +548,46 @@ export function UnitFormDialog({
                 <div className="flex gap-2"><dt className="text-muted-foreground">GST paid</dt><dd className="tabular-nums">{purchaseBreakdown ? formatPaise(purchaseBreakdown.purchaseGst) : '—'}</dd></div>
                 <div className="flex gap-2 font-semibold"><dt>Purchase cost</dt><dd className="tabular-nums">{purchaseBreakdown ? formatPaise(purchaseBreakdown.purchaseCost) : '—'}</dd></div>
               </dl>
+              {isEdit && unit ? (
+                <p className="text-xs text-muted-foreground">
+                  {unit.costInExpenses
+                    ? 'Bought before per-scooter tracking: its cost was recorded as a Vehicle Purchase expense.'
+                    : unit.purchasePaid
+                      ? 'Paid to the vendor. Pay or undo payments from the vendor’s page.'
+                      : 'Owed to the vendor until paid — pay it from the scooter or the vendor’s page.'}
+                </p>
+              ) : (
+                <div className="space-y-3 border-t pt-3">
+                  <label className="flex items-center gap-2 text-sm font-medium">
+                    <Controller control={control} name="paidNow" render={({ field }) => <Checkbox checked={field.value} onCheckedChange={(v) => field.onChange(Boolean(v))} aria-label="Paid to the vendor now" />} />
+                    Paid to the vendor now
+                  </label>
+                  {paidNow ? (
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <Field label="Paid by" htmlFor="unit-pay-method">
+                        <Controller
+                          control={control}
+                          name="payMethod"
+                          render={({ field }) => (
+                            <Select value={field.value} onValueChange={(v) => field.onChange(v as FinancePayMethod)}>
+                              <SelectTrigger id="unit-pay-method"><SelectValue /></SelectTrigger>
+                              <SelectContent>{PAY_METHODS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
+                            </Select>
+                          )}
+                        />
+                      </Field>
+                      <Field label="Paid on" htmlFor="unit-paid-on" error={errors.paidOn?.message}>
+                        <Input id="unit-paid-on" type="date" max={todayDateInput()} placeholder="Purchase date" {...register('paidOn')} />
+                      </Field>
+                      <Field label="Reference (optional)" htmlFor="unit-pay-ref">
+                        <Input id="unit-pay-ref" maxLength={120} placeholder="UTR / cheque no." {...register('payReference')} />
+                      </Field>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Not paid yet: the purchase cost is owed to the vendor (due after their credit days) until you pay it.</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
           <Field label="Selling price (₹)" htmlFor="unit-selling-price" error={errors.sellingPrice?.message}>
@@ -493,8 +601,19 @@ export function UnitFormDialog({
             />
             {!isEdit && <p className="text-xs text-muted-foreground">Leave blank to use the variant&apos;s list price.</p>}
           </Field>
-          <Field label="Supplier" htmlFor="unit-supplier">
-            <Input id="unit-supplier" {...register('supplier')} />
+          <Field label="Bought from (vendor)" htmlFor="unit-vendor">
+            <div className="flex gap-2">
+              <div className="min-w-0 flex-1">
+                <Controller control={control} name="vendorId" render={({ field }) => <VendorSelect id="unit-vendor" value={field.value || NO_VENDOR} onChange={field.onChange} prefer="SCOOTER_SUPPLIER" disabled={receiving} />} />
+              </div>
+              {canAddVendor && !receiving && (
+                <Button type="button" variant="outline" size="icon" aria-label="Add a vendor" title="Add a vendor" onClick={() => setAddVendorOpen(true)}><Plus className="h-4 w-4" /></Button>
+              )}
+            </div>
+            {isEdit && unit?.supplier && !unit.vendorId && <p className="text-xs text-muted-foreground">Recorded as “{unit.supplier}” — pick the vendor it was bought from.</p>}
+          </Field>
+          <Field label="Vendor bill no." htmlFor="unit-vendor-bill">
+            <Input id="unit-vendor-bill" maxLength={60} placeholder="The vendor's invoice no." {...register('vendorBillNumber')} />
           </Field>
           <Field label="Location" htmlFor="unit-location">
             <Input id="unit-location" placeholder="e.g. Showroom floor" {...register('location')} />
@@ -533,8 +652,13 @@ export function UnitFormDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting || vinTaken}>
-              {isSubmitting ? 'Saving…' : isEdit ? 'Save changes' : 'Add scooter'}
+            {receiving && remainingOnLine > 1 && (
+              <Button type="submit" variant="outline" disabled={isSubmitting || vinTaken} onClick={() => { keepOpen.current = true; }}>
+                Save &amp; next
+              </Button>
+            )}
+            <Button type="submit" disabled={isSubmitting || vinTaken} onClick={() => { keepOpen.current = false; }}>
+              {isSubmitting ? 'Saving…' : isEdit ? 'Save changes' : receiving ? 'Receive scooter' : 'Add scooter'}
             </Button>
           </DialogFooter>
         </form>
@@ -552,6 +676,9 @@ export function UnitFormDialog({
             modelLabel={`${selectedModel.brand} ${selectedModel.name}`}
             onSaved={(saved) => setValue('variantId', saved.id, { shouldValidate: true })}
           />
+        )}
+        {canAddVendor && (
+          <VendorFormDialog open={addVendorOpen} onOpenChange={setAddVendorOpen} defaultType="SCOOTER_SUPPLIER" onSaved={(saved) => setValue('vendorId', saved.id)} />
         )}
       </DialogContent>
     </Dialog>
@@ -615,11 +742,30 @@ function emptyValues(): FormValues {
     purchaseGstAmount: '',
     transportCharge: '',
     sellingPrice: '',
-    supplier: '',
+    vendorId: '',
+    vendorBillNumber: '',
+    paidNow: false,
+    payMethod: 'BANK_TRANSFER',
+    paidOn: '',
+    payReference: '',
     location: '',
     keyNumber: '',
     notes: '',
     status: UnitStatus.AVAILABLE,
+  };
+}
+
+/** A new scooter received against an order line: the order's vendor, the line's variant and price. */
+function fromOrderLine(line: ReceiveAgainstLine): FormValues {
+  return {
+    ...emptyValues(),
+    modelId: line.modelId,
+    variantId: line.variantId,
+    vendorId: line.vendorId,
+    purchaseDate: todayDateInput(),
+    purchasePrice: paiseToRupees(line.unitCost),
+    purchaseGstRate: line.gstRateBp / 100,
+    transportCharge: 0,
   };
 }
 
@@ -643,7 +789,12 @@ function toFormValues(unit: UnitDetail): FormValues {
     purchaseGstAmount: unit.purchaseGst !== undefined ? paiseToRupees(unit.purchaseGst) : '',
     transportCharge: unit.transportCharge !== undefined ? paiseToRupees(unit.transportCharge) : '',
     sellingPrice: paiseToRupees(unit.sellingPrice),
-    supplier: unit.supplier ?? '',
+    vendorId: unit.vendorId ?? NO_VENDOR,
+    vendorBillNumber: unit.vendorBillNumber ?? '',
+    paidNow: false,
+    payMethod: 'BANK_TRANSFER',
+    paidOn: '',
+    payReference: '',
     location: unit.location ?? '',
     keyNumber: unit.keyNumber ?? '',
     notes: unit.notes ?? '',

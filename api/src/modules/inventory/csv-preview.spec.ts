@@ -24,7 +24,7 @@ describe('buildCsvPreview', () => {
     expect(p.summary).toEqual({ total: 2, valid: 2, invalid: 0, duplicate: 0 });
     expect(p.rows[0]).toEqual({
       row: 2, status: 'VALID', vin: 'VIN1', issues: [],
-      unit: { modelId: 'solo', variantId: 'pro', brand: 'GAMMA', model: 'Solo', variant: 'Pro', colour: 'Teal', status: 'AVAILABLE', sellingPrice: '12500000', sellingPriceSource: 'LIST_PRICE', purchaseCost: '100000', purchaseDate: '2026-06-01' },
+      unit: { modelId: 'solo', variantId: 'pro', brand: 'GAMMA', model: 'Solo', variant: 'Pro', colour: 'Teal', status: 'AVAILABLE', sellingPrice: '12500000', sellingPriceSource: 'LIST_PRICE', purchaseCost: '100000', purchaseDate: '2026-06-01', vendorName: null },
     });
     expect(p.rows[1]!.unit).toMatchObject({ sellingPrice: '0', sellingPriceSource: 'FILE', purchaseCost: '0', purchaseDate: null });
     expect(p).toMatchObject({ checkedAt: '2026-10-11T00:00:00.000Z', maxRows: 2000, fileSha256: SHA });
@@ -49,6 +49,39 @@ describe('buildCsvPreview', () => {
   ])('catalogue: %s → %s', (names, code, field) => {
     const p = preview([`${names},vinx,mx,bx,,,,`]);
     expect(p.rows[0]!.issues).toEqual([expect.objectContaining({ code, field })]);
+  });
+
+  describe('Supplier → vendor', () => {
+    const SUPPLIER_HEAD = `${HEAD},Supplier`;
+    const vendors: Catalogue = {
+      ...catalogue,
+      vendors: [
+        { id: 'v-comptech', vendorNumber: 'VND0001', name: 'COMPTECH' },
+        { id: 'v-a', vendorNumber: 'VND0002', name: 'Twin Motors' },
+        { id: 'v-b', vendorNumber: 'VND0003', name: 'twin motors ' },
+      ],
+      defaultVendorId: 'v-comptech',
+    };
+    const run = (supplier: string, cat: Catalogue = vendors) =>
+      validateCsvFile(readCsvRows(Buffer.from([SUPPLIER_HEAD, `,Solo,Pro,Teal,vin1,m1,b1,,,,,${supplier}`].join('\n')), header), cat, none(), 2000, new Date('2026-10-11T00:00:00.000Z'), SHA);
+
+    it('a vendor named (any case, extra spaces) or by its vendor number is linked; the supplier text becomes its name', () => {
+      expect(run('  comptech ').units[0]).toMatchObject({ vendorId: 'v-comptech', supplier: 'COMPTECH' });
+      expect(run('vnd0003').units[0]).toMatchObject({ vendorId: 'v-b', supplier: 'twin motors ' });
+      expect(run('  comptech ').preview.rows[0]!.unit).toMatchObject({ vendorName: 'COMPTECH' });
+    });
+
+    it('blank → the default scooter vendor (none set → no vendor)', () => {
+      expect(run('').units[0]).toMatchObject({ vendorId: 'v-comptech', supplier: 'COMPTECH' });
+      expect(run('', { ...vendors, defaultVendorId: null }).units[0]).toMatchObject({ vendorId: null, supplier: null });
+    });
+
+    it('an unknown vendor, or a name two vendors share, is a row error on Supplier', () => {
+      expect(run('Depot').preview.rows[0]!.issues).toEqual([expect.objectContaining({ code: 'VENDOR_NOT_FOUND', field: 'supplier' })]);
+      const twin = run('Twin Motors').preview.rows[0]!.issues;
+      expect(twin).toEqual([expect.objectContaining({ code: 'VENDOR_AMBIGUOUS', field: 'supplier' })]);
+      expect(twin[0]!.message).toContain('VND0002, VND0003');
+    });
   });
 
   it('a Brand resolves a model name used by several brands', () => {
@@ -89,8 +122,8 @@ describe('buildCsvPreview', () => {
     const { preview: p, units } = validateCsvFile(readCsvRows(Buffer.from([HEAD, ',Solo,Pro,Teal, vin1 ,m1,b1,1/6/2026,1000,,', 'beta,VX,Pro,Red,vin2,m2,b2,,,500,'].join('\n')), header), catalogue, none(), 2000, new Date(), SHA);
     expect(p.summary.invalid).toBe(0);
     expect(units).toEqual([
-      { line: 2, variantId: 'pro', vin: 'VIN1', motorNumber: 'M1', batteryNumber: 'B1', sellingPrice: 12_500_000n, purchaseCost: 100_000n, purchaseDate: new Date('2026-06-01T00:00:00.000Z'), supplier: null, location: null },
-      { line: 3, variantId: 'vxb', vin: 'VIN2', motorNumber: 'M2', batteryNumber: 'B2', sellingPrice: 50_000n, purchaseCost: 0n, purchaseDate: null, supplier: null, location: null },
+      { line: 2, variantId: 'pro', vin: 'VIN1', motorNumber: 'M1', batteryNumber: 'B1', sellingPrice: 12_500_000n, purchaseCost: 100_000n, purchaseDate: new Date('2026-06-01T00:00:00.000Z'), supplier: null, vendorId: null, location: null },
+      { line: 3, variantId: 'vxb', vin: 'VIN2', motorNumber: 'M2', batteryNumber: 'B2', sellingPrice: 50_000n, purchaseCost: 0n, purchaseDate: null, supplier: null, vendorId: null, location: null },
     ]);
   });
 

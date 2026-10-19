@@ -167,6 +167,8 @@ export class CompanySettingsService {
       rtoInvoicePrefix: s.rtoInvoicePrefix,
       accessoryInvoicePrefix: s.accessoryInvoicePrefix,
       accessoryPurchasePrefix: s.accessoryPurchasePrefix,
+      vendorPaymentPrefix: s.vendorPaymentPrefix,
+      purchaseOrderPrefix: s.purchaseOrderPrefix,
       whatsappQuotationMessage: s.whatsappQuotationMessage,
       whatsappInvoiceMessage: s.whatsappInvoiceMessage,
       whatsappDeliveryMessage: s.whatsappDeliveryMessage,

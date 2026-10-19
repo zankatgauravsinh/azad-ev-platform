@@ -95,7 +95,7 @@ describe('Inventory CSV import preview (e2e)', () => {
     expect(p.rows.map((r) => r.status)).toEqual(['VALID', 'VALID', 'INVALID', 'INVALID', 'INVALID', 'INVALID', 'VALID', 'INVALID']);
     expect(p.rows[0]).toEqual({
       row: 2, status: 'VALID', vin: rows[0]!.vin.toUpperCase(), issues: [],
-      unit: { modelId: cat.solo, variantId: cat.pro, brand: 'GAMMA', model: 'Solo', variant: 'Pro', colour: 'Teal', status: 'AVAILABLE', sellingPrice: String(LIST_PRICE), sellingPriceSource: 'LIST_PRICE', purchaseCost: '11000000', purchaseDate: '2026-06-01' },
+      unit: { modelId: cat.solo, variantId: cat.pro, brand: 'GAMMA', model: 'Solo', variant: 'Pro', colour: 'Teal', status: 'AVAILABLE', sellingPrice: String(LIST_PRICE), sellingPriceSource: 'LIST_PRICE', purchaseCost: '11000000', purchaseDate: '2026-06-01', vendorName: null },
     });
     expect(p.rows[1]!.unit).toMatchObject({ sellingPrice: '0', sellingPriceSource: 'FILE', purchaseDate: '2026-06-02' });
     expect(p.rows[6]!.unit).toMatchObject({ brand: 'BETA', model: 'VX', sellingPrice: '7000000' });
