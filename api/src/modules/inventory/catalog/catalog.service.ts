@@ -4,6 +4,7 @@ import type { CatalogModelDto, CatalogStatusFilter, CatalogVariantDto, CreateCat
 import { ActivityLogService } from '../../../activity-log/activity-log.service';
 import { TenantContext } from '../../../tenant/tenant-context.service';
 import { catalogActivation, catalogCreated, catalogUpdated, diffFields, type CatalogAuditEvent } from './catalog-audit';
+import { createdFields, type FieldChanges } from '../../../activity-log/audit-diff';
 import { CatalogRepository, type ListOptions, type ModelRow, type VariantRow } from './catalog.repository';
 
 /**
@@ -266,7 +267,15 @@ export class CatalogService {
     };
   }
 
+  /** The event, with the record's name as its label and its field values in the standard `changes` shape. */
   private audit(actorId: string, event: CatalogAuditEvent): Promise<void> {
-    return this.activityLog.record({ actorId, ...event });
+    const meta = (event.metadata ?? {}) as Record<string, unknown>;
+    const changes = event.action === 'UPDATE'
+      ? (meta.changes as FieldChanges)
+      : event.action === 'STATUS_CHANGE'
+        ? (meta as FieldChanges)
+        : createdFields(meta);
+    const entityLabel = /^(?:Created|Updated|Activated|Deactivated) (?:model|variant) (.+?)(?::|$)/.exec(event.summary)?.[1] ?? null;
+    return this.activityLog.record({ actorId, ...event, entityLabel, changes });
   }
 }

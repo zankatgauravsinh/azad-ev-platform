@@ -136,7 +136,11 @@ describe('CatalogService', () => {
       repo.createModel.mockResolvedValue(model({ description: 'Flagship' }));
       await service.createModel({ brand: 'TESTBRAND', name: 'VX', description: 'Flagship' }, 'u1');
       expect(repo.createModel).toHaveBeenCalledWith(CO, { brand: 'TESTBRAND', name: 'VX', description: 'Flagship', isActive: true, createdById: 'u1', updatedById: 'u1' });
-      expect(log.record).toHaveBeenCalledWith({ actorId: 'u1', action: 'CREATE', entityType: 'ScooterModel', entityId: 'm1', summary: 'Created model TESTBRAND VX', metadata: { brand: 'TESTBRAND', name: 'VX', description: 'Flagship', isActive: true } });
+      expect(log.record).toHaveBeenCalledWith({
+        actorId: 'u1', action: 'CREATE', entityType: 'ScooterModel', entityId: 'm1', entityLabel: 'TESTBRAND VX', summary: 'Created model TESTBRAND VX',
+        metadata: { brand: 'TESTBRAND', name: 'VX', description: 'Flagship', isActive: true },
+        changes: { brand: { from: null, to: 'TESTBRAND' }, name: { from: null, to: 'VX' }, description: { from: null, to: 'Flagship' }, isActive: { from: null, to: true } },
+      });
     });
 
     it('14. model update records before/after for what changed, and nothing when nothing changed', async () => {

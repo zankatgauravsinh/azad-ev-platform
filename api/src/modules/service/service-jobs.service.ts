@@ -358,30 +358,38 @@ export class ServiceJobsService {
         // Atomic guarded decrement so concurrent consumption can't drive stock negative.
         const decremented = await tx.sparePart.updateMany({ where: { id: part.id, quantity: { gte: dto.qty } }, data: { quantity: { decrement: dto.qty }, updatedById: actor.id } });
         if (decremented.count !== 1) throw new BadRequestException(`Only ${part.quantity} of ${part.name} in stock`);
+        await this.activityLog.recordInTransaction({ actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'SparePart', entityId: part.id, entityLabel: `${part.name} (${part.sku})`, summary: `Stock −${dto.qty} for ${part.name}: used on job card ${job.code}`, changes: { quantity: { from: part.quantity, to: part.quantity - dto.qty } }, metadata: { serviceJobId: id } }, tx);
       }
       await tx.servicePart.create({ data: { serviceJobId: id, sparePartId: dto.sparePartId ?? null, name, qty: dto.qty, unitCost, unitPrice, warranty, createdById: actor.id, updatedById: actor.id } });
       await this.recompute(tx, id);
       await this.timeline.record({ customerId: job.customerId, type: CustomerEventType.PARTS_ADDED, title: `Part added: ${name}`, entityType: 'ServiceJob', entityId: id, actorId: actor.id }, tx);
+      await this.activityLog.recordInTransaction({ actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, entityLabel: job.code, summary: `Added part ${name} × ${dto.qty} @ ${formatInrExact(unitPrice)} to job card ${job.code}`, changes: createdFields({ part: name, qty: dto.qty, unitPrice, warranty }), metadata: { sparePartId: dto.sparePartId ?? null } }, tx);
     });
     return this.getById(id, actor);
   }
 
   async removePart(id: string, partId: string, actor: Actor): Promise<ServiceJobDto> {
     // Also stops a cancelled job's parts — already returned to stock on cancellation — being returned twice.
-    this.assertWritable(await this.load(id, actor));
+    const job = await this.load(id, actor);
+    this.assertWritable(job);
     await this.prisma.$transaction(async (tx) => {
       const part = await tx.servicePart.findFirst({ where: { id: partId, serviceJobId: id } });
       if (!part) throw new NotFoundException('Part line not found');
-      if (part.sparePartId) await tx.sparePart.update({ where: { id: part.sparePartId }, data: { quantity: { increment: part.qty }, updatedById: actor.id } });
+      if (part.sparePartId) {
+        const stock = await tx.sparePart.update({ where: { id: part.sparePartId }, data: { quantity: { increment: part.qty }, updatedById: actor.id } });
+        await this.activityLog.recordInTransaction({ actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'SparePart', entityId: stock.id, entityLabel: `${stock.name} (${stock.sku})`, summary: `Stock +${part.qty} for ${stock.name}: removed from job card ${job.code}`, changes: { quantity: { from: stock.quantity - part.qty, to: stock.quantity } }, metadata: { serviceJobId: id } }, tx);
+      }
       await tx.servicePart.delete({ where: { id: partId } });
       await this.recompute(tx, id);
+      await this.activityLog.recordInTransaction({ actorId: actor.id, action: ActivityAction.DELETE, entityType: 'ServiceJob', entityId: id, entityLabel: job.code, summary: `Removed part ${part.name} × ${part.qty} from job card ${job.code}`, changes: { part: { from: part.name, to: null }, qty: { from: part.qty, to: null }, unitPrice: { from: part.unitPrice.toString(), to: null } } }, tx);
     });
     return this.getById(id, actor);
   }
 
   // ── Labour ─────────────────────────────────────────────
   async addLabour(id: string, dto: AddServiceLabourInput, actor: Actor): Promise<ServiceJobDto> {
-    this.assertWritable(await this.load(id, actor));
+    const job = await this.load(id, actor);
+    this.assertWritable(job);
     await this.prisma.$transaction(async (tx) => {
       let description = dto.description ?? '';
       let cost = BigInt(dto.cost);
@@ -393,17 +401,20 @@ export class ServiceJobsService {
       }
       await tx.serviceLabour.create({ data: { serviceJobId: id, labourItemId: dto.labourItemId ?? null, description, cost, createdById: actor.id, updatedById: actor.id } });
       await this.recompute(tx, id);
+      await this.activityLog.recordInTransaction({ actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, entityLabel: job.code, summary: `Added labour "${description}" ${formatInrExact(cost)} to job card ${job.code}`, changes: createdFields({ labour: description, charge: cost }) }, tx);
     });
     return this.getById(id, actor);
   }
 
   async removeLabour(id: string, labourId: string, actor: Actor): Promise<ServiceJobDto> {
-    this.assertWritable(await this.load(id, actor));
+    const job = await this.load(id, actor);
+    this.assertWritable(job);
     await this.prisma.$transaction(async (tx) => {
       const labour = await tx.serviceLabour.findFirst({ where: { id: labourId, serviceJobId: id } });
       if (!labour) throw new NotFoundException('Labour line not found');
       await tx.serviceLabour.delete({ where: { id: labourId } });
       await this.recompute(tx, id);
+      await this.activityLog.recordInTransaction({ actorId: actor.id, action: ActivityAction.DELETE, entityType: 'ServiceJob', entityId: id, entityLabel: job.code, summary: `Removed labour "${labour.description}" from job card ${job.code}`, changes: { labour: { from: labour.description, to: null }, charge: { from: labour.cost.toString(), to: null } } }, tx);
     });
     return this.getById(id, actor);
   }

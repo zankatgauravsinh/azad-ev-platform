@@ -99,6 +99,10 @@ describe('Service & after-sales (e2e)', () => {
     expect(res.body.parts).toHaveLength(1);
     const after = (await http().get(`/api/v1/service/spare-parts/${sparePartId}`).set('Authorization', auth(ownerToken))).body.quantity;
     expect(after).toBe(before - 2);
+    // Audit: the job card names the part; the spare part records the stock it lost.
+    expect((await prisma.activityLog.findMany({ where: { entityId: jobId } })).some((e) => e.summary.startsWith('Added part'))).toBe(true);
+    const stock = (await prisma.activityLog.findMany({ where: { entityId: sparePartId } })).find((e) => e.summary.startsWith('Stock −2'))!;
+    expect(stock.changes).toEqual({ quantity: { from: before, to: before - 2 } });
   });
 
   it('adds labour from the catalogue and recomputes totals', async () => {

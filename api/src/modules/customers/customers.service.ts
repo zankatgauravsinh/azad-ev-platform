@@ -269,7 +269,7 @@ export class CustomersService {
   }
 
   async addDocument(id: string, file: UploadedFile, type: string, userId: string) {
-    await this.getById(id);
+    const customer = await this.getById(id);
     const docType = this.validateDocType(type);
     const stored = await this.storage.save({
       buffer: file.buffer,
@@ -297,6 +297,7 @@ export class CustomersService {
         entityId: doc.id,
         actorId: userId,
       });
+      await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Customer', entityId: id, entityLabel: customer.name, summary: `Uploaded ${docType.replace(/_/g, ' ').toLowerCase()} "${stored.fileName}" for ${customer.name}`, metadata: { documentId: doc.id, type: docType, fileName: stored.fileName, sizeBytes: stored.sizeBytes } });
       return { ...doc, url: this.storage.urlFor(doc.fileKey) };
     } catch (error) {
       await this.storage.remove(stored.fileKey).catch(() => undefined);
@@ -323,6 +324,7 @@ export class CustomersService {
         updatedById: userId,
       });
       await this.storage.remove(oldKey).catch(() => undefined);
+      await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Customer', entityId: id, summary: `Replaced ${existing.type.replace(/_/g, ' ').toLowerCase()} "${existing.fileName}" with "${stored.fileName}"`, changes: { fileName: { from: existing.fileName, to: stored.fileName } }, metadata: { documentId: docId, type: existing.type } });
       return { ...doc, url: this.storage.urlFor(doc.fileKey) };
     } catch (error) {
       await this.storage.remove(stored.fileKey).catch(() => undefined);
@@ -335,6 +337,7 @@ export class CustomersService {
     if (!doc || doc.customerId !== id) throw new NotFoundException('Document not found');
     await this.repo.deleteDocument(docId);
     await this.storage.remove(doc.fileKey).catch(() => undefined);
+    await this.activityLog.record({ action: ActivityAction.DELETE, entityType: 'Customer', entityId: id, summary: `Removed ${doc.type.replace(/_/g, ' ').toLowerCase()} "${doc.fileName}"`, metadata: { documentId: docId, type: doc.type, fileName: doc.fileName } });
   }
 
   // ── Helpers ────────────────────────────────────────────

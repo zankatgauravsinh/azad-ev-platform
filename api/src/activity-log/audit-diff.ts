@@ -44,11 +44,11 @@ export function diffFields<T extends object>(before: T, after: T, fields: readon
   return changes;
 }
 
-/** A record's initial values (for a create), in the same shape with `from: null`. Secret fields are skipped. */
+/** A record's initial values (for a create), in the same shape with `from: null`. Empty and secret fields are skipped. */
 export function createdFields(values: Record<string, unknown>): FieldChanges {
   const changes: FieldChanges = {};
   for (const [name, v] of Object.entries(values)) {
-    if (SECRET_FIELDS.has(name) || v === undefined) continue;
+    if (SECRET_FIELDS.has(name) || v === undefined || v === null || v === '') continue;
     changes[name] = { from: null, to: auditValue(v, name) };
   }
   return changes;

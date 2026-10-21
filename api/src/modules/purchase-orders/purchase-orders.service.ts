@@ -21,6 +21,16 @@ import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.service';
 import { SequenceService } from '../sales/sequence.service';
 import { isAfterBusinessToday, resolveTimeZone } from '../../common/utils/business-date';
+import { diffFields } from '../../activity-log/audit-diff';
+
+/** A purchase order as the audit trail records it (prices are purchase cost: shown only to inventory.cost holders). */
+const ORDER_AUDIT_FIELDS = ['vendor', 'orderDate', 'expectedDate', 'piNumber', 'piDate', 'notes', 'lines', 'subtotal', 'gstAmount', 'total'] as const;
+type OrderAuditRow = { vendor: { name: string }; orderDate: Date; expectedDate: Date | null; piNumber: string | null; piDate: Date | null; notes: string | null; subtotal: bigint; gstAmount: bigint; total: bigint; lines: { description: string; quantity: number; unitCost: bigint; gstRateBp: number }[] };
+const orderAuditSnapshot = (o: OrderAuditRow): Record<(typeof ORDER_AUDIT_FIELDS)[number], unknown> => ({
+  vendor: o.vendor.name, orderDate: o.orderDate, expectedDate: o.expectedDate, piNumber: o.piNumber, piDate: o.piDate, notes: o.notes,
+  lines: o.lines.map((l) => `${l.description} × ${l.quantity} @ ${l.unitCost} + ${l.gstRateBp / 100}%`).join('; '),
+  subtotal: o.subtotal, gstAmount: o.gstAmount, total: o.total,
+});
 
 type Tx = Prisma.TransactionClient;
 
@@ -221,7 +231,9 @@ export class PurchaseOrdersService {
           updatedById: userId,
         },
       });
-      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'PurchaseOrder', entityId: id, summary: `Updated purchase order ${row.poNumber}` }, tx);
+      const after = await tx.purchaseOrder.findFirstOrThrow({ where: { id }, include: { vendor: { select: { name: true } }, lines: { orderBy: { sortOrder: 'asc' } } } });
+      const changes = diffFields(orderAuditSnapshot(row), orderAuditSnapshot(after), ORDER_AUDIT_FIELDS);
+      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'PurchaseOrder', entityId: id, entityLabel: row.poNumber, summary: Object.keys(changes).length ? `Updated purchase order ${row.poNumber}: ${Object.keys(changes).join(', ')} changed` : `Saved purchase order ${row.poNumber} — nothing changed`, changes }, tx);
     });
     return this.get(id);
   }

@@ -45,6 +45,24 @@ import { buildCsvPreview, identifierCandidates, validateCsvFile } from './csv-pr
 import { VendorPaymentsService } from '../vendor-payables/vendor-payments.service';
 import { VendorBillsService } from '../vendor-payables/vendor-bills.service';
 import { PurchaseOrderReceiptsService } from '../vendor-payables/purchase-order-receipts.service';
+import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
+
+/** A scooter as the audit trail records it (purchase-cost fields keep their names so they stay owner-only). */
+const UNIT_AUDIT_FIELDS = [
+  'vin', 'motorNumber', 'batteryNumber', 'controllerNumber', 'chargerNumber', 'variant', 'status', 'purchaseDate',
+  'purchasePrice', 'purchaseGstRateBp', 'purchaseGst', 'transportCharge', 'purchaseCost', 'sellingPrice', 'vendor', 'vendorBillNumber',
+  'location', 'keyNumber', 'notes', 'motorWarrantyMonths', 'batteryWarrantyMonths', 'controllerWarrantyMonths', 'chargerWarrantyMonths', 'warrantyExtras',
+] as const;
+const UNIT_AUDIT_LABELS: Record<string, string> = { sellingPrice: 'selling price', vendorBillNumber: 'vendor bill no.', keyNumber: 'key no.', purchaseDate: 'purchase date' };
+type UnitAuditRow = Record<string, unknown> & { variant?: { name: string; colour: string; model?: { name: string } | null } | null; vendor?: { name: string } | null };
+function unitAuditSnapshot(u: UnitAuditRow): Record<(typeof UNIT_AUDIT_FIELDS)[number], unknown> {
+  const out = Object.fromEntries(UNIT_AUDIT_FIELDS.map((f) => [f, u[f]])) as Record<(typeof UNIT_AUDIT_FIELDS)[number], unknown>;
+  out.variant = u.variant ? [u.variant.model?.name, u.variant.name, u.variant.colour].filter(Boolean).join(' ') : null;
+  out.vendor = u.vendor?.name ?? null;
+  const extras = u.warrantyExtras as { name: string; months: number }[] | null | undefined;
+  out.warrantyExtras = extras && extras.length ? extras.map((x) => `${x.name} ${x.months} mo`).join('; ') : null;
+  return out;
+}
 
 const LOW_STOCK_THRESHOLD = 2;
 // High enough to export a whole dealership's stock in one file; a single
@@ -490,7 +508,10 @@ export class InventoryService {
       action: ActivityAction.CREATE,
       entityType: 'InventoryUnit',
       entityId: unit.id,
-      summary: `Added scooter ${unit.vin} (${unit.variant.model.name} ${unit.variant.name})`,
+      entityLabel: unit.vin,
+      summary: `Added scooter ${unit.vin} (${unit.variant.model.name} ${unit.variant.name})${unit.vendor ? ` from ${unit.vendor.name}` : ''}`,
+      changes: createdFields(unitAuditSnapshot(unit)),
+      ...(orderLine ? { metadata: { purchaseOrderId: orderLine.purchaseOrderId } } : {}),
     });
     return unit;
   }
@@ -603,12 +624,19 @@ export class InventoryService {
       ...(identity.change ? { variantChange: identity.change } : {}),
       ...(identificationChanges.length > 0 ? { identificationChanges } : {}),
     };
+    // Every field that changed, old → new — purchase-cost fields reach only viewers with inventory.cost.
+    // (Status never changes through an edit; the identity changes keep their own wording, from `parts`.)
+    const changes = diffFields(unitAuditSnapshot(existing), unitAuditSnapshot(unit), UNIT_AUDIT_FIELDS.filter((f) => f !== 'status'));
+    const others = Object.fromEntries(Object.entries(changes).filter(([f]) => !['variant', 'vin', 'motorNumber', 'batteryNumber'].includes(f)));
+    const described = [...parts, changesSummary(others, UNIT_AUDIT_LABELS)].filter(Boolean).join('; ');
     await this.activityLog.record({
       actorId: userId,
       action: ActivityAction.UPDATE,
       entityType: 'InventoryUnit',
       entityId: id,
-      summary: parts.length > 0 ? `Updated scooter ${existing.vin}: ${parts.join('; ')}` : `Updated scooter ${unit.vin}`,
+      entityLabel: unit.vin,
+      summary: described ? `Updated scooter ${existing.vin}: ${described}` : `Updated scooter ${unit.vin}`,
+      changes,
       ...(parts.length > 0 ? { metadata } : {}),
     });
     return unit;
@@ -984,7 +1012,8 @@ export class InventoryService {
       actorId: userId,
       action: ActivityAction.EXPORT,
       entityType: 'InventoryUnit',
-      summary: `Exported inventory (${format}, ${units.length} rows)`,
+      summary: `Exported inventory (${format}, ${units.length} rows${canSeeCost ? ', with purchase cost' : ''})`,
+      metadata: { format, rows: units.length, withPurchaseCost: canSeeCost, filters: JSON.parse(JSON.stringify(query)) as Prisma.InputJsonValue },
     });
 
     if (format === 'xlsx') {
@@ -1003,7 +1032,7 @@ export class InventoryService {
 
   // ── Photos ─────────────────────────────────────────────
   async addPhoto(id: string, file: UploadedFile, label: string | undefined, userId: string) {
-    await this.getUnitOrThrow(id);
+    const unit = await this.getUnitOrThrow(id);
     const stored = await this.storage.save({
       buffer: file.buffer,
       originalName: file.originalname,
@@ -1018,6 +1047,7 @@ export class InventoryService {
         createdById: userId,
         updatedById: userId,
       });
+      await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'InventoryUnit', entityId: id, entityLabel: unit.vin, summary: `Added a photo${photo.label ? ` (${photo.label})` : ''} to scooter ${unit.vin}`, metadata: { photoId: photo.id, label: photo.label } });
       return { ...photo, url: this.storage.urlFor(photo.fileKey) };
     } catch (error) {
       // Roll back the stored file so a failed insert leaves no orphan.
@@ -1035,8 +1065,10 @@ export class InventoryService {
   async removePhoto(id: string, photoId: string): Promise<void> {
     const photo = await this.repo.findPhoto(photoId);
     if (!photo || photo.unitId !== id) throw new NotFoundException('Photo not found');
+    const unit = await this.getUnitOrThrow(id);
     await this.repo.deletePhoto(photoId);
     await this.storage.remove(photo.fileKey);
+    await this.activityLog.record({ action: ActivityAction.DELETE, entityType: 'InventoryUnit', entityId: id, entityLabel: unit.vin, summary: `Removed a photo${photo.label ? ` (${photo.label})` : ''} from scooter ${unit.vin}`, metadata: { photoId, label: photo.label } });
   }
 
   // ── Documents ──────────────────────────────────────────
@@ -1046,7 +1078,7 @@ export class InventoryService {
     type: string,
     userId: string,
   ) {
-    await this.getUnitOrThrow(id);
+    const unit = await this.getUnitOrThrow(id);
     const stored = await this.storage.save({
       buffer: file.buffer,
       originalName: file.originalname,
@@ -1064,6 +1096,7 @@ export class InventoryService {
         createdById: userId,
         updatedById: userId,
       });
+      await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'InventoryUnit', entityId: id, entityLabel: unit.vin, summary: `Added document "${doc.fileName}" (${doc.type}) to scooter ${unit.vin}`, metadata: { documentId: doc.id, fileName: doc.fileName, type: doc.type, sizeBytes: doc.sizeBytes } });
       return { ...doc, url: this.storage.urlFor(doc.fileKey) };
     } catch (error) {
       await this.storage.remove(stored.fileKey).catch(() => undefined);
@@ -1080,8 +1113,10 @@ export class InventoryService {
   async removeDocument(id: string, docId: string): Promise<void> {
     const doc = await this.repo.findDocument(docId);
     if (!doc || doc.unitId !== id) throw new NotFoundException('Document not found');
+    const unit = await this.getUnitOrThrow(id);
     await this.repo.deleteDocument(docId);
     await this.storage.remove(doc.fileKey);
+    await this.activityLog.record({ action: ActivityAction.DELETE, entityType: 'InventoryUnit', entityId: id, entityLabel: unit.vin, summary: `Removed document "${doc.fileName}" (${doc.type}) from scooter ${unit.vin}`, metadata: { documentId: docId, fileName: doc.fileName, type: doc.type } });
   }
 
   // ── Models (for the add form) ──────────────────────────

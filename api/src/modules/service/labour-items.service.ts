@@ -8,6 +8,7 @@ import {
 } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
+import { createdFields, diffFields } from '../../activity-log/audit-diff';
 
 @Injectable()
 export class LabourItemsService {
@@ -25,7 +26,7 @@ export class LabourItemsService {
     const created = await this.prisma.labourItem.create({
       data: { name: dto.name, defaultCost: BigInt(dto.defaultCost), durationMins: dto.durationMins, createdById: userId, updatedById: userId },
     });
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'LabourItem', entityId: created.id, summary: `Added labour item ${created.name}` });
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'LabourItem', entityId: created.id, entityLabel: created.name, summary: `Added labour item ${created.name}`, changes: createdFields({ name: created.name, defaultCost: created.defaultCost, durationMins: created.durationMins }) });
     return this.toDto(created);
   }
 
@@ -37,7 +38,7 @@ export class LabourItemsService {
     if (dto.defaultCost !== undefined) data.defaultCost = BigInt(dto.defaultCost);
     if (dto.durationMins !== undefined) data.durationMins = dto.durationMins;
     const updated = await this.prisma.labourItem.update({ where: { id }, data });
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'LabourItem', entityId: id, summary: `Updated labour item ${updated.name}` });
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'LabourItem', entityId: id, entityLabel: updated.name, summary: `Updated labour item ${updated.name}`, changes: diffFields(existing, updated, ['name', 'defaultCost', 'durationMins']) });
     return this.toDto(updated);
   }
 
@@ -45,7 +46,7 @@ export class LabourItemsService {
     const existing = await this.prisma.labourItem.findFirst({ where: { id } });
     if (!existing) throw new NotFoundException('Labour item not found');
     await this.prisma.labourItem.update({ where: { id }, data: { deletedAt: new Date(), updatedById: userId } });
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.DELETE, entityType: 'LabourItem', entityId: id, summary: 'Removed labour item' });
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.DELETE, entityType: 'LabourItem', entityId: id, entityLabel: existing.name, summary: `Removed labour item ${existing.name}`, changes: diffFields(existing, {} as typeof existing, ['name', 'defaultCost', 'durationMins']) });
   }
 
   private toDto(r: Prisma.LabourItemGetPayload<Record<string, never>>): LabourItemDto {

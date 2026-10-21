@@ -18,7 +18,7 @@ describe('audit-diff', () => {
     expect(Object.keys(changes)).toEqual(['aadhaarNumber']);
     expect(JSON.stringify(changes)).not.toContain('234567890123');
     expect(changes.aadhaarNumber!.to).toMatch(/1098$/);
-    expect(createdFields({ password: 'p', name: 'Ravi', extra: undefined })).toEqual({ name: { from: null, to: 'Ravi' } });
+    expect(createdFields({ password: 'p', name: 'Ravi', extra: undefined, notes: null, ref: '' })).toEqual({ name: { from: null, to: 'Ravi' } });
   });
 
   it('the summary names purchase-cost fields without their values', () => {

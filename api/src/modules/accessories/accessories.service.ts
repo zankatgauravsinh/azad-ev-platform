@@ -16,6 +16,7 @@ import { TenantContext } from '../../tenant/tenant-context.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { formatInrExact } from '../../common/utils/money';
 import { weightedAvgCost } from '../../common/utils/inventory-cost';
+import { createdFields, diffFields } from '../../activity-log/audit-diff';
 
 /** An accessory's stock, read under a row lock. */
 interface LockedStock {
@@ -143,7 +144,7 @@ export class AccessoriesService {
         data: { companyId, accessoryId: id, type: 'OPENING', quantity: dto.quantity, unitCost: BigInt(dto.unitCost), onHandAfter: onHand, reservedAfter: stock.reserved, note: dto.note || 'Opening stock', createdById: userId },
       });
       // No cost in the summary: the activity log is read by people who may not see purchase cost.
-      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Accessory', entityId: id, summary: `Opening stock for ${stock.name}: +${dto.quantity} (on hand ${onHand})` }, tx);
+      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Accessory', entityId: id, entityLabel: stock.name, summary: `Opening stock for ${stock.name}: +${dto.quantity} (on hand ${onHand})`, changes: { onHand: { from: stock.onHand, to: onHand } } }, tx);
     });
     return this.getById(id, true);
   }
@@ -170,7 +171,7 @@ export class AccessoriesService {
         data: { companyId, accessoryId: id, type: 'ADJUSTMENT', quantity: dto.delta, unitCost: stock.avgCost, onHandAfter: onHand, reservedAfter: stock.reserved, note: dto.reason, createdById: userId },
       });
       const signed = dto.delta > 0 ? `+${dto.delta}` : String(dto.delta);
-      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Accessory', entityId: id, summary: `Adjusted stock of ${stock.name}: ${signed} (on hand ${onHand}) — ${dto.reason}` }, tx);
+      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Accessory', entityId: id, entityLabel: stock.name, summary: `Adjusted stock of ${stock.name}: ${signed} (on hand ${onHand}) — ${dto.reason}`, changes: { onHand: { from: stock.onHand, to: onHand } }, reason: dto.reason }, tx);
     });
     return this.getById(id, canSeeCost);
   }
@@ -191,7 +192,7 @@ export class AccessoriesService {
         },
       }),
     );
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'Accessory', entityId: created.id, summary: `Added accessory ${created.name} (${formatInrExact(created.sellPrice)})` });
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'Accessory', entityId: created.id, entityLabel: created.name, summary: `Added accessory ${created.name} (${formatInrExact(created.sellPrice)})`, changes: createdFields({ name: created.name, sku: created.sku, category: created.category, sellPrice: created.sellPrice, minStock: created.minStock, isPart: created.isPart }) });
     return toAccessoryDto(created);
   }
 
@@ -224,10 +225,13 @@ export class AccessoriesService {
       data.minStock = dto.minStock;
       change('low-stock level', String(existing.minStock), String(dto.minStock));
     }
-    if (changes.length === 0) return toAccessoryDto(existing);
+    if (changes.length === 0) {
+      await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Accessory', entityId: id, entityLabel: existing.name, summary: `Saved accessory ${existing.name} — nothing changed` });
+      return toAccessoryDto(existing);
+    }
 
     const updated = await this.withSkuCheck(dto.sku, () => this.prisma.accessory.update({ where: { id }, data }));
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Accessory', entityId: id, summary: `Updated accessory ${updated.name}: ${changes.join('; ')}` });
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Accessory', entityId: id, entityLabel: updated.name, summary: `Updated accessory ${updated.name}: ${changes.join('; ')}`, changes: diffFields(existing, updated, ['name', 'sku', 'category', 'sellPrice', 'minStock']) });
     return toAccessoryDto(updated);
   }
 
@@ -244,7 +248,7 @@ export class AccessoriesService {
     // Guarded on the state just read, so a reservation made meanwhile is not left on an inactive item.
     const { count } = await this.prisma.accessory.updateMany({ where: { id, isActive: existing.isActive, ...(active ? {} : { reserved: 0 }) }, data: { isActive: active, updatedById: userId } });
     if (count === 0) throw new ConflictException('This accessory was changed by someone else — reload and try again');
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'Accessory', entityId: id, summary: `${active ? 'Activated' : 'Deactivated'} accessory ${existing.name}` });
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'Accessory', entityId: id, entityLabel: existing.name, summary: `${active ? 'Activated' : 'Deactivated'} accessory ${existing.name}`, changes: { isActive: { from: existing.isActive, to: active } } });
     return toAccessoryDto(await this.getRowOrThrow(id));
   }
 

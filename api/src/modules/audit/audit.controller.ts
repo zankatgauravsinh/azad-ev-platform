@@ -36,8 +36,12 @@ export class AuditController {
   @Get()
   @Permissions(AUDIT_VIEW_PERMISSION)
   @ApiOperation({ summary: 'Search the audit log (date range, person, action, record, text), newest first' })
-  list(@Query(new ZodValidationPipe(listAuditQuerySchema)) query: ListAuditQuery) {
-    return this.audit.list(query);
+  async list(@Query(new ZodValidationPipe(listAuditQuerySchema)) query: ListAuditQuery, @Req() req: AuthenticatedRequest) {
+    return this.audit.list(query, await this.canSeeCost(req));
+  }
+
+  private async canSeeCost(req: AuthenticatedRequest): Promise<boolean> {
+    return (await effectivePermissions(req, this.resolver)).has(PURCHASE_COST_PERMISSION);
   }
 
   @Get('facets')
@@ -55,7 +59,7 @@ export class AuditController {
     if (!held.has(AUDIT_VIEW_PERMISSION) && !(viewPermission && held.has(viewPermission))) {
       throw new ForbiddenException('You do not have permission to see this history');
     }
-    return this.audit.history(query);
+    return this.audit.history(query, held.has(PURCHASE_COST_PERMISSION));
   }
 
   @Get('export')
@@ -72,7 +76,7 @@ export class AuditController {
   @Get(':id')
   @Permissions(AUDIT_VIEW_PERMISSION)
   @ApiParam({ name: 'id', format: 'uuid' })
-  get(@Param('id', ParseUUIDPipe) id: string) {
-    return this.audit.get(id);
+  async get(@Param('id', ParseUUIDPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return this.audit.get(id, await this.canSeeCost(req));
   }
 }

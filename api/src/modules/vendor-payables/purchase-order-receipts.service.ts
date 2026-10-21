@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { PurchaseOrderLineKind } from '@azad/shared';
 import { TenantContext } from '../../tenant/tenant-context.service';
+import { ActivityLogService } from '../../activity-log/activity-log.service';
 
 type Tx = Prisma.TransactionClient;
 
@@ -31,7 +32,10 @@ export interface LockedOrderLine {
  */
 @Injectable()
 export class PurchaseOrderReceiptsService {
-  constructor(private readonly tenant: TenantContext) {}
+  constructor(
+    private readonly tenant: TenantContext,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
   async lockLine(tx: Tx, lineId: string, kind: PurchaseOrderLineKind): Promise<LockedOrderLine> {
     const companyId = this.tenant.requireCompanyId();
@@ -67,6 +71,10 @@ export class PurchaseOrderReceiptsService {
   async closeIfComplete(tx: Tx, purchaseOrderId: string, userId: string): Promise<void> {
     const lines = await tx.purchaseOrderLine.findMany({ where: { purchaseOrderId }, select: { id: true, kind: true, quantity: true } });
     for (const l of lines) if ((await this.received(tx, l.id, l.kind)) < l.quantity) return;
-    await tx.purchaseOrder.updateMany({ where: { id: purchaseOrderId, status: 'ORDERED' }, data: { status: 'CLOSED', closedAt: new Date(), updatedById: userId } });
+    const closed = await tx.purchaseOrder.updateMany({ where: { id: purchaseOrderId, status: 'ORDERED' }, data: { status: 'CLOSED', closedAt: new Date(), updatedById: userId } });
+    if (closed.count === 1) {
+      const order = await tx.purchaseOrder.findFirst({ where: { id: purchaseOrderId }, select: { poNumber: true } });
+      await this.activityLog.recordInTransaction({ action: 'STATUS_CHANGE', source: 'SYSTEM', entityType: 'PurchaseOrder', entityId: purchaseOrderId, entityLabel: order?.poNumber ?? null, summary: `Purchase order ${order?.poNumber ?? ''} closed itself — everything ordered has been received`, changes: { status: { from: 'ORDERED', to: 'CLOSED' } } }, tx);
+    }
   }
 }

@@ -98,6 +98,11 @@ describe('Delivery (e2e)', () => {
     const res = await http().patch(`/api/v1/deliveries/${bookingId}/checklist`).set('Authorization', auth(ownerToken)).send({ rcBook: true, warrantyCard: true }).expect(200);
     expect(res.body.delivery.checklist.rcBook).toBe(true);
     expect(res.body.delivery.checklist.keys).toBe(true); // preserved
+    // Audit: schedule, handover and checklist, each filed under the booking.
+    const log = await prisma.activityLog.findMany({ where: { entityId: bookingId, entityType: 'Delivery' }, orderBy: { createdAt: 'asc' } });
+    expect(log.find((e) => e.summary.startsWith('Scheduled delivery'))!.changes).toMatchObject({ pendingDocuments: { from: null, to: 'Address proof' } });
+    expect(log.find((e) => e.summary.startsWith('Handover recorded'))!.changes).toMatchObject({ checklist: { to: expect.stringContaining('keys') } });
+    expect(log.find((e) => e.summary.startsWith('Delivery checklist'))!.changes).toEqual({ rcBook: { from: false, to: true }, warrantyCard: { from: false, to: true } });
   });
 
   it('uploads a delivery photo and the customer signature', async () => {

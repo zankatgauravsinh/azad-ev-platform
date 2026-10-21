@@ -19,6 +19,7 @@ import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.service';
 import { BookingsService } from '../sales/bookings.service';
 import { deliveryLowerBound } from '../sales/delivery-date';
+import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
 
 interface UploadedFile {
   buffer: Buffer;
@@ -115,11 +116,16 @@ export class DeliveryService {
   }
 
   async schedule(bookingId: string, dto: ScheduleDeliveryInput2): Promise<DeliveryDetailDto> {
-    await this.getBookingOrThrow(bookingId);
-    await this.prisma.booking.update({
+    const b = await this.getBookingOrThrow(bookingId);
+    const before = await this.prisma.booking.findFirstOrThrow({ where: { id: bookingId }, select: { expectedDelivery: true, pendingDocuments: true, deliveryExecutive: { select: { name: true } } } });
+    const after = await this.prisma.booking.update({
       where: { id: bookingId },
       data: { expectedDelivery: dto.expectedDelivery ?? null, deliveryExecutiveId: dto.deliveryExecutiveId ?? null, pendingDocuments: dto.pendingDocuments ?? null },
+      select: { expectedDelivery: true, pendingDocuments: true, deliveryExecutive: { select: { name: true } } },
     });
+    const flat = (x: typeof before) => ({ expectedDelivery: x.expectedDelivery, deliveryExecutive: x.deliveryExecutive?.name ?? null, pendingDocuments: x.pendingDocuments });
+    const changes = diffFields(flat(before), flat(after), ['expectedDelivery', 'deliveryExecutive', 'pendingDocuments']);
+    await this.activityLog.record({ action: 'UPDATE', entityType: 'Delivery', entityId: bookingId, entityLabel: b.code, summary: Object.keys(changes).length ? `Scheduled delivery for booking ${b.code}: ${changesSummary(changes)}` : `Saved the delivery schedule of booking ${b.code} — nothing changed`, changes });
     return this.detail(bookingId);
   }
 
@@ -142,6 +148,12 @@ export class DeliveryService {
           data: { notes: dto.notes ?? null, overrideReason: dto.overrideReason ?? null, updatedById: userId },
         });
         if (dto.checklist) await this.writeChecklist(delivery.id, dto.checklist, userId, tx);
+        const ticked = dto.checklist ? DELIVERY_CHECKLIST_ITEMS.filter((k) => dto.checklist![k] === true) : [];
+        await this.activityLog.recordInTransaction({
+          actorId: userId, action: 'UPDATE', entityType: 'Delivery', entityId: bookingId, entityLabel: b.code,
+          summary: `Handover recorded for booking ${b.code}${dto.overrideReason ? ' — delivered with the checklist overridden' : ''}${ticked.length ? ` (${ticked.length} checklist items done)` : ''}`,
+          changes: createdFields({ notes: dto.notes, checklist: ticked.join(', ') }), reason: dto.overrideReason ?? null, metadata: { deliveryId: delivery.id },
+        }, tx);
       });
     }
     return this.detail(bookingId);
@@ -149,14 +161,19 @@ export class DeliveryService {
 
   async updateChecklist(bookingId: string, dto: UpdateChecklistInput, userId: string): Promise<DeliveryDetailDto> {
     const delivery = await this.getDeliveryOrThrow(bookingId);
+    const before = await this.prisma.deliveryChecklist.findFirst({ where: { deliveryId: delivery.id } });
     await this.writeChecklist(delivery.id, dto, userId);
+    const after = await this.prisma.deliveryChecklist.findFirst({ where: { deliveryId: delivery.id } });
+    const changes = before && after ? diffFields(before, after, [...DELIVERY_CHECKLIST_ITEMS] as (keyof typeof before)[]) : {};
+    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Delivery', entityId: bookingId, entityLabel: delivery.code, summary: Object.keys(changes).length ? `Delivery checklist of booking ${delivery.code}: ${changesSummary(changes)}` : `Saved the delivery checklist of booking ${delivery.code} — nothing changed`, changes, metadata: { deliveryId: delivery.id } });
     return this.detail(bookingId);
   }
 
   async addPhoto(bookingId: string, file: UploadedFile, label: string | undefined, userId: string): Promise<DeliveryDetailDto> {
     const delivery = await this.getDeliveryOrThrow(bookingId);
     const stored = await this.storage.save({ buffer: file.buffer, originalName: file.originalname, mimeType: file.mimetype, folder: `deliveries/${delivery.id}` });
-    await this.prisma.deliveryPhoto.create({ data: { deliveryId: delivery.id, fileKey: stored.fileKey, label: label ?? null, createdById: userId } });
+    const photo = await this.prisma.deliveryPhoto.create({ data: { deliveryId: delivery.id, fileKey: stored.fileKey, label: label ?? null, createdById: userId } });
+    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Delivery', entityId: bookingId, entityLabel: delivery.code, summary: `Added a delivery photo${label ? ` (${label})` : ''} to booking ${delivery.code}`, metadata: { deliveryId: delivery.id, photoId: photo.id, label: label ?? null } });
     return this.detail(bookingId);
   }
 
@@ -166,6 +183,7 @@ export class DeliveryService {
     if (!photo) throw new NotFoundException('Photo not found');
     await this.prisma.deliveryPhoto.delete({ where: { id: photoId } });
     await this.storage.remove(photo.fileKey).catch(() => undefined);
+    await this.activityLog.record({ action: 'DELETE', entityType: 'Delivery', entityId: bookingId, entityLabel: delivery.code, summary: `Removed a delivery photo${photo.label ? ` (${photo.label})` : ''} from booking ${delivery.code}`, metadata: { deliveryId: delivery.id, photoId, label: photo.label } });
     return this.detail(bookingId);
   }
 
@@ -173,7 +191,7 @@ export class DeliveryService {
     const delivery = await this.getDeliveryOrThrow(bookingId);
     const stored = await this.storage.save({ buffer: file.buffer, originalName: file.originalname, mimeType: file.mimetype, folder: `deliveries/${delivery.id}` });
     await this.prisma.delivery.update({ where: { id: delivery.id }, data: { customerSignatureKey: stored.fileKey, updatedById: userId } });
-    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Delivery', entityId: delivery.id, summary: 'Captured customer signature' });
+    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Delivery', entityId: bookingId, entityLabel: delivery.code, summary: `Captured the customer's signature for booking ${delivery.code}`, metadata: { deliveryId: delivery.id } });
     return this.detail(bookingId);
   }
 
@@ -222,10 +240,10 @@ export class DeliveryService {
     return b;
   }
 
-  private async getDeliveryOrThrow(bookingId: string): Promise<{ id: string }> {
-    const delivery = await this.prisma.delivery.findFirst({ where: { sale: { bookingId } }, select: { id: true } });
+  private async getDeliveryOrThrow(bookingId: string): Promise<{ id: string; code: string }> {
+    const delivery = await this.prisma.delivery.findFirst({ where: { sale: { bookingId } }, select: { id: true, sale: { select: { booking: { select: { code: true } } } } } });
     if (!delivery) throw new BadRequestException('Vehicle has not been delivered yet');
-    return delivery;
+    return { id: delivery.id, code: delivery.sale.booking?.code ?? '' };
   }
 
   private computeStatus(b: BookingDetailRow, balance: bigint): DeliveryListRow['status'] {

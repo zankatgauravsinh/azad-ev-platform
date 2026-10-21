@@ -120,7 +120,8 @@ describe('Inventory identity guard (e2e)', () => {
       expect(res.body.variant).toMatchObject({ id: A.red, colour: 'Red' });
       expect(res.body.location).toBe('Bay 1');
       const log = await prisma.activityLog.findFirst({ where: { companyId: A.id, entityType: 'InventoryUnit', entityId: u.id, action: 'UPDATE' }, orderBy: { createdAt: 'desc' } });
-      expect(log?.summary).toBe(`Updated scooter ${u.vin}: variant TESTBRAND Alpha a ${stamp} Pro (Teal) → TESTBRAND Alpha a ${stamp} Pro (Red)`);
+      // The identity change keeps its wording; the other fields that changed follow it.
+      expect(log?.summary).toBe(`Updated scooter ${u.vin}: variant TESTBRAND Alpha a ${stamp} Pro (Teal) → TESTBRAND Alpha a ${stamp} Pro (Red); location — → Bay 1`);
       expect(log?.metadata).toMatchObject({ variantChange: { from: { variantId: A.teal, colour: 'Teal' }, to: { variantId: A.red, colour: 'Red' } } });
       // Legacy text back to Teal.
       const back = await patch(A, u.id, legacySame).expect(200);
@@ -258,7 +259,8 @@ describe('Inventory identity guard (e2e)', () => {
       const res = await patch(A, id, { vin: current.vin.toLowerCase(), motorNumber: current.motorNumber, batteryNumber: current.batteryNumber.toLowerCase(), location: 'Customer' }).expect(200);
       expect(res.body).toMatchObject({ vin: current.vin, motorNumber: current.motorNumber, batteryNumber: current.batteryNumber, location: 'Customer' });
       const last = (await logs(id)).at(-1);
-      expect(last?.summary).toBe(`Updated scooter ${current.vin}`);
+      // No identity change; only the location (when it was not already "Customer") is named.
+      expect(last?.summary).toMatch(new RegExp(`^Updated scooter ${current.vin}(: location .* → Customer)?$`));
       expect(last?.metadata).toBeNull();
     });
 

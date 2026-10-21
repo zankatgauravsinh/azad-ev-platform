@@ -24,6 +24,11 @@ import { nextBusinessDate, resolveTimeZone, startOfBusinessDay } from '../../com
 type Row = Prisma.ActivityLogGetPayload<Record<string, never>>;
 type Filters = Omit<ListAuditQuery, 'page' | 'pageSize'>;
 
+/** Records whose every figure is purchase cost: their changes and details reach only inventory.cost holders. */
+const COST_ENTITY_TYPES: ReadonlySet<string> = new Set(['PurchaseOrder', 'purchase-orders', 'AccessoryPurchase', 'accessory-purchases']);
+const forViewer = (e: AuditEntryDto, canSeeCost: boolean): AuditEntryDto =>
+  canSeeCost || !COST_ENTITY_TYPES.has(e.entityType) ? e : { ...e, changes: null, metadata: null };
+
 const CONTENT_TYPE = { xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pdf: 'application/pdf', csv: 'text/csv; charset=utf-8' } as const;
 
 /** Reads the audit log (tenant-scoped by the Prisma middleware; the log itself is append-only). */
@@ -35,32 +40,32 @@ export class AuditService {
     private readonly activityLog: ActivityLogService,
   ) {}
 
-  async list(query: ListAuditQuery): Promise<Paginated<AuditEntryDto>> {
+  async list(query: ListAuditQuery, canSeeCost = false): Promise<Paginated<AuditEntryDto>> {
     const where = await this.where(query);
     const [rows, total] = await Promise.all([
       this.prisma.activityLog.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
       this.prisma.activityLog.count({ where }),
     ]);
-    return { data: rows.map(toDto), meta: buildPageMeta(query.page, query.pageSize, total) };
+    return { data: rows.map((r) => forViewer(toDto(r), canSeeCost)), meta: buildPageMeta(query.page, query.pageSize, total) };
   }
 
-  async get(id: string): Promise<AuditEntryDto> {
+  async get(id: string, canSeeCost = false): Promise<AuditEntryDto> {
     const row = await this.prisma.activityLog.findFirst({ where: { id } });
     if (!row) throw new NotFoundException('Audit entry not found');
-    return toDto(row);
+    return forViewer(toDto(row), canSeeCost);
   }
 
   /**
    * One record's history: every entry naming it — its own and the automatic ones (record ids are unique, so the
    * id alone finds them, of any type).
    */
-  async history(query: AuditHistoryQuery): Promise<Paginated<AuditEntryDto>> {
+  async history(query: AuditHistoryQuery, canSeeCost = false): Promise<Paginated<AuditEntryDto>> {
     const where: Prisma.ActivityLogWhereInput = { entityId: query.entityId };
     const [rows, total] = await Promise.all([
       this.prisma.activityLog.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
       this.prisma.activityLog.count({ where }),
     ]);
-    return { data: rows.map(toDto), meta: buildPageMeta(query.page, query.pageSize, total) };
+    return { data: rows.map((r) => forViewer(toDto(r), canSeeCost)), meta: buildPageMeta(query.page, query.pageSize, total) };
   }
 
   /** The people and record types that appear in this company's log, for the filters. */
@@ -83,7 +88,7 @@ export class AuditService {
     const timeZone = await this.timeZone();
     const where = await this.where(filters, timeZone);
     const rows = await this.prisma.activityLog.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: AUDIT_EXPORT_MAX_ROWS });
-    const entries = rows.map(toDto).map((e) => (canSeeCost ? e : (withoutPurchaseCost(e) as AuditEntryDto)));
+    const entries = rows.map(toDto).map((e) => (canSeeCost ? e : (withoutPurchaseCost(forViewer(e, false)) as AuditEntryDto)));
     const when = new Intl.DateTimeFormat('en-IN', { timeZone, dateStyle: 'medium', timeStyle: 'medium' });
     const data: ExportData = {
       title: 'Audit log',
