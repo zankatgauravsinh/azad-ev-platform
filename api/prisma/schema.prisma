@@ -229,6 +229,20 @@ enum ActivityAction {
   LOGIN
   PAYMENT
   EXPORT
+  LOGIN_FAILED
+  LOGOUT
+  DOWNLOAD
+  SHARE_OPEN
+  CANCEL
+  APPROVE
+}
+
+/// Who caused an audit entry (see ActivityLog.source).
+enum AuditSource {
+  USER
+  SYSTEM
+  PUBLIC
+  AUTO
 }
 
 enum BackupFrequency {
@@ -1540,23 +1554,40 @@ model Notification {
   @@index([expiresAt])
 }
 
+/// The audit trail: who did what, when, from where, and what changed. Append-only — the application never
+/// updates or deletes a row (Prisma middleware), and a database trigger refuses UPDATE / DELETE as well.
 model ActivityLog {
-  id         String         @id @default(uuid())
-  companyId  String         @default("")
-  actorId    String?
-  actor      User?          @relation("ActivityLogActor", fields: [actorId], references: [id])
-  action     ActivityAction
-  entityType String
-  entityId   String?
-  summary    String
-  metadata   Json?
-  ip         String?
+  id          String         @id @default(uuid())
+  companyId   String         @default("")
+  actorId     String?
+  actor       User?          @relation("ActivityLogActor", fields: [actorId], references: [id])
+  /// The actor's name and role when it happened (kept even if the user is later renamed or removed).
+  actorName   String?
+  actorRole   String?
+  action      ActivityAction
+  /// USER: a signed-in person; SYSTEM: the app itself (auto-expiry, auto-close…); PUBLIC: a customer link;
+  /// AUTO: a write the app recorded generically because its handler wrote no entry of its own.
+  source      AuditSource    @default(USER)
+  entityType  String
+  entityId    String?
+  /// The record as people know it: a booking code, invoice number, VIN, customer name…
+  entityLabel String?
+  summary     String
+  /// Field changes: { field: { from, to } }. Money in paise; secrets never; Aadhaar masked.
+  changes     Json?
+  /// Anything else worth keeping about the event.
+  metadata    Json?
+  /// Why — for corrections, cancellations, reopenings.
+  reason      String?
+  ip          String?
+  userAgent   String?
+  requestId   String?
 
   createdAt DateTime @default(now())
 
-  @@index([entityType, entityId])
-  @@index([actorId, createdAt])
-  @@index([companyId])
+  @@index([companyId, createdAt])
+  @@index([companyId, entityType, entityId, createdAt])
+  @@index([companyId, actorId, createdAt])
 }
 
 /// The single source of truth for all configurable company behaviour.

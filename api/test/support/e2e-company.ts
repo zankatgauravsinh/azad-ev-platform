@@ -162,6 +162,13 @@ export function purgeRefusal(companyId: string, slug: string): string | null {
  * A missing id (setup failed before the company existed) or an already-deleted company is a no-op —
  * never a broader delete. Every statement is scoped to the one verified company id.
  */
+/**
+ * Deletes a company's audit entries. The audit log is append-only (a database trigger refuses DELETE); only a
+ * statement that first sets azad.audit_purge for its own transaction gets through — for throwaway test companies.
+ */
+export const PURGE_ACTIVITY_LOG_SQL =
+  `WITH purge AS (SELECT set_config('azad.audit_purge', 'on', true)) DELETE FROM "ActivityLog" WHERE ("companyId" = $1 OR "actorId" IN (SELECT id FROM "User" WHERE "companyId" = $1)) AND EXISTS (SELECT 1 FROM purge)`;
+
 export async function purgeTestCompany(prisma: PrismaService, companyId: string | undefined): Promise<void> {
   if (!companyId) return;
   const company = await prisma.company.findUnique({ where: { id: companyId }, select: { slug: true } });
@@ -177,7 +184,7 @@ export async function purgeTestCompany(prisma: PrismaService, companyId: string 
     const failed: { table: string; error: string }[] = [];
     for (const table of pending) {
       try {
-        await prisma.$executeRawUnsafe(`DELETE FROM "${table}" WHERE "companyId" = $1`, companyId);
+        await prisma.$executeRawUnsafe(table === 'ActivityLog' ? PURGE_ACTIVITY_LOG_SQL : `DELETE FROM "${table}" WHERE "companyId" = $1`, companyId);
       } catch (e) {
         failed.push({ table, error: (e as Error).message.split('\n').pop() ?? '' });
       }

@@ -787,6 +787,18 @@ export class InventoryService {
    * (unique-constraint race), leaves nothing behind; a deadlock with another import is answered like that
    * race, a transaction timeout with 503. `expectedSha256` ties the request to the previewed file.
    */
+  /** A refused import changes nothing, but the attempt is recorded: who tried which file, and how many rows failed. */
+  private async refusedImport(preview: CsvImportPreview): Promise<CsvImportResult> {
+    const result = rejectedImport(preview);
+    await this.activityLog.record({
+      action: ActivityAction.CREATE,
+      entityType: 'InventoryUnit',
+      summary: `CSV import refused: ${result.failed} of ${preview.summary.total} rows invalid — nothing imported`,
+      metadata: { refused: true, rows: preview.summary.total, invalid: result.failed, fileSha256: preview.fileSha256 },
+    });
+    return result;
+  }
+
   async importCsv(file: UploadedFile, userId: string, expectedSha256?: string, canSeeCost = false): Promise<CsvImportResult> {
     const companyId = this.tenant.requireCompanyId();
     const { rows, fileSha256 } = this.readCsvFile(file);
@@ -844,7 +856,7 @@ export class InventoryService {
         return { status: 'IMPORTED', created: created.length, failed: 0, errors: [], fileSha256, preview: null } satisfies CsvImportResult;
       }, { timeout: CSV_IMPORT_TX_TIMEOUT_MS, maxWait: CSV_IMPORT_TX_MAX_WAIT_MS });
     } catch (error) {
-      if (error instanceof CsvImportRejected) return rejectedImport(error.preview);
+      if (error instanceof CsvImportRejected) return this.refusedImport(error.preview);
       if (error instanceof CsvImportCatalogueChanged) {
         throw new ConflictException('The catalogue changed while importing — nothing was imported. Preview the file again.');
       }
@@ -858,7 +870,7 @@ export class InventoryService {
         } catch {
           throw new ConflictException(MSG_INVENTORY_CHANGED);
         }
-        if (recheck.summary.invalid > 0) return rejectedImport(recheck);
+        if (recheck.summary.invalid > 0) return this.refusedImport(recheck);
         throw new ConflictException(MSG_INVENTORY_CHANGED);
       }
       if (isTransactionTimeout(error)) {

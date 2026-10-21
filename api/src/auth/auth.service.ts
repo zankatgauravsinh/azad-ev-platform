@@ -25,27 +25,29 @@ export class AuthService {
     private readonly permissions: PermissionResolver,
   ) {}
 
-  async login(input: LoginInput, ip?: string): Promise<LoginResponse> {
+  /**
+   * Sign-in. Recorded in the user's company log (the route is public, so no tenant is bound): every success, and
+   * every refused attempt on an existing account (wrong password, deactivated) — never the password. An unknown
+   * email belongs to no company and is not recorded (the route is rate limited).
+   */
+  async login(input: LoginInput): Promise<LoginResponse> {
     const user = await this.users.findByEmail(input.email);
-    if (!user || !user.isActive) {
+    if (!user) throw new UnauthorizedException('Invalid email or password');
+    const who = { actorId: user.id, actorName: user.name, actorRole: user.role, companyId: user.companyId, entityType: 'User', entityId: user.id, entityLabel: user.email };
+    if (!user.isActive) {
+      await this.activityLog.record({ ...who, action: ActivityAction.LOGIN_FAILED, summary: `Refused sign-in for ${user.email}: the account is deactivated` });
       throw new UnauthorizedException('Invalid email or password');
     }
 
     const valid = await this.passwords.compare(input.password, user.passwordHash);
     if (!valid) {
+      await this.activityLog.record({ ...who, action: ActivityAction.LOGIN_FAILED, summary: `Refused sign-in for ${user.email}: wrong password` });
       throw new UnauthorizedException('Invalid email or password');
     }
 
     const response = await this.issueSession(user);
     await this.users.updateLastLogin(user.id);
-    await this.activityLog.record({
-      actorId: user.id,
-      action: ActivityAction.LOGIN,
-      entityType: 'User',
-      entityId: user.id,
-      summary: `${user.name} signed in`,
-      ip,
-    });
+    await this.activityLog.record({ ...who, action: ActivityAction.LOGIN, summary: `${user.name} signed in` });
     return response;
   }
 
@@ -66,6 +68,7 @@ export class AuthService {
 
   async logout(userId: string): Promise<void> {
     await this.users.setRefreshTokenHash(userId, null);
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.LOGOUT, entityType: 'User', entityId: userId, summary: 'Signed out' });
   }
 
   async me(userId: string): Promise<MeResponse> {

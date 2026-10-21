@@ -330,9 +330,27 @@ export const ActivityAction = {
   LOGIN: 'LOGIN',
   PAYMENT: 'PAYMENT',
   EXPORT: 'EXPORT',
+  LOGIN_FAILED: 'LOGIN_FAILED',
+  LOGOUT: 'LOGOUT',
+  /** A document opened, printed or downloaded (PDF, report, export). */
+  DOWNLOAD: 'DOWNLOAD',
+  /** A customer opened a shared document link. */
+  SHARE_OPEN: 'SHARE_OPEN',
+  CANCEL: 'CANCEL',
+  APPROVE: 'APPROVE',
 } as const;
 export type ActivityAction = (typeof ActivityAction)[keyof typeof ActivityAction];
 export const ACTIVITY_ACTIONS = Object.values(ActivityAction);
+
+/** Who caused an audit entry: a signed-in person, the app itself, a customer's link, or the app's automatic record of a write that logged nothing itself. */
+export const AuditSource = {
+  USER: 'USER',
+  SYSTEM: 'SYSTEM',
+  PUBLIC: 'PUBLIC',
+  AUTO: 'AUTO',
+} as const;
+export type AuditSource = (typeof AuditSource)[keyof typeof AuditSource];
+export const AUDIT_SOURCES = Object.values(AuditSource);
 
 /* ------------------------------------------------------------------ *
  * Module 8 — Warranty & AMC

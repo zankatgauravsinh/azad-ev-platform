@@ -7,6 +7,7 @@ import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { SaleTaxService } from '../src/modules/tax/sale-tax.service';
 import { TaxEngineService } from '../src/modules/tax/tax-engine.service';
 import { calendarDateInTimeZone } from '../src/modules/tax/tax-point';
+import { PURGE_ACTIVITY_LOG_SQL } from './support/e2e-company';
 
 /**
  * Stage C — GST snapshots on Booking → generateInvoice() → Sale, through the real HTTP endpoint.
@@ -133,7 +134,7 @@ describe('Sale GST snapshots (e2e)', () => {
         'DELETE FROM "Booking" WHERE "companyId" = $1',
         'DELETE FROM "CustomerTimelineEntry" WHERE "companyId" = $1',
         'DELETE FROM "Notification" WHERE "companyId" = $1',
-        'DELETE FROM "ActivityLog" WHERE "companyId" = $1',
+        PURGE_ACTIVITY_LOG_SQL,
         'DELETE FROM "Customer" WHERE "companyId" = $1',
         'DELETE FROM "InventoryEvent" e USING "InventoryUnit" u WHERE e."unitId" = u.id AND u."companyId" = $1',
         'DELETE FROM "InventoryUnit" WHERE "companyId" = $1',

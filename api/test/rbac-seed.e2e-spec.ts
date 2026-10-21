@@ -19,7 +19,7 @@ describe('RBAC seed & backfill (e2e)', () => {
   const stamp = Date.now().toString().slice(-8);
   let companyAId = '';
   const EXPECTED_COUNTS: Record<string, number> = {
-    OWNER: 79, MANAGER: 74, SALES_EXECUTIVE: 28, TECHNICIAN: 15, ACCOUNTANT: 12,
+    OWNER: 80, MANAGER: 75, SALES_EXECUTIVE: 28, TECHNICIAN: 15, ACCOUNTANT: 12,
   };
   const seedA = () => seedRbac(prisma, { companyIds: [companyAId] });
 
@@ -36,13 +36,13 @@ describe('RBAC seed & backfill (e2e)', () => {
     await app.close();
   }, E2E_HOOK_TIMEOUT);
 
-  it('seeds the 79-permission global catalog and is idempotent', async () => {
+  it('seeds the 80-permission global catalog and is idempotent', async () => {
     const r1 = await seedA();
-    expect(r1.permissions).toBe(79);
+    expect(r1.permissions).toBe(80);
     expect(r1.companies).toBe(1);
-    expect(await prisma.permission.count()).toBe(79);
+    expect(await prisma.permission.count()).toBe(80);
     const r2 = await seedA(); // second run
-    expect(await prisma.permission.count()).toBe(79); // no duplicates
+    expect(await prisma.permission.count()).toBe(80); // no duplicates
     expect(r2.usersBackfilled).toBe(0); // existing users already backfilled
   });
 

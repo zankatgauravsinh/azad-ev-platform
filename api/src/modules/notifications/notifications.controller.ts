@@ -10,10 +10,12 @@ import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { NotificationsService } from './notifications.service';
+import { NoAudit } from '../../activity-log/audit.decorators';
 
 @ApiTags('Notifications')
 @ApiBearerAuth('access-token')
 @Permissions('notifications.use')
+@NoAudit() // reading, archiving or refreshing notifications changes no business data
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notifications: NotificationsService) {}

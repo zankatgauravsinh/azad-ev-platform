@@ -6,6 +6,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { TaxEngineService } from '../src/modules/tax/tax-engine.service';
 import { SaleTaxService } from '../src/modules/tax/sale-tax.service';
+import { PURGE_ACTIVITY_LOG_SQL } from './support/e2e-company';
 
 /**
  * Stage E.2 — a completed return of a sale invoiced under GST reverses the GST stored in the sale's
@@ -165,7 +166,7 @@ describe('Vehicle return GST reversal (e2e)', () => {
         'DELETE FROM "Booking" WHERE "companyId" = $1',
         'DELETE FROM "CustomerTimelineEntry" WHERE "companyId" = $1',
         'DELETE FROM "Notification" WHERE "companyId" = $1',
-        'DELETE FROM "ActivityLog" WHERE "companyId" = $1',
+        PURGE_ACTIVITY_LOG_SQL,
         'DELETE FROM "Customer" WHERE "companyId" = $1',
         'DELETE FROM "InventoryEvent" e USING "InventoryUnit" u WHERE e."unitId" = u.id AND u."companyId" = $1',
         'DELETE FROM "InventoryUnit" WHERE "companyId" = $1',

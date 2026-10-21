@@ -687,7 +687,9 @@ describe('InventoryService', () => {
     const VALID = `${HEAD}solo,PRO,teal,vin1,m1,b1,1/6/2026,1000,,Depot,\nSolo,Pro,Teal,vin2,m2,b2,2026-06-02,0,0,,available\n`;
     const sha = (csv: string): string => createHash('sha256').update(Buffer.from(csv, 'utf8')).digest('hex');
     const nothingWritten = () => {
-      for (const write of [repo.createUnits, repo.addEvents, repo.createUnit, repo.addEvent, repo.createVariant, activityLog.recordInTransaction, activityLog.record]) expect(write).not.toHaveBeenCalled();
+      for (const write of [repo.createUnits, repo.addEvents, repo.createUnit, repo.addEvent, repo.createVariant, activityLog.recordInTransaction]) expect(write).not.toHaveBeenCalled();
+      // The only trace of a refused import is its audit entry (who tried which file); anything else recorded is a bug.
+      for (const [entry] of activityLog.record.mock.calls) expect(entry.summary).toMatch(/^CSV import refused: /);
     };
     beforeEach(() => {
       catalog.listModels.mockResolvedValue([solo]);

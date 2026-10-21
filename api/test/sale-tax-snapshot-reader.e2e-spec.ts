@@ -10,6 +10,7 @@ import type { SaleTaxDocument } from '../src/modules/tax/sale-tax-document';
 import { SaleTaxSnapshotReader } from '../src/modules/tax/sale-tax-snapshot.reader';
 import { TaxEngineService } from '../src/modules/tax/tax-engine.service';
 import { calendarDateInTimeZone } from '../src/modules/tax/tax-point';
+import { PURGE_ACTIVITY_LOG_SQL } from './support/e2e-company';
 
 /**
  * Stage D1 — the GST snapshot read model against the real database. Sales are invoiced through the
@@ -145,7 +146,7 @@ describe('Sale GST snapshot reader (e2e)', () => {
         'DELETE FROM "Booking" WHERE "companyId" = $1',
         'DELETE FROM "CustomerTimelineEntry" WHERE "companyId" = $1',
         'DELETE FROM "Notification" WHERE "companyId" = $1',
-        'DELETE FROM "ActivityLog" WHERE "companyId" = $1',
+        PURGE_ACTIVITY_LOG_SQL,
         'DELETE FROM "Customer" WHERE "companyId" = $1',
         'DELETE FROM "InventoryEvent" e USING "InventoryUnit" u WHERE e."unitId" = u.id AND u."companyId" = $1',
         'DELETE FROM "InventoryUnit" WHERE "companyId" = $1',

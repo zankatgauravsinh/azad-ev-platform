@@ -1,5 +1,6 @@
 import { ActivityAction } from '@azad/shared';
 import type { Prisma } from '@prisma/client';
+import type { FieldChanges } from '../../../activity-log/audit-diff';
 
 /**
  * Audit events for catalog changes — pure builders, so the exact payload the activity log receives is
@@ -16,20 +17,10 @@ export interface CatalogAuditEvent {
   metadata?: Prisma.InputJsonValue;
 }
 
-export type FieldChanges = Record<string, { from: string | number | boolean | null; to: string | number | boolean | null }>;
+export type { FieldChanges } from '../../../activity-log/audit-diff';
+export { diffFields } from '../../../activity-log/audit-diff';
 
 const show = (v: unknown): string | number | boolean | null => (v === null || v === undefined ? null : typeof v === 'bigint' ? v.toString() : typeof v === 'object' ? String(v) : (v as string | number | boolean));
-
-/** The fields of `after` that differ from `before`, as from/to pairs (bigint and Decimal shown as strings). */
-export function diffFields<T extends object>(before: T, after: T, fields: readonly (keyof T)[]): FieldChanges {
-  const changes: FieldChanges = {};
-  for (const f of fields) {
-    const from = show(before[f]);
-    const to = show(after[f]);
-    if (from !== to) changes[String(f)] = { from, to };
-  }
-  return changes;
-}
 
 const label = { ScooterModel: 'model', ScooterVariant: 'variant' } as const;
 

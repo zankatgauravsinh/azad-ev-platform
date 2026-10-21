@@ -54,7 +54,8 @@ describe('Inventory CSV import — all or nothing (e2e)', () => {
   const snapshot = async () => ({
     units: await count('InventoryUnit'),
     events: await count('InventoryEvent'),
-    activity: await count('ActivityLog'),
+    // A refused import records the attempt (and nothing else): left out of the "nothing written" comparison.
+    activity: await prisma.activityLog.count({ where: { NOT: { summary: { startsWith: 'CSV import refused' } } } }),
     models: await prisma.scooterModel.findMany({ where: { companyId: { in: [A.id, B.id] } }, orderBy: { id: 'asc' } }),
     variants: await prisma.scooterVariant.findMany({ where: { companyId: { in: [A.id, B.id] } }, orderBy: { id: 'asc' } }),
   });

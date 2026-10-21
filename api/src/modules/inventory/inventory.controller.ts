@@ -53,6 +53,7 @@ import { CsvImportThrottle } from '../../common/throttle/throttle.config';
 import { InventoryService } from './inventory.service';
 import { PermissionResolver, effectivePermissions } from '../../common/rbac/permission-resolver.service';
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request';
+import { NoAudit } from '../../activity-log/audit.decorators';
 
 interface MulterFile {
   buffer: Buffer;
@@ -176,6 +177,7 @@ export class InventoryController {
   }
 
   @Post('units/import/preview')
+  @NoAudit() // a dry run: it checks the file and writes nothing
   @CsvImportThrottle()
   @Permissions('inventory.create')
   @HttpCode(200)

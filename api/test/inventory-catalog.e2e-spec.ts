@@ -3,6 +3,7 @@ import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
+import { PURGE_ACTIVITY_LOG_SQL } from './support/e2e-company';
 
 /**
  * M4A — inventory units attached to a CURATED variant (variantId) through the real endpoints, next to
@@ -54,7 +55,7 @@ describe('Inventory ↔ catalogue (e2e)', () => {
   afterAll(async () => {
     for (const id of [A.id, B.id].filter(Boolean)) {
       for (const sql of [
-        'DELETE FROM "ActivityLog" WHERE "companyId" = $1',
+        PURGE_ACTIVITY_LOG_SQL,
         'DELETE FROM "InventoryEvent" WHERE "companyId" = $1',
         'DELETE FROM "InventoryUnit" WHERE "companyId" = $1',
         'DELETE FROM "ScooterVariant" WHERE "companyId" = $1',

@@ -56,10 +56,11 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
 ]);
 
 /**
- * Write-once models: a GST snapshot is the historical record of an issued invoice. It may be created,
- * never changed or removed through the application.
+ * Write-once models: a GST snapshot is the historical record of an issued invoice; the audit log is the record
+ * of who did what. They may be created, never changed or removed through the application (the audit log is
+ * also protected by a database trigger).
  */
-const IMMUTABLE_MODELS = new Set<Prisma.ModelName>(['TaxSnapshot', 'TaxSnapshotLine']);
+const IMMUTABLE_MODELS = new Set<Prisma.ModelName>(['TaxSnapshot', 'TaxSnapshotLine', 'ActivityLog']);
 const MUTATING_ACTIONS = new Set<string>(['update', 'updateMany', 'upsert', 'delete', 'deleteMany']);
 
 @Injectable()

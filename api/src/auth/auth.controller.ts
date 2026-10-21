@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Ip, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Patch, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import {
@@ -13,6 +13,7 @@ import {
   type RefreshInput,
 } from '@azad/shared';
 import { Public } from '../common/decorators/public.decorator';
+import { NoAudit } from '../activity-log/audit.decorators';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { AuthService } from './auth.service';
@@ -41,12 +42,12 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid email or password' })
   login(
     @Body(new ZodValidationPipe(loginSchema)) dto: LoginInput,
-    @Ip() ip: string,
   ): Promise<LoginResponse> {
-    return this.auth.login(dto, ip);
+    return this.auth.login(dto);
   }
 
   @Public()
+  @NoAudit()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('refresh')
   @HttpCode(200)

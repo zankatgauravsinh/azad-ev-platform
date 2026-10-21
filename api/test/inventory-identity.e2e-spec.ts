@@ -4,6 +4,7 @@ import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { readPdfText } from './support/pdf-text';
+import { PURGE_ACTIVITY_LOG_SQL } from './support/e2e-company';
 
 function binaryParser(res: request.Response, cb: (err: Error | null, body: unknown) => void): void {
   const chunks: Buffer[] = [];
@@ -99,7 +100,7 @@ describe('Inventory identity guard (e2e)', () => {
         'DELETE FROM "FreeService" WHERE "companyId" = $1', 'DELETE FROM "WarrantyClaim" WHERE "companyId" = $1', 'DELETE FROM "Warranty" WHERE "companyId" = $1',
         'DELETE FROM "ServiceJob" WHERE "companyId" = $1',
         'DELETE FROM "Payment" WHERE "companyId" = $1', 'DELETE FROM "Sale" WHERE "companyId" = $1', 'DELETE FROM "Booking" WHERE "companyId" = $1',
-        'DELETE FROM "CustomerTimelineEntry" WHERE "companyId" = $1', 'DELETE FROM "Notification" WHERE "companyId" = $1', 'DELETE FROM "ActivityLog" WHERE "companyId" = $1',
+        'DELETE FROM "CustomerTimelineEntry" WHERE "companyId" = $1', 'DELETE FROM "Notification" WHERE "companyId" = $1', PURGE_ACTIVITY_LOG_SQL,
         'DELETE FROM "Customer" WHERE "companyId" = $1',
         'DELETE FROM "InventoryEvent" WHERE "companyId" = $1', 'DELETE FROM "InventoryUnit" WHERE "companyId" = $1',
         'DELETE FROM "ScooterVariant" WHERE "companyId" = $1', 'DELETE FROM "ScooterModel" WHERE "companyId" = $1',

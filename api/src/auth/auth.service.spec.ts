@@ -65,36 +65,41 @@ describe('AuthService', () => {
       users.findByEmail.mockResolvedValue(buildUser());
       passwords.compare.mockResolvedValue(true);
 
-      const result = await service.login({ email: 'owner@azadev.in', password: 'secret' }, '127.0.0.1');
+      const result = await service.login({ email: 'owner@azadev.in', password: 'secret' });
 
       expect(result.accessToken).toBe('access');
       expect(result.refreshToken).toBe('refresh');
       expect(result.user).toMatchObject({ email: 'owner@azadev.in', role: 'OWNER' });
       expect(result.user).not.toHaveProperty('passwordHash');
       expect(users.updateLastLogin).toHaveBeenCalledWith('user-1');
-      expect(activityLog.record).toHaveBeenCalled();
+      // Recorded in the user's own company (the route is public, so no tenant is bound).
+      expect(activityLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'LOGIN', actorId: 'user-1', companyId: buildUser().companyId, actorName: buildUser().name }));
     });
 
-    it('rejects an unknown email', async () => {
+    it('rejects an unknown email — nothing recorded (it belongs to no company)', async () => {
       users.findByEmail.mockResolvedValue(null);
       await expect(service.login({ email: 'x@y.z', password: 'secret' })).rejects.toBeInstanceOf(
         UnauthorizedException,
       );
+      expect(activityLog.record).not.toHaveBeenCalled();
     });
 
-    it('rejects an inactive account', async () => {
+    it('rejects an inactive account and records the refused attempt', async () => {
       users.findByEmail.mockResolvedValue(buildUser({ isActive: false }));
       await expect(service.login({ email: 'owner@azadev.in', password: 'secret' })).rejects.toBeInstanceOf(
         UnauthorizedException,
       );
+      expect(activityLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'LOGIN_FAILED', summary: expect.stringContaining('deactivated') }));
     });
 
-    it('rejects a wrong password', async () => {
+    it('rejects a wrong password and records the refused attempt, never the password', async () => {
       users.findByEmail.mockResolvedValue(buildUser());
       passwords.compare.mockResolvedValue(false);
       await expect(service.login({ email: 'owner@azadev.in', password: 'nope' })).rejects.toBeInstanceOf(
         UnauthorizedException,
       );
+      expect(activityLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'LOGIN_FAILED', summary: expect.stringContaining('wrong password') }));
+      expect(JSON.stringify(activityLog.record.mock.calls)).not.toContain('nope');
     });
   });
 

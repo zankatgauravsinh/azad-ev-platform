@@ -52,6 +52,7 @@ export const PERMISSION_MODULES = [
   'settings',
   'staff',
   'roles',
+  'audit',
 ] as const;
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
 
@@ -177,6 +178,8 @@ const MODULE_ROWS: Record<PermissionModule, Row[]> = {
   ],
   staff: [['manage', 'Manage staff', true]],
   roles: [['manage', 'Manage roles & permissions', true]],
+  // Everything anyone did, with IP addresses and old → new values (purchase cost still needs inventory.cost).
+  audit: [['view', 'View the audit log (who did what, when)', true]],
 };
 
 /** The full system permission catalog, ordered by module then declaration order. */

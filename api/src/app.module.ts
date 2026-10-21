@@ -6,6 +6,7 @@ import { throttlerOptions } from './common/throttle/throttle.config';
 import { AppConfigModule } from './config/config.module';
 import { TenantModule } from './tenant/tenant.module';
 import { TenantInterceptor } from './tenant/tenant.interceptor';
+import { AuditInterceptor } from './activity-log/audit.interceptor';
 import { PrismaModule } from './prisma/prisma.module';
 import { StorageModule } from './storage/storage.module';
 import { ExportModule } from './export/export.module';
@@ -92,6 +93,8 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     // Tenant context must wrap the handler (outermost) so every query is scoped.
     { provide: APP_INTERCEPTOR, useClass: TenantInterceptor },
+    // Inside the tenant context: records any successful write that wrote no audit entry of its own.
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
     { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },
     // Purchase cost leaves the API only for callers holding inventory.cost.
     { provide: APP_INTERCEPTOR, useClass: PurchaseCostInterceptor },
