@@ -21,6 +21,7 @@ import {
   ShoppingBag,
   Truck,
   ClipboardCheck,
+  Receipt,
   type LucideIcon,
 } from 'lucide-react';
 import type { Role } from '@azad/shared';
@@ -76,6 +77,7 @@ export const NAV_ITEMS: NavItem[] = [
   // Orders carry prices — purchase cost — so they need inventory.cost too (the owner, by default).
   { label: 'Purchase Orders', to: '/purchase-orders', icon: ClipboardCheck, enabled: true, allPermissions: ['vendors.view', 'inventory.cost'] },
   { label: 'Finance', to: '/finance', icon: Wallet, enabled: true, anyPermission: ['finance.view', 'expenses.view', 'income.view', 'vendors.view', 'bank.view'] },
+  { label: 'GST', to: '/gst', icon: Receipt, enabled: true, permission: 'gst.view' },
   { label: 'Reports', to: '/reports', icon: BarChart3, enabled: true, permission: 'reports.view' },
   { label: 'Staff', to: '/staff', icon: UserCog, enabled: true, permission: 'staff.manage' },
   { label: 'Settings', to: '/settings', icon: Settings, enabled: true, permission: 'settings.view' },

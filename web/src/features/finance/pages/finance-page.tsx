@@ -413,6 +413,8 @@ function PnlCard({ title, lines, total, tone }: { title: string; lines: { label:
 }
 
 function GstTab(): JSX.Element {
+  const navigate = useNavigate();
+  const canOpenGst = useAuth().can('gst.view');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const range = useMemo(() => ({ from: from || undefined, to: to || undefined }), [from, to]);
@@ -423,7 +425,10 @@ function GstTab(): JSX.Element {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <div className="flex items-center gap-2"><span className="text-sm text-muted-foreground">From</span><Input type="date" className="w-40" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
         <div className="flex items-center gap-2"><span className="text-sm text-muted-foreground">To</span><Input type="date" className="w-40" value={to} onChange={(e) => setTo(e.target.value)} /></div>
-        <div className="sm:ml-auto"><ExportMenu type="gst" /></div>
+        <div className="flex gap-2 sm:ml-auto">
+          {canOpenGst && <Button variant="outline" onClick={() => navigate('/gst')}>Open GST returns</Button>}
+          <ExportMenu type="gst" />
+        </div>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard label="GST collected" value={data ? formatPaise(data.collected) : '—'} tone="positive" hint="All invoices, net of credit notes" />

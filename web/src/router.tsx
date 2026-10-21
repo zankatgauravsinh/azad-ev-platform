@@ -27,6 +27,7 @@ import { ReportsPage } from '@/features/reports/pages/reports-page';
 import { WarrantyPage } from '@/features/warranty/pages/warranty-page';
 import { AuditLogPage } from '@/features/audit/pages/audit-log-page';
 import { FinancePage } from '@/features/finance/pages/finance-page';
+import { GstPage } from '@/features/gst/pages/gst-page';
 import { VendorsPage } from '@/features/vendors/pages/vendors-page';
 import { VendorDetailPage } from '@/features/vendors/pages/vendor-detail-page';
 import { PurchaseOrdersPage } from '@/features/purchase-orders/pages/purchase-orders-page';
@@ -73,6 +74,7 @@ export const router = createBrowserRouter([
           { path: '/purchase-orders', element: <PurchaseOrdersPage /> },
           { path: '/purchase-orders/:id', element: <PurchaseOrderDetailPage /> },
           { path: '/finance', element: <FinancePage /> },
+          { path: '/gst', element: <GstPage /> },
           { path: '/reports', element: <ReportsPage /> },
           { path: '/settings', element: <SettingsPage /> },
           { path: '/settings/roles', element: <RolesPage /> },
