@@ -51,6 +51,18 @@ export const updateCompanySettingsSchema = z
     gstDiscountTreatment: z.enum(GST_ADJUSTMENT_TREATMENTS as [GstAdjustmentTreatment, ...GstAdjustmentTreatment[]]).nullable().optional(),
     gstExchangeTreatment: z.enum(GST_ADJUSTMENT_TREATMENTS as [GstAdjustmentTreatment, ...GstAdjustmentTreatment[]]).nullable().optional(),
     taxPercentage: z.coerce.number().min(0).max(100).optional(),
+    // GST registration date ('YYYY-MM-DD'; '' or null clears it): invoices dated before it carry no GST.
+    gstEffectiveFrom: z
+      .union([z.literal(''), z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')])
+      .nullable()
+      .optional()
+      .transform((v) => (v === '' ? null : v)),
+    // Previous-FY aggregate turnover above ₹5 crore → 6-digit HSN in GSTR-1.
+    gstAatoAbove5Cr: z.boolean().optional(),
+    // Service bills: SAC for labour, HSN for parts, default GST rate.
+    serviceSacCode: z.string().trim().regex(/^(\d{4,8})?$/, 'SAC must be 4–8 digits').optional().transform((v) => (v === undefined ? undefined : v || null)),
+    servicePartsHsnCode: z.string().trim().regex(/^(\d{4,8})?$/, 'HSN must be 4–8 digits').optional().transform((v) => (v === undefined ? undefined : v || null)),
+    serviceGstRateBp: z.coerce.number().int().min(0).max(2800, 'At most 28%').optional(),
     // Accessory counter sales: GST on the invoice (prices include it) and the rate for an unclassified accessory.
     accessoryGstEnabled: z.boolean().optional(),
     accessoryGstRateBp: z.coerce.number().int().min(0).max(2800, 'At most 28%').optional(),
@@ -152,6 +164,12 @@ export interface CompanySettingsDto {
   gstStateCode: string | null;
   gstDiscountTreatment: GstAdjustmentTreatment | null;
   gstExchangeTreatment: GstAdjustmentTreatment | null;
+  /** 'YYYY-MM-DD' or null. */
+  gstEffectiveFrom: string | null;
+  gstAatoAbove5Cr: boolean;
+  serviceSacCode: string | null;
+  servicePartsHsnCode: string | null;
+  serviceGstRateBp: number;
   taxPercentage: string;
   invoicePrefix: string;
   bookingPrefix: string;

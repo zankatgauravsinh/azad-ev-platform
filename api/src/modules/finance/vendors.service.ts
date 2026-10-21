@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  gstinStateCode,
   VENDOR_BILL_KIND_LABEL,
   buildPageMeta,
   panFromGstin,
@@ -47,6 +48,8 @@ function profileData(dto: VendorProfileInput) {
     address: dto.address,
     city: dto.city,
     state: dto.state,
+    // The GSTIN decides the state code (CGST+SGST vs IGST on purchases); typed only when there is no GSTIN.
+    gstStateCode: dto.gstNumber ? gstinStateCode(dto.gstNumber) : dto.gstStateCode,
     type: dto.type,
     contactPerson: dto.contactPerson,
     altMobile: dto.altMobile,
@@ -309,7 +312,7 @@ export class VendorsService {
       if (dto.name && dto.name !== existing.name) await tx.inventoryUnit.updateMany({ where: { vendorId: id }, data: { supplier: row.name } });
       return row;
     });
-    const changes = diffFields(existing, updated, ['name', 'status', 'type', 'contactPerson', 'mobile', 'altMobile', 'email', 'gstNumber', 'pan', 'address', 'city', 'state', 'creditDays', 'bankAccountName', 'bankAccountNumber', 'bankIfsc', 'bankName', 'upiId', 'notes']);
+    const changes = diffFields(existing, updated, ['name', 'status', 'type', 'contactPerson', 'mobile', 'altMobile', 'email', 'gstNumber', 'pan', 'address', 'city', 'state', 'gstStateCode', 'creditDays', 'bankAccountName', 'bankAccountNumber', 'bankIfsc', 'bankName', 'upiId', 'notes']);
     if (dto.defaultForScooters !== undefined) changes.defaultForScooters = { from: null, to: dto.defaultForScooters };
     await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Vendor', entityId: id, entityLabel: `${updated.vendorNumber} ${updated.name}`, summary: `Updated vendor ${updated.vendorNumber} ${updated.name}: ${changesSummary(changes) || 'nothing changed'}`, changes });
     return this.get(id, canSeeCost);
@@ -385,6 +388,7 @@ export class VendorsService {
       mobile: v.mobile,
       email: v.email,
       gstNumber: v.gstNumber,
+      gstStateCode: v.gstStateCode,
       address: v.address,
       city: v.city,
       state: v.state,

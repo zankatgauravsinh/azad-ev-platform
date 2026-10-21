@@ -171,7 +171,7 @@ describe('GST invoice PDF (e2e)', () => {
       expect(text.strings).toEqual(expect.arrayContaining([
         'TAX INVOICE', `No: ${sale.invoiceNumber}`, `Date: ${inIndia(sale.invoicedAt)}`,
         'GSTIN: TEST-GSTIN-g', 'State code: 24', `Showroom g ${stamp}`, `Legal name: Legal g ${stamp}`,
-        'Place of supply: State code 24', 'Supply type: Intra-state',
+        'Place of supply: 24-Gujarat', 'Supply type: Intra-state',
         `Customer intra g`, 'intra house', `VIN: ${sale.vin}`,
         'HSN: TEST-VEHICLE', '10,500.00', '9,523.81', '5.00%', '238.10', '10,000.00', '− 500.00',
         `Acc A ${stamp}`, 'HSN: TEST-ACCESSORY-A', '590.00', '1,180.00', '1,000.00', '18.00%', '90.00',
@@ -199,7 +199,7 @@ describe('GST invoice PDF (e2e)', () => {
     it('INTER: IGST only, place of supply from the snapshot', async () => {
       const sale = await invoiced(G, { exShowroom: 1_000_000 }, 'inter');
       const { text } = await pdf(G.token, sale.bookingId);
-      expect(text.strings).toEqual(expect.arrayContaining(['Place of supply: State code 27', 'Supply type: Inter-state', 'IGST (₹)', '476.19', 'IGST', '₹476.19', '₹10,000.00']));
+      expect(text.strings).toEqual(expect.arrayContaining(['Place of supply: 27-Maharashtra', 'Supply type: Inter-state', 'IGST (₹)', '476.19', 'IGST', '₹476.19', '₹10,000.00']));
       expect(text.all).not.toContain('CGST');
       expect(text.all).not.toContain('SGST');
     });

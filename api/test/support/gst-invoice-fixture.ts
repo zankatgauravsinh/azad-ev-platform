@@ -48,6 +48,7 @@ export interface FixtureOptions {
   supplierStateCode?: string;
   placeOfSupplyStateCode?: string;
   engineVersion?: string;
+  buyerGstin?: string | null;
 }
 
 /**
@@ -77,7 +78,10 @@ export function taxDocument(opts: FixtureOptions): SaleTaxDocument {
     invoiceNumber: opts.invoiceNumber === undefined ? 'TEST-INV0007' : opts.invoiceNumber,
     invoicedAt: opts.invoicedAt === undefined ? new Date('2026-06-30T19:00:00.000Z') : opts.invoicedAt, // 1 July 00:30 in India
     snapshotId: 'snap-1',
+    version: 1,
     recordedAt: new Date('2026-06-30T19:00:01.000Z'),
+    buyerName: null,
+    buyerGstin: opts.buyerGstin ?? null,
     engineVersion: opts.engineVersion ?? result.engineVersion,
     taxPoint: result.asOf,
     supplyType,

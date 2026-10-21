@@ -282,9 +282,9 @@ describe('identity — live values, printed as given', () => {
 
   it('customer and vehicle', () => {
     const doc = build(vehicleOnly());
-    expect(doc.customer).toEqual({ name: 'Asha Patel', phone: '9876543210', addressLines: ['4 Lake View', 'Una, Gujarat, 362560'] });
+    expect(doc.customer).toEqual({ name: 'Asha Patel', phone: '9876543210', addressLines: ['4 Lake View', 'Una, Gujarat, 362560'], gstin: null });
     expect(doc.vehicle).toEqual({ model: 'VX', variant: 'Pro', colour: 'Red', vin: 'TESTVIN0001', motorNumber: 'TESTMOTOR1', batteryNumber: 'TESTBATT1' });
     const sparse = build(vehicleOnly(), { customer: { name: 'B', phone: '', address: null, city: null, state: null, pin: null } });
-    expect(sparse.customer).toEqual({ name: 'B', phone: null, addressLines: [] });
+    expect(sparse.customer).toEqual({ name: 'B', phone: null, addressLines: [], gstin: null });
   });
 });

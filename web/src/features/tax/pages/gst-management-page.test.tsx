@@ -29,6 +29,7 @@ vi.mock('../components/gst-registration-card', () => ({
   GstRegistrationCard: (p: { canManage: boolean }) => <div data-testid="registration-card" data-can-manage={String(p.canManage)} />,
   GstReadinessCard: () => <div data-testid="readiness-card" />,
 }));
+vi.mock('../components/gst-returns-settings-card', () => ({ GstReturnsSettingsCard: (p: { canManage: boolean }) => <div data-testid="returns-settings-card" data-can-manage={String(p.canManage)} /> }));
 vi.mock('../components/gst-config-cards', () => ({
   GstPolicyCard: (p: { canManage: boolean }) => <div data-testid="policy-card" data-can-manage={String(p.canManage)} />,
   ComponentMappingCard: (p: { canManage: boolean; classifications: unknown[] }) => <div data-testid="mapping-card" data-can-manage={String(p.canManage)} data-options={p.classifications.length} />,

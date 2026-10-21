@@ -22,13 +22,13 @@ describe('ServiceJobsService.bill (billing calculations)', () => {
   );
 
   it('reports PENDING when the bill is zero', () => {
-    const b = service.bill({ partsTotal: 0n, labourTotal: 0n, discount: 0n, taxAmount: 0n, total: 0n, payments: [] });
+    const b = service.bill({ partsTotal: 0n, labourTotal: 0n, discount: 0n, taxAmount: 0n, taxRateBp: null, cgst: 0n, sgst: 0n, igst: 0n, total: 0n, payments: [] });
     expect(b.status).toBe('PENDING');
     expect(b.balance).toBe('0');
   });
 
   it('computes balance and PARTIAL when part-paid', () => {
-    const b = service.bill({ partsTotal: 50000n, labourTotal: 30000n, discount: 0n, taxAmount: 0n, total: 80000n, payments: [{ amount: 30000n }] });
+    const b = service.bill({ partsTotal: 50000n, labourTotal: 30000n, discount: 0n, taxAmount: 0n, taxRateBp: null, cgst: 0n, sgst: 0n, igst: 0n, total: 80000n, payments: [{ amount: 30000n }] });
     expect(b.total).toBe('80000');
     expect(b.paid).toBe('30000');
     expect(b.balance).toBe('50000');
@@ -36,7 +36,7 @@ describe('ServiceJobsService.bill (billing calculations)', () => {
   });
 
   it('reports PAID and clamps a negative balance to zero when overpaid', () => {
-    const b = service.bill({ partsTotal: 100000n, labourTotal: 0n, discount: 0n, taxAmount: 0n, total: 100000n, payments: [{ amount: 100000n }, { amount: 5000n }] });
+    const b = service.bill({ partsTotal: 100000n, labourTotal: 0n, discount: 0n, taxAmount: 0n, taxRateBp: null, cgst: 0n, sgst: 0n, igst: 0n, total: 100000n, payments: [{ amount: 100000n }, { amount: 5000n }] });
     expect(b.status).toBe('PAID');
     expect(b.balance).toBe('0');
   });

@@ -37,8 +37,10 @@ export class SaleTaxSnapshotReader {
     });
     if (!sale) throw new NotFoundException('Sale not found');
 
+    // The highest version is the invoice's current GST (earlier versions are kept for the record).
     const snapshot = await this.prisma.taxSnapshot.findFirst({
       where: { saleId: sale.id, companyId },
+      orderBy: { version: 'desc' },
       // The tenant middleware does not reach nested reads, so the lines are scoped explicitly.
       include: { lines: { where: { companyId }, orderBy: [{ position: 'asc' }, { id: 'asc' }] } },
     });

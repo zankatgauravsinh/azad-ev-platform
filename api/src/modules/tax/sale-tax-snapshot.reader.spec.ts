@@ -20,7 +20,7 @@ const line = (over: Partial<Line>): Line => ({
   ...over,
 });
 const snapshot = (over: Partial<TaxSnapshotWithLines> = {}): TaxSnapshotWithLines => ({
-  id: 'snap-1', companyId: CO, saleId: SALE.id, engineVersion: '1', asOf: new Date('2026-07-01T00:00:00.000Z'), supplyType: 'INTRA',
+  id: 'snap-1', companyId: CO, saleId: SALE.id, version: 1, reason: null, buyerName: 'Test buyer', buyerGstin: null, engineVersion: '1', asOf: new Date('2026-07-01T00:00:00.000Z'), supplyType: 'INTRA',
   supplierGstin: 'TEST-GSTIN', supplierStateCode: '24', placeOfSupplyStateCode: '24',
   discountTreatment: 'REDUCES_VEHICLE_TAXABLE_VALUE', exchangeTreatment: 'AFTER_TAX_ADJUSTMENT', discountAmount: 50_000n, exchangeAmount: 20_000n,
   totalGross: 1_030_000n, totalTaxable: 982_381n, totalCGST: 23_810n, totalSGST: 23_810n, totalIGST: 0n, totalTax: 47_619n, totalRoundOff: -1n,
@@ -112,6 +112,7 @@ describe('SaleTaxSnapshotReader', () => {
     expect(prisma.sale.findFirst).toHaveBeenCalledWith({ where: { id: 'sale-1', companyId: CO }, select: { id: true, bookingId: true, invoiceNumber: true, invoicedAt: true } });
     expect(prisma.taxSnapshot.findFirst).toHaveBeenCalledWith({
       where: { saleId: 'sale-1', companyId: CO },
+      orderBy: { version: 'desc' }, // the current GST of the invoice
       include: { lines: { where: { companyId: CO }, orderBy: [{ position: 'asc' }, { id: 'asc' }] } },
     });
   });

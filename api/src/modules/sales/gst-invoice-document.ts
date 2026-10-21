@@ -120,7 +120,8 @@ export interface GstInvoiceDocument {
   /** The invoice date as the company's calendar date. */
   invoiceDate: string;
   supplier: { name: string; legalName: string | null; addressLines: string[]; gstin: string; stateCode: string };
-  customer: { name: string; phone: string | null; addressLines: string[] };
+  /** gstin: the buyer's, as invoiced (B2B) — null for an unregistered buyer. */
+  customer: { name: string; phone: string | null; addressLines: string[]; gstin: string | null };
   supply: { placeOfSupplyStateCode: string; supplyType: SaleTaxDocument['supplyType']; supplyTypeLabel: string };
   vehicle: { model: string; variant: string; colour: string; vin: string; motorNumber: string | null; batteryNumber: string | null };
   /** The tax columns this invoice carries — decided by the stored supply type alone. */
@@ -264,7 +265,7 @@ export function buildGstInvoiceDocument(tax: SaleTaxDocument | null | undefined,
       gstin: tax.supplierGstin,
       stateCode: tax.supplierStateCode,
     },
-    customer: { name: c.name, phone: c.phone?.trim() || null, addressLines: [c.address?.trim() ?? '', cityLine].filter(Boolean) },
+    customer: { name: c.name, phone: c.phone?.trim() || null, addressLines: [c.address?.trim() ?? '', cityLine].filter(Boolean), gstin: tax.buyerGstin },
     supply: { placeOfSupplyStateCode: tax.placeOfSupplyStateCode, supplyType: tax.supplyType, supplyTypeLabel: SUPPLY_TYPE_LABEL[tax.supplyType] },
     vehicle: { ...identity.vehicle },
     taxColumns: intra ? ['CGST', 'SGST'] : ['IGST'],

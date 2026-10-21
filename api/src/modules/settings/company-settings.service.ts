@@ -55,7 +55,7 @@ export class CompanySettingsService {
   async update(dto: UpdateCompanySettingsInput, userId: string): Promise<CompanySettingsDto> {
     const current = await this.getSettings();
     // Money settings arrive as integer paise but are stored as BigInt.
-    const { openingCash, openingBank, lowCashThreshold, largeExpenseThreshold, ...rest } = dto;
+    const { openingCash, openingBank, lowCashThreshold, largeExpenseThreshold, gstEffectiveFrom, ...rest } = dto;
 
     // GST registration. An empty GSTIN clears it. GST can only be (or stay) enabled with a well-formed
     // GSTIN and a matching two-digit state code — checked here, on the resulting state, whenever a
@@ -75,6 +75,7 @@ export class CompanySettingsService {
       data: {
         ...rest,
         ...(gstNumber !== undefined ? { gstNumber } : {}),
+        ...(gstEffectiveFrom !== undefined ? { gstEffectiveFrom: gstEffectiveFrom === null ? null : new Date(`${gstEffectiveFrom}T00:00:00.000Z`) } : {}),
         ...(openingCash !== undefined ? { openingCash: BigInt(openingCash) } : {}),
         ...(openingBank !== undefined ? { openingBank: BigInt(openingBank) } : {}),
         ...(lowCashThreshold !== undefined ? { lowCashThreshold: BigInt(lowCashThreshold) } : {}),
@@ -170,6 +171,11 @@ export class CompanySettingsService {
       gstStateCode: s.gstStateCode,
       gstDiscountTreatment: s.gstDiscountTreatment,
       gstExchangeTreatment: s.gstExchangeTreatment,
+      gstEffectiveFrom: s.gstEffectiveFrom ? s.gstEffectiveFrom.toISOString().slice(0, 10) : null,
+      gstAatoAbove5Cr: s.gstAatoAbove5Cr,
+      serviceSacCode: s.serviceSacCode,
+      servicePartsHsnCode: s.servicePartsHsnCode,
+      serviceGstRateBp: s.serviceGstRateBp,
       taxPercentage: s.taxPercentage.toString(),
       invoicePrefix: s.invoicePrefix,
       bookingPrefix: s.bookingPrefix,

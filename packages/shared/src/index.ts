@@ -28,3 +28,4 @@ export * from './identity';
 export * from './vendor-payments';
 export * from './purchase-orders';
 export * from './audit';
+export * from './gst';

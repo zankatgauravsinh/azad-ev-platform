@@ -27,6 +27,8 @@ export interface ServicePdfInput {
     labourTotal: bigint;
     discount: bigint;
     taxAmount: bigint;
+    /** The bill's GST as stored (rate known): printed as CGST + SGST or IGST with the SAC / HSN codes. */
+    gst?: { rateBp: number; cgst: bigint; sgst: bigint; igst: bigint; labourSacCode: string | null; partsHsnCode: string | null; supplierGstin: string | null; buyerGstin: string | null };
     total: bigint;
     paid: bigint;
     balance: bigint;
@@ -96,7 +98,7 @@ export class ServicePdfService {
           ['Parts total', job.partsTotal],
           ['Labour total', job.labourTotal],
           ['Discount', -job.discount],
-          ['GST', job.taxAmount],
+          ...gstRows(job),
         ];
         doc.font(FONT_BODY).fontSize(10).fillColor('#000');
         let y = ly;
@@ -109,6 +111,11 @@ export class ServicePdfService {
         doc.fillColor(NAVY).font(FONT_BOLD).fontSize(12).text('Total', right - 232, y + 8);
         doc.text(formatInr(job.total), right - 120, y + 8, { width: 112, align: 'right' });
         y += 30;
+        const codes = job.gst && [job.gst.labourSacCode && `SAC ${job.gst.labourSacCode} (labour)`, job.gst.partsHsnCode && `HSN ${job.gst.partsHsnCode} (parts)`, job.gst.supplierGstin && `Our GSTIN ${job.gst.supplierGstin}`, job.gst.buyerGstin && `Customer GSTIN ${job.gst.buyerGstin}`].filter(Boolean).join(' · ');
+        if (codes) {
+          doc.fillColor('#555').font(FONT_BODY).fontSize(8).text(codes, left, y, { width: right - left });
+          y = doc.y + 6;
+        }
         if (input.docType === 'SERVICE BILL') {
           doc.fillColor('#000').font(FONT_BODY).fontSize(10)
             .text(`Paid: ${formatInr(job.paid)}`, right - 240, y)
@@ -160,4 +167,12 @@ export class ServicePdfService {
     }
     doc.y = y + 4;
   }
+}
+
+/** "CGST 9%" + "SGST 9%" (or "IGST 18%") when the bill's rate is stored; a single "GST" row for an older bill. */
+function gstRows(job: ServicePdfInput['job']): [string, bigint][] {
+  const g = job.gst;
+  if (!g) return [['GST', job.taxAmount]];
+  const pct = (bp: number): string => `${(bp / 100).toFixed(2).replace(/\.?0+$/, '')}%`;
+  return g.igst > 0n ? [[`IGST ${pct(g.rateBp)}`, g.igst]] : [[`CGST ${pct(g.rateBp / 2)}`, g.cgst], [`SGST ${pct(g.rateBp / 2)}`, g.sgst]];
 }

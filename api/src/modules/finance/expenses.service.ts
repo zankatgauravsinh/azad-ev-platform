@@ -23,15 +23,15 @@ import { MonthlyClosingService } from './monthly-closing.service';
 import { VendorBillsService } from '../vendor-payables/vendor-bills.service';
 import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
 
-const EXPENSE_FIELDS = ['expenseDate', 'category', 'vendor', 'amount', 'gstAmount', 'paymentMethod', 'referenceNumber', 'description', 'dueDate', 'status', 'paid'] as const;
-type ExpenseLike = { expenseDate: Date; category?: { name: string } | null; vendor?: { name: string } | null; amount: bigint; gstAmount: bigint; paymentMethod: string; referenceNumber: string | null; description: string | null; dueDate: Date | null; status: string; paid: boolean };
-const expenseSnapshot = (e: ExpenseLike): Record<(typeof EXPENSE_FIELDS)[number], unknown> => ({ expenseDate: e.expenseDate, category: e.category?.name ?? null, vendor: e.vendor?.name ?? null, amount: e.amount, gstAmount: e.gstAmount, paymentMethod: e.paymentMethod, referenceNumber: e.referenceNumber, description: e.description, dueDate: e.dueDate, status: e.status, paid: e.paid });
+const EXPENSE_FIELDS = ['expenseDate', 'category', 'vendor', 'amount', 'gstAmount', 'itcEligible', 'paymentMethod', 'referenceNumber', 'description', 'dueDate', 'status', 'paid'] as const;
+type ExpenseLike = { expenseDate: Date; category?: { name: string } | null; vendor?: { name: string } | null; amount: bigint; gstAmount: bigint; itcEligible?: boolean | null; paymentMethod: string; referenceNumber: string | null; description: string | null; dueDate: Date | null; status: string; paid: boolean };
+const expenseSnapshot = (e: ExpenseLike): Record<(typeof EXPENSE_FIELDS)[number], unknown> => ({ expenseDate: e.expenseDate, category: e.category?.name ?? null, vendor: e.vendor?.name ?? null, amount: e.amount, gstAmount: e.gstAmount, itcEligible: e.itcEligible ?? null, paymentMethod: e.paymentMethod, referenceNumber: e.referenceNumber, description: e.description, dueDate: e.dueDate, status: e.status, paid: e.paid });
 
 /** Scooter purchases used to be recorded as expenses in this category; since the cutover they live on the scooter. */
 const VEHICLE_PURCHASE_CATEGORY = 'Vehicle Purchase';
 
 const expenseInclude = {
-  category: { select: { name: true } },
+  category: { select: { name: true, itcEligible: true } },
   vendor: { select: { name: true } },
   attachments: { orderBy: { createdAt: 'asc' } },
 } satisfies Prisma.ExpenseInclude;
@@ -95,6 +95,7 @@ export class ExpensesService {
           vendorId: dto.vendorId ?? null,
           amount,
           gstAmount,
+          itcEligible: dto.itcEligible ?? null,
           paymentMethod: dto.paymentMethod,
           referenceNumber: dto.referenceNumber ?? null,
           description: dto.description ?? null,
@@ -130,6 +131,7 @@ export class ExpensesService {
         vendorId: dto.vendorId,
         amount: dto.amount !== undefined ? BigInt(dto.amount) : undefined,
         gstAmount: dto.gstAmount !== undefined ? BigInt(dto.gstAmount) : undefined,
+        itcEligible: dto.itcEligible,
         paymentMethod: dto.paymentMethod,
         referenceNumber: dto.referenceNumber,
         description: dto.description,
@@ -273,6 +275,8 @@ export class ExpensesService {
       vendorName: e.vendor?.name ?? null,
       amount: String(e.amount),
       gstAmount: String(e.gstAmount),
+      itcEligible: e.itcEligible ?? e.category.itcEligible,
+      itcOverride: e.itcEligible,
       total: String(e.amount + e.gstAmount),
       paymentMethod: e.paymentMethod,
       referenceNumber: e.referenceNumber,

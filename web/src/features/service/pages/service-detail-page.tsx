@@ -220,7 +220,8 @@ function Labour({ job, run, busy, canLabour, canViewCatalog }: Section & { canLa
 
 function Bill({ job, run, busy, canBill, canPayment }: Section & { canBill: boolean; canPayment: boolean }): JSX.Element {
   const [discount, setDiscount] = useState('0');
-  const [tax, setTax] = useState('0');
+  // The bill's own rate once billed, else the default from GST Management.
+  const [tax, setTax] = useState(String((job.bill.taxRateBp ?? job.bill.defaultTaxRateBp ?? 0) / 100));
   const [amount, setAmount] = useState('');
   const [mode, setMode] = useState('CASH');
   return (
@@ -229,7 +230,16 @@ function Bill({ job, run, busy, canBill, canPayment }: Section & { canBill: bool
         <span className="text-muted-foreground">Parts</span><span className="text-right tabular-nums">{formatPaise(job.bill.partsTotal)}</span>
         <span className="text-muted-foreground">Labour</span><span className="text-right tabular-nums">{formatPaise(job.bill.labourTotal)}</span>
         <span className="text-muted-foreground">Discount</span><span className="text-right tabular-nums">− {formatPaise(job.bill.discount)}</span>
-        <span className="text-muted-foreground">GST</span><span className="text-right tabular-nums">{formatPaise(job.bill.taxAmount)}</span>
+        {job.bill.taxRateBp != null && BigInt(job.bill.igst) > 0n ? (
+          <><span className="text-muted-foreground">IGST {job.bill.taxRateBp / 100}%</span><span className="text-right tabular-nums">{formatPaise(job.bill.igst)}</span></>
+        ) : job.bill.taxRateBp != null && BigInt(job.bill.taxAmount) > 0n ? (
+          <>
+            <span className="text-muted-foreground">CGST {job.bill.taxRateBp / 200}%</span><span className="text-right tabular-nums">{formatPaise(job.bill.cgst)}</span>
+            <span className="text-muted-foreground">SGST {job.bill.taxRateBp / 200}%</span><span className="text-right tabular-nums">{formatPaise(job.bill.sgst)}</span>
+          </>
+        ) : (
+          <><span className="text-muted-foreground">GST</span><span className="text-right tabular-nums">{formatPaise(job.bill.taxAmount)}</span></>
+        )}
         <span className="border-t pt-1 font-semibold">Total</span><span className="border-t pt-1 text-right font-bold tabular-nums">{formatPaise(job.bill.total)}</span>
         <span className="text-muted-foreground">Paid</span><span className="text-right tabular-nums text-emerald-600">{formatPaise(job.bill.paid)}</span>
         <span className="text-muted-foreground">Balance</span><span className="text-right tabular-nums text-destructive">{formatPaise(job.bill.balance)}</span>

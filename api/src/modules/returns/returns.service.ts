@@ -222,7 +222,7 @@ export class ReturnsService {
     const refundDue = amountPaid - deduction;
 
     // The credit note's GST split — read (never calculated) before the transaction; refused if unsound.
-    const { saleTotal, gst } = await this.creditNoteFigures(row);
+    const { saleTotal, gst, taxSnapshotId } = await this.creditNoteFigures(row);
 
     await this.prisma.$transaction(async (tx) => {
       // Idempotency lock: claim the completion. A concurrent/second attempt (status no longer
@@ -252,6 +252,7 @@ export class ReturnsService {
           amount: saleTotal - gst,
           gstAmount: gst,
           total: saleTotal,
+          taxSnapshotId, // the GST breakdown reversed line by line (GSTR-1 credit notes)
           reason: `Return ${row.returnNumber}: ${row.reason}`,
           issuedById: userId,
           createdById: userId,
@@ -330,10 +331,10 @@ export class ReturnsService {
    * The identity CreditNote.amount = total − gstAmount is kept in both cases; the stored discount /
    * exchange treatment is not reinterpreted here.
    */
-  private async creditNoteFigures(row: ReturnRow): Promise<{ saleTotal: bigint; gst: bigint }> {
+  private async creditNoteFigures(row: ReturnRow): Promise<{ saleTotal: bigint; gst: bigint; taxSnapshotId: string | null }> {
     const saleTotal = row.sale.total;
     const tax = await this.taxSnapshots.forSale(row.saleId); // tenant-scoped; null = no GST snapshot
-    if (!tax) return { saleTotal, gst: row.sale.taxAmount ?? 0n };
+    if (!tax) return { saleTotal, gst: row.sale.taxAmount ?? 0n, taxSnapshotId: null };
 
     const refuse = (reason: string): never => {
       this.logger.error(`Return ${row.returnNumber} refused: GST record of sale ${row.saleId} cannot be reversed — ${reason}`);
@@ -346,7 +347,7 @@ export class ReturnsService {
       throw e;
     }
     if (tax.documentTotal !== saleTotal) return refuse(`SALE_TOTAL_MISMATCH: snapshot document total ${tax.documentTotal} ≠ sale total ${saleTotal}`);
-    return { saleTotal, gst: tax.totals.totalTax };
+    return { saleTotal, gst: tax.totals.totalTax, taxSnapshotId: tax.snapshotId };
   }
 
   // ── internals ──

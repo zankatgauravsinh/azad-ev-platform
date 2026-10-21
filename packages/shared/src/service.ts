@@ -206,6 +206,13 @@ export interface ServiceBillDto {
   labourTotal: string;
   discount: string;
   taxAmount: string;
+  /** The bill's GST rate (basis points) once billed; null before, or for a bill made before rates were stored. */
+  taxRateBp: number | null;
+  cgst: string;
+  sgst: string;
+  igst: string;
+  /** The rate to offer for a new bill (GST Management → service bills). Only on the job detail. */
+  defaultTaxRateBp?: number;
   total: string;
   paid: string;
   balance: string;

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
+import { gstPlaceOfSupply } from '@azad/shared';
 import { drawBrandHeader, drawBrandFooter, useBrandFonts, NAVY, FONT_BODY, FONT_BOLD, type PdfBrand } from '../../common/pdf/brand';
 import type { GstInvoiceDocument, GstInvoiceLine, GstTaxColumn } from './gst-invoice-document';
 
@@ -90,11 +91,11 @@ class Painter {
     const c = this.d.customer;
     this.twoBlocks(
       { title: 'Supplier', lines: [{ text: s.name, bold: true }, ...(s.legalName ? [{ text: `Legal name: ${s.legalName}` }] : []), ...s.addressLines.map((text) => ({ text })), { text: `GSTIN: ${s.gstin}` }, { text: `State code: ${s.stateCode}` }] },
-      { title: 'Bill To', lines: [{ text: c.name, bold: true }, ...(c.phone ? [{ text: c.phone }] : []), ...c.addressLines.map((text) => ({ text }))] },
+      { title: 'Bill To', lines: [{ text: c.name, bold: true }, ...(c.phone ? [{ text: c.phone }] : []), ...c.addressLines.map((text) => ({ text })), ...(c.gstin ? [{ text: `GSTIN: ${c.gstin}` }] : [])] },
     );
     const v = this.d.vehicle;
     this.twoBlocks(
-      { title: 'Supply', lines: [{ text: `Place of supply: State code ${this.d.supply.placeOfSupplyStateCode}` }, { text: `Supply type: ${this.d.supply.supplyTypeLabel}` }] },
+      { title: 'Supply', lines: [{ text: `Place of supply: ${gstPlaceOfSupply(this.d.supply.placeOfSupplyStateCode)}` }, { text: `Supply type: ${this.d.supply.supplyTypeLabel}` }] },
       { title: 'Vehicle', lines: [{ text: `${v.model} ${v.variant}`, bold: true }, { text: `Colour: ${v.colour}` }, { text: `VIN: ${v.vin}` }, { text: `Motor No.: ${v.motorNumber ?? '—'}` }, { text: `Battery No.: ${v.batteryNumber ?? '—'}` }] },
     );
 

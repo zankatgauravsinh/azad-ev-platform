@@ -65,7 +65,7 @@ describe('GstInvoicePdfService', () => {
     expect(text.strings).toEqual(expect.arrayContaining([
       'TAX INVOICE', 'No: TEST-INV0007', 'Date: 1/7/2026',
       'GSTIN: TEST-GSTIN-SUPPLIER', 'State code: 24', 'Legal name: Azad Enterprise',
-      'Place of supply: State code 24', 'Supply type: Intra-state',
+      'Place of supply: 24-Gujarat', 'Supply type: Intra-state',
       'VX Pro', 'Colour: Red', 'VIN: TESTVIN0001', 'Motor No.: TESTMOTOR1', 'Battery No.: TESTBATT1',
       'Asha Patel', '9876543210', '4 Lake View', 'Una, Gujarat, 362560',
       'TESTBRAND VX Pro (Red)', 'HSN: TEST-VEH', '10,000.00', '9,523.81', '5.00%', '238.10',
@@ -83,7 +83,7 @@ describe('GstInvoicePdfService', () => {
 
   it('Case B — INTER taxable sale: IGST only', async () => {
     const text = await render(buildGstInvoiceDocument(vehicleOnly({ supplyType: 'INTER' }), identity()));
-    expect(text.strings).toEqual(expect.arrayContaining(['Place of supply: State code 27', 'Supply type: Inter-state', 'IGST (₹)', '9,523.81', '5.00%', '476.19', 'IGST', '₹476.19', '₹0.00', 'Grand total', '₹10,000.00']));
+    expect(text.strings).toEqual(expect.arrayContaining(['Place of supply: 27-Maharashtra', 'Supply type: Inter-state', 'IGST (₹)', '9,523.81', '5.00%', '476.19', 'IGST', '₹476.19', '₹0.00', 'Grand total', '₹10,000.00']));
     expect(text.all).not.toContain('CGST');
     expect(text.all).not.toContain('SGST');
     expectNoOverlap(text);

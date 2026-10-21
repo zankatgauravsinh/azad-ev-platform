@@ -1033,16 +1033,16 @@ model Sale {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  items       SaleItem[]
-  accessories SaleAccessory[]
-  payments    Payment[]
-  delivery    Delivery?
-  serviceJobs ServiceJob[]
-  returns     VehicleReturn[]
-  creditNotes CreditNote[]
-  refunds     Refund[]
+  items        SaleItem[]
+  accessories  SaleAccessory[]
+  payments     Payment[]
+  delivery     Delivery?
+  serviceJobs  ServiceJob[]
+  returns      VehicleReturn[]
+  creditNotes  CreditNote[]
+  refunds      Refund[]
   /// Immutable GST snapshot — present only for sales invoiced while GST was enabled.
-  taxSnapshot TaxSnapshot?
+  taxSnapshots TaxSnapshot[]
 
   @@index([customerId])
   @@index([status])
@@ -1367,6 +1367,19 @@ model ServiceJob {
   taxAmount   BigInt @default(0)
   total       BigInt @default(0)
 
+  // GST of the bill (added on top). taxRateBp null = a bill made before rates were stored (only taxAmount).
+  billedAt               DateTime?
+  taxRateBp              Int?
+  partsTaxable           BigInt    @default(0)
+  labourTaxable          BigInt    @default(0)
+  cgst                   BigInt    @default(0)
+  sgst                   BigInt    @default(0)
+  igst                   BigInt    @default(0)
+  placeOfSupplyStateCode String?
+  buyerGstin             String?
+  partsHsnCode           String?
+  labourSacCode          String?
+
   feedbackRating Int?
   feedbackNote   String?
 
@@ -1625,6 +1638,14 @@ model CompanySetting {
   // null = not decided, and a GST invoice that carries the corresponding amount is refused.
   gstDiscountTreatment GstAdjustmentTreatment?
   gstExchangeTreatment GstAdjustmentTreatment?
+  /// GST registration effective date: invoices dated before it never carry GST.
+  gstEffectiveFrom     DateTime?               @db.Date
+  /// Aggregate turnover above ₹5 crore in the previous FY → 6-digit HSN in GSTR-1 (else 4 digits).
+  gstAatoAbove5Cr      Boolean                 @default(false)
+  /// Service bills: SAC printed for labour, HSN for parts, and the default GST rate (basis points).
+  serviceSacCode       String?                 @default("9987")
+  servicePartsHsnCode  String?
+  serviceGstRateBp     Int                     @default(1800)
 
   // Document prefixes
   invoicePrefix   String @default("INV")
@@ -1837,6 +1858,9 @@ model CreditNote {
   amount           BigInt        @default(0)
   gstAmount        BigInt        @default(0)
   total            BigInt        @default(0)
+  /// The sale's GST breakdown this note reverses (its lines, negated); null for a sale without GST.
+  taxSnapshotId    String?
+  taxSnapshot      TaxSnapshot?  @relation(fields: [taxSnapshotId], references: [id], onDelete: Restrict)
   reason           String
   issuedById       String?
   issuedAt         DateTime      @default(now())
@@ -2141,12 +2165,14 @@ enum BankDirection {
 }
 
 model ExpenseCategory {
-  id        String  @id @default(uuid())
-  companyId String  @default("")
-  name      String
-  isSystem  Boolean @default(false)
-  active    Boolean @default(true)
-  sortOrder Int     @default(0)
+  id          String  @id @default(uuid())
+  companyId   String  @default("")
+  name        String
+  isSystem    Boolean @default(false)
+  active      Boolean @default(true)
+  sortOrder   Int     @default(0)
+  /// GST on these bills can be claimed as input tax credit (false for blocked credits, s.17(5) — e.g. food).
+  itcEligible Boolean @default(true)
 
   expenses  Expense[]
   recurring RecurringExpense[]
@@ -2171,6 +2197,8 @@ model Vendor {
   address           String?
   city              String?
   state             String?
+  /// GST state code (first two digits of the GSTIN) — CGST+SGST vs IGST on purchases.
+  gstStateCode      String?
   status            VendorStatus @default(ACTIVE)
   type              VendorType   @default(OTHER)
   contactPerson     String?
@@ -2218,6 +2246,8 @@ model Expense {
 
   amount          BigInt           @default(0)
   gstAmount       BigInt           @default(0)
+  /// Overrides the category's ITC eligibility for this bill (null = the category's).
+  itcEligible     Boolean?
   paymentMethod   FinancePayMethod @default(CASH)
   referenceNumber String?
   description     String?
@@ -2679,10 +2709,19 @@ model TaxComponentMapping {
 /// soft-deleted, and never recalculated — later changes to classifications, rates, products,
 /// customers or company settings must not alter it. Present only for sales invoiced with GST enabled.
 model TaxSnapshot {
-  id        String @id @default(uuid())
-  companyId String @default("")
-  saleId    String @unique
-  sale      Sale   @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  id        String  @id @default(uuid())
+  companyId String  @default("")
+  saleId    String
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  /// 1 when invoiced; a regenerated GST breakdown (same invoice number and date) is the next version. The
+  /// highest version is the invoice's current GST; earlier versions are kept, never changed.
+  version   Int     @default(1)
+  /// Why this version was made (regeneration only).
+  reason    String?
+
+  /// The buyer as invoiced: a GSTIN makes it a B2B supply.
+  buyerName  String?
+  buyerGstin String?
 
   engineVersion          String
   /// The tax-point calendar date the rates were resolved for.
@@ -2712,8 +2751,10 @@ model TaxSnapshot {
   createdById String?
   createdAt   DateTime @default(now())
 
-  lines TaxSnapshotLine[]
+  lines       TaxSnapshotLine[]
+  creditNotes CreditNote[]
 
+  @@unique([saleId, version])
   @@index([companyId])
   @@index([companyId, asOf])
 }
@@ -2831,16 +2872,19 @@ model AccessorySale {
   booking       Booking?            @relation(fields: [bookingId], references: [id], onDelete: Restrict)
 
   /// Whether this invoice carries GST (the setting when it was made). INTRA → CGST + SGST; INTER → IGST.
-  gstApplied Boolean @default(false)
-  supplyType String?
+  gstApplied             Boolean @default(false)
+  supplyType             String?
+  /// As invoiced: the place of supply (state code) and the buyer's GSTIN (B2B when set).
+  placeOfSupplyStateCode String?
+  buyerGstin             String?
   /// Taxable value (total − GST), the GST split, and the total (what the customer pays).
-  subtotal   BigInt  @default(0)
-  cgst       BigInt  @default(0)
-  sgst       BigInt  @default(0)
-  igst       BigInt  @default(0)
-  gstAmount  BigInt  @default(0)
-  total      BigInt  @default(0)
-  notes      String?
+  subtotal               BigInt  @default(0)
+  cgst                   BigInt  @default(0)
+  sgst                   BigInt  @default(0)
+  igst                   BigInt  @default(0)
+  gstAmount              BigInt  @default(0)
+  total                  BigInt  @default(0)
+  notes                  String?
 
   cancelledAt   DateTime?
   cancelledById String?

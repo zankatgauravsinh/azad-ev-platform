@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { BookingStatus, FreeServiceStatus, Prisma, SaleStatus, WarrantyStatus } from '@prisma/client';
 import {
   ActivityAction,
+  isValidGstin,
   CustomerEventType,
   PaymentContext,
   PaymentStatus,
@@ -27,6 +28,7 @@ import {
   type ServicePaymentInput,
   type UpdateServiceJobInput,
 } from '@azad/shared';
+import { serviceBillGst } from './service-gst';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { CustomerTimelineService } from '../customers/customer-timeline.service';
@@ -101,6 +103,10 @@ export class ServiceJobsService {
         parts: job.parts.map((p) => ({ name: p.name, qty: p.qty, unitPrice: p.unitPrice, lineTotal: p.unitPrice * BigInt(p.qty) })),
         labour: job.labour.map((l) => ({ description: l.description, cost: l.cost })),
         partsTotal: job.partsTotal, labourTotal: job.labourTotal, discount: job.discount, taxAmount: job.taxAmount, total: job.total, paid, balance,
+        gst: job.taxRateBp === null ? undefined : {
+          rateBp: job.taxRateBp, cgst: job.cgst, sgst: job.sgst, igst: job.igst, labourSacCode: job.labourSacCode, partsHsnCode: job.partsHsnCode,
+          supplierGstin: (await this.prisma.companySetting.findFirst({ select: { gstNumber: true } }))?.gstNumber ?? null, buyerGstin: job.buyerGstin,
+        },
       },
     });
     const slug = docType.toLowerCase().replace(/\s+/g, '-');
@@ -140,7 +146,9 @@ export class ServiceJobsService {
   }
 
   async getById(id: string, actor?: Actor): Promise<ServiceJobDto> {
-    return this.toDto(await this.load(id, actor));
+    const dto = await this.toDto(await this.load(id, actor));
+    const settings = await this.prisma.companySetting.findFirst({ select: { serviceGstRateBp: true } });
+    return { ...dto, bill: { ...dto.bill, defaultTaxRateBp: settings?.serviceGstRateBp ?? 1800 } };
   }
 
   private async load(id: string, actor?: Actor): Promise<JobWithRelations> {
@@ -435,13 +443,30 @@ export class ServiceJobsService {
     this.assertWritable(job);
     const { partsTotal, labourTotal } = this.subtotals(job);
     const discount = BigInt(dto.discount);
-    const taxable = partsTotal + labourTotal - discount;
-    const base = taxable > 0n ? taxable : 0n;
-    const taxAmount = (base * BigInt(Math.round(dto.taxPercentage * 100))) / 10000n;
-    const total = base + taxAmount;
+    const rateBp = Math.round(dto.taxPercentage * 100);
+    const [settings, customer] = await Promise.all([
+      this.prisma.companySetting.findFirst({ select: { gstStateCode: true, serviceSacCode: true, servicePartsHsnCode: true } }),
+      this.prisma.customer.findFirst({ where: { id: job.customerId }, select: { gstin: true } }),
+    ]);
+    // The rate, split, codes and buyer are stored with the bill, so the GST returns report it as billed.
+    const gst = serviceBillGst(partsTotal, labourTotal, discount, rateBp, {
+      companyStateCode: settings?.gstStateCode ?? null,
+      buyerGstin: customer?.gstin && isValidGstin(customer.gstin) ? customer.gstin : null,
+      labourSacCode: settings?.serviceSacCode ?? null,
+      partsHsnCode: settings?.servicePartsHsnCode ?? null,
+    });
+    const total = gst.total;
     await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.serviceJob.update({ where: { id }, data: { discount, taxAmount, partsTotal, labourTotal, total, updatedById: actor.id } });
-      const changes = diffFields(job, updated, ['partsTotal', 'labourTotal', 'discount', 'taxAmount', 'total']);
+      const updated = await tx.serviceJob.update({
+        where: { id },
+        data: {
+          discount, taxAmount: gst.taxAmount, partsTotal, labourTotal, total, billedAt: new Date(), taxRateBp: rateBp,
+          partsTaxable: gst.partsTaxable, labourTaxable: gst.labourTaxable, cgst: gst.cgst, sgst: gst.sgst, igst: gst.igst,
+          placeOfSupplyStateCode: gst.placeOfSupplyStateCode, buyerGstin: gst.buyerGstin, partsHsnCode: gst.partsHsnCode, labourSacCode: gst.labourSacCode,
+          updatedById: actor.id,
+        },
+      });
+      const changes = diffFields(job, updated, ['partsTotal', 'labourTotal', 'discount', 'taxRateBp', 'taxAmount', 'total']);
       await this.activityLog.recordInTransaction({
         actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, entityLabel: job.code,
         summary: `Bill for ${job.code}: ${formatInrExact(total)} (discount ${formatInrExact(discount)}, tax ${dto.taxPercentage}%)`,
@@ -502,6 +527,18 @@ export class ServiceJobsService {
   private async recompute(tx: Tx, id: string): Promise<void> {
     const job = await tx.serviceJob.findUniqueOrThrow({ where: { id }, include: { parts: true, labour: true } });
     const { partsTotal, labourTotal } = this.subtotals(job);
+    if (job.taxRateBp !== null) {
+      // A billed job: its GST follows the parts and labour at the stored rate, for the stored buyer.
+      const settings = await tx.companySetting.findFirst({ select: { gstStateCode: true } });
+      const gst = serviceBillGst(partsTotal, labourTotal, job.discount, job.taxRateBp, {
+        companyStateCode: settings?.gstStateCode ?? null, buyerGstin: job.buyerGstin, labourSacCode: job.labourSacCode, partsHsnCode: job.partsHsnCode,
+      });
+      await tx.serviceJob.update({
+        where: { id },
+        data: { partsTotal, labourTotal, total: gst.total, taxAmount: gst.taxAmount, partsTaxable: gst.partsTaxable, labourTaxable: gst.labourTaxable, cgst: gst.cgst, sgst: gst.sgst, igst: gst.igst },
+      });
+      return;
+    }
     const taxable = partsTotal + labourTotal - job.discount;
     const base = taxable > 0n ? taxable : 0n;
     const total = base + job.taxAmount;
@@ -516,13 +553,13 @@ export class ServiceJobsService {
     }
   }
 
-  bill(job: { partsTotal: bigint; labourTotal: bigint; discount: bigint; taxAmount: bigint; total: bigint; payments: { amount: bigint }[] }): ServiceBillDto {
+  bill(job: { partsTotal: bigint; labourTotal: bigint; discount: bigint; taxAmount: bigint; taxRateBp: number | null; cgst: bigint; sgst: bigint; igst: bigint; total: bigint; payments: { amount: bigint }[] }): ServiceBillDto {
     const paid = job.payments.reduce((s, p) => s + p.amount, 0n);
     const balance = job.total - paid > 0n ? job.total - paid : 0n;
     const status = job.total === 0n ? PaymentStatus.PENDING : paid <= 0n ? PaymentStatus.PENDING : paid >= job.total ? PaymentStatus.PAID : PaymentStatus.PARTIAL;
     return {
       partsTotal: job.partsTotal.toString(), labourTotal: job.labourTotal.toString(),
-      discount: job.discount.toString(), taxAmount: job.taxAmount.toString(), total: job.total.toString(),
+      discount: job.discount.toString(), taxAmount: job.taxAmount.toString(), taxRateBp: job.taxRateBp, cgst: job.cgst.toString(), sgst: job.sgst.toString(), igst: job.igst.toString(), total: job.total.toString(),
       paid: paid.toString(), balance: balance.toString(), status,
     };
   }

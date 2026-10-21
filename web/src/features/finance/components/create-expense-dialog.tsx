@@ -25,6 +25,8 @@ export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onO
   const [vendorId, setVendorId] = useState('');
   const [amount, setAmount] = useState('');
   const [gst, setGst] = useState('');
+  // null = follow the category's input-credit setting.
+  const [itc, setItc] = useState<boolean | null>(null);
   const [paymentMethod, setPaymentMethod] = useState('CASH');
   const [paid, setPaid] = useState(true);
   const [dueDate, setDueDate] = useState('');
@@ -34,9 +36,10 @@ export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onO
   // Field errors show once the user has tried to submit, next to the field they concern.
   const [tried, setTried] = useState(false);
 
-  const reset = (): void => { setCategoryId(''); setVendorId(''); setAmount(''); setGst(''); setPaymentMethod('CASH'); setPaid(true); setDueDate(''); setReference(''); setDescription(''); setExpenseDate(todayDateInput()); setTried(false); };
+  const reset = (): void => { setCategoryId(''); setVendorId(''); setAmount(''); setGst(''); setItc(null); setPaymentMethod('CASH'); setPaid(true); setDueDate(''); setReference(''); setDescription(''); setExpenseDate(todayDateInput()); setTried(false); };
 
   const rupees = Number(amount);
+  const categoryItc = categories?.find((c) => c.id === categoryId)?.itcEligible ?? true;
   const errors = {
     category: !categoryId ? 'Select a category' : null,
     amount: !amount ? 'Enter the amount' : !Number.isFinite(rupees) || rupees <= 0 ? 'Enter an amount greater than zero' : null,
@@ -55,6 +58,7 @@ export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onO
         vendorId: vendorId || undefined,
         amount: Math.round(rupees * 100),
         gstAmount: gst ? Math.round(Number(gst) * 100) : 0,
+        itcEligible: itc,
         paymentMethod: paymentMethod as never,
         status: asDraft ? 'DRAFT' : undefined,
         paid: asDraft ? false : paid,
@@ -106,6 +110,12 @@ export function CreateExpenseDialog({ open, onOpenChange }: { open: boolean; onO
               <FieldError message={shown(errors.date)} />
             </div>
           </div>
+          {Number(gst) > 0 && (
+            <label className="flex items-center gap-2 text-sm">
+              <Switch aria-label="GST claimable as input credit" checked={itc ?? categoryItc} onCheckedChange={setItc} />
+              GST claimable as input credit{itc === null && <span className="text-xs text-muted-foreground">(as set for the category)</span>}
+            </label>
+          )}
           <div className="flex flex-wrap items-center gap-4">
             <label className="flex items-center gap-2 text-sm"><Switch checked={paid} onCheckedChange={setPaid} /> Paid</label>
             {!paid && (

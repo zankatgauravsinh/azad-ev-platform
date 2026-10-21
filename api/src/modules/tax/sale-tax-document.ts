@@ -55,8 +55,13 @@ export interface SaleTaxDocument {
 
   // ── Frozen GST header ──
   snapshotId: string;
+  /** 1 = as invoiced; higher = regenerated (same invoice number and date). */
+  version: number;
   /** When the snapshot was written. */
   recordedAt: Date;
+  /** The buyer as invoiced; a GSTIN makes it a B2B supply. */
+  buyerName: string | null;
+  buyerGstin: string | null;
   engineVersion: string;
   /** The tax-point calendar date the rates were resolved for. */
   taxPoint: CalendarDate;
@@ -92,7 +97,10 @@ export function toSaleTaxDocument(sale: SaleIdentityRow, snapshot: TaxSnapshotWi
     invoiceNumber: sale.invoiceNumber,
     invoicedAt: sale.invoicedAt,
     snapshotId: snapshot.id,
+    version: snapshot.version,
     recordedAt: snapshot.createdAt,
+    buyerName: snapshot.buyerName,
+    buyerGstin: snapshot.buyerGstin,
     engineVersion: snapshot.engineVersion,
     taxPoint: toCalendarDate(snapshot.asOf),
     supplyType: snapshot.supplyType,

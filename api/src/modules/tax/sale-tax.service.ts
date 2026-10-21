@@ -7,6 +7,7 @@ import type { CalendarDate } from './tax-calendar';
 import { TaxEngineService } from './tax-engine.service';
 import { resolveSaleTaxPoint } from './tax-point';
 import { resolveSupplyContext } from './tax-supply';
+import { isValidGstin } from '@azad/shared';
 import { PricingMode, type SupplyType, type TaxDocumentResult, type TaxLineResult } from './tax.types';
 
 type Tx = Prisma.TransactionClient;
@@ -44,6 +45,9 @@ export interface PreparedSaleTax {
   exchangeAmount: bigint;
   /** Always equal to the booking / sale total. */
   documentTotal: bigint;
+  /** The buyer as invoiced (the GSTIN only when it is a valid one — that makes it B2B). */
+  buyerName: string | null;
+  buyerGstin: string | null;
   result: TaxDocumentResult;
   lines: { plan: PlannedSaleTaxLine; result: TaxLineResult }[];
 }
@@ -75,16 +79,18 @@ export class SaleTaxService {
     const companyId = booking.companyId;
     const setting = await this.prisma.companySetting.findFirst({
       where: { companyId },
-      select: { gstEnabled: true, gstNumber: true, gstStateCode: true, timezone: true, gstDiscountTreatment: true, gstExchangeTreatment: true },
+      select: { gstEnabled: true, gstNumber: true, gstStateCode: true, timezone: true, gstDiscountTreatment: true, gstExchangeTreatment: true, gstEffectiveFrom: true },
     });
     // GST off (the default, and every company today): no engine, no snapshot, no requirements.
     if (!setting?.gstEnabled) return null;
+    // Before the GST registration date an invoice carries no GST.
+    if (setting.gstEffectiveFrom && resolveSaleTaxPoint(events, setting.timezone) < setting.gstEffectiveFrom.toISOString().slice(0, 10)) return null;
 
     try {
       const supplierGstin = setting.gstNumber?.trim() ?? '';
       if (supplierGstin === '') throw new SaleTaxError(SaleTaxErrorCode.SUPPLIER_GSTIN_MISSING, 'the company GSTIN is not set');
 
-      const customer = await this.prisma.customer.findFirst({ where: { id: booking.customerId, companyId }, select: { gstStateCode: true } });
+      const customer = await this.prisma.customer.findFirst({ where: { id: booking.customerId, companyId }, select: { gstStateCode: true, name: true, gstin: true } });
       const supply = resolveSupplyContext(setting.gstStateCode, customer?.gstStateCode);
       const asOf = resolveSaleTaxPoint(events, setting.timezone);
 
@@ -143,6 +149,8 @@ export class SaleTaxService {
         discountAmount: plan.discountAmount,
         exchangeAmount: plan.exchangeAmount,
         documentTotal,
+        buyerName: customer?.name ?? null,
+        buyerGstin: customer?.gstin && isValidGstin(customer.gstin) ? customer.gstin : null,
         result,
         lines: plan.lines.map((p) => ({ plan: p, result: byKey.get(p.key)! })),
       };
@@ -152,12 +160,17 @@ export class SaleTaxService {
   }
 
   /** Writes the snapshot + lines. MUST run inside the transaction that creates the Sale. */
-  async persist(tx: Tx, saleId: string, prepared: PreparedSaleTax, userId: string): Promise<void> {
+  async persist(tx: Tx, saleId: string, prepared: PreparedSaleTax, userId: string, revision?: { version: number; reason: string }): Promise<{ id: string }> {
     const { totals } = prepared.result;
-    await tx.taxSnapshot.create({
+    return tx.taxSnapshot.create({
+      select: { id: true },
       data: {
         companyId: prepared.companyId,
         saleId,
+        version: revision?.version ?? 1,
+        reason: revision?.reason ?? null,
+        buyerName: prepared.buyerName,
+        buyerGstin: prepared.buyerGstin,
         engineVersion: prepared.result.engineVersion,
         asOf: new Date(`${prepared.asOf}T00:00:00.000Z`),
         supplyType: prepared.supplyType,

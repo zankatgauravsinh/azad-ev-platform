@@ -8,6 +8,7 @@ import {
   RtoSupplyType,
   buildPageMeta,
   splitInclusiveGst,
+  isValidGstin,
   type AccessoryPaymentStatus,
   type AccessorySaleDefaults,
   type AccessorySaleDetailDto,
@@ -129,7 +130,7 @@ export class AccessorySalesService {
   async create(dto: CreateAccessorySaleInput, actor: Actor, canSeeCost: boolean): Promise<AccessorySaleDetailDto> {
     const companyId = this.tenant.requireCompanyId();
     const now = new Date();
-    const customer = await this.prisma.customer.findFirst({ where: { id: dto.customerId }, select: { id: true, name: true, gstStateCode: true } });
+    const customer = await this.prisma.customer.findFirst({ where: { id: dto.customerId }, select: { id: true, name: true, gstStateCode: true, gstin: true } });
     if (!customer) throw new NotFoundException('Customer not found');
     if (dto.bookingId) {
       const booking = await this.prisma.booking.findFirst({ where: { id: dto.bookingId }, select: { customerId: true, code: true, status: true } });
@@ -190,6 +191,9 @@ export class AccessorySalesService {
           bookingId: dto.bookingId ?? null,
           gstApplied,
           supplyType: gstApplied ? supplyType : null,
+          // As invoiced: where the supply is (the showroom's state unless inter-state) and the buyer's GSTIN (B2B).
+          placeOfSupplyStateCode: gstApplied ? (supplyType === RtoSupplyType.INTER ? customer.gstStateCode : settings?.gstStateCode) ?? null : null,
+          buyerGstin: gstApplied && customer.gstin && isValidGstin(customer.gstin) ? customer.gstin : null,
           ...head,
           notes: dto.notes || null,
           createdById: actor.id,

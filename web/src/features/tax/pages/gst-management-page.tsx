@@ -18,6 +18,7 @@ import { ClassificationFormDialog } from '../components/classification-form-dial
 import { RatesDialog } from '../components/rates-dialog';
 import { GstReadinessCard, GstRegistrationCard } from '../components/gst-registration-card';
 import { ComponentMappingCard, GstPolicyCard, ProductDefaultsCard } from '../components/gst-config-cards';
+import { GstReturnsSettingsCard } from '../components/gst-returns-settings-card';
 
 /** Current (open-ended or latest active) rate for display only. */
 const currentRate = (c: TaxClassificationDto): string | null => {
@@ -96,6 +97,7 @@ export function GstManagementPage(): JSX.Element {
         </div>
 
         <GstPolicyCard canManage={canManage} />
+        <GstReturnsSettingsCard canManage={canManage} />
 
         <section aria-label="Tax classifications" className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">

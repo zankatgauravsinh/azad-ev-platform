@@ -10,7 +10,7 @@ vi.mock('../hooks', () => ({
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: (m: string) => h.toastError(m) } }));
 
 const vendor = (over: Partial<VendorDto> = {}): VendorDto => ({
-  id: 'v1', vendorNumber: 'VND0001', name: 'Comptech', mobile: null, email: null, gstNumber: '31234ewdwd', address: null, city: null, state: null,
+  id: 'v1', vendorNumber: 'VND0001', name: 'Comptech', mobile: null, email: null, gstNumber: '31234ewdwd', address: null, city: null, state: null, gstStateCode: null,
   status: 'ACTIVE', type: 'SCOOTER_SUPPLIER', contactPerson: null, altMobile: null, pan: null, creditDays: 0, bankAccountName: null,
   bankAccountNumber: null, bankIfsc: null, bankName: null, upiId: null, notes: null, isDefaultScooterVendor: true, scooterCount: 3,
   outstanding: '0', overdue: '0', advance: '0', totalPurchases: '0', costHidden: false, createdAt: '2026-01-01', ...over,

@@ -113,6 +113,7 @@ describe('Vehicle return GST reversal (e2e)', () => {
     const cn = (await creditNoteOf(sold.saleId))!;
     expect(cn.total).toBe(sold.total);
     expect(cn.gstAmount).toBe(snap.totalTax);
+    expect(cn.taxSnapshotId).toBe(snap.id); // reverses exactly this GST breakdown, line by line
     expect(cn.amount).toBe(cn.total - cn.gstAmount);
     expect(res.body.creditNote).toMatchObject({ total: sold.total.toString(), gstAmount: snap.totalTax.toString(), amount: (sold.total - snap.totalTax).toString() });
     // The refund is unchanged by GST: the full amount paid comes back.

@@ -12,7 +12,7 @@ import { FormField } from '@/components/common/form-field';
 import { useVendorMutations } from '../hooks';
 
 const TEXT_FIELDS = [
-  'name', 'contactPerson', 'mobile', 'altMobile', 'email', 'gstNumber', 'pan', 'address', 'city', 'state',
+  'name', 'contactPerson', 'mobile', 'altMobile', 'email', 'gstNumber', 'pan', 'address', 'city', 'state', 'gstStateCode',
   'bankAccountName', 'bankAccountNumber', 'bankIfsc', 'bankName', 'upiId', 'notes',
 ] as const;
 type TextField = (typeof TEXT_FIELDS)[number];
@@ -149,6 +149,8 @@ export function VendorFormDialog({
           <section className="grid gap-3 sm:grid-cols-3">
             {text('city', 'City')}
             {text('state', 'State')}
+            {/* From the GSTIN when there is one; typed only for an unregistered vendor (CGST+SGST vs IGST on purchases). */}
+            {f.gstNumber.trim() ? null : text('gstStateCode', 'GST state code', { inputMode: 'numeric', placeholder: 'e.g. 24' })}
             <div className="sm:col-span-3">
               <FormField label="Address" error={errors.address}>
                 <Textarea rows={2} value={f.address} onChange={set('address')} />

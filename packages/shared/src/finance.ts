@@ -39,6 +39,8 @@ export interface ExpenseCategoryDto {
   name: string;
   isSystem: boolean;
   active: boolean;
+  /** GST on these bills is claimable input tax credit (false = blocked credit, s.17(5)). */
+  itcEligible: boolean;
   expenseCount: number;
 }
 
@@ -52,6 +54,8 @@ export interface VendorDto {
   address: string | null;
   city: string | null;
   state: string | null;
+  /** GST state code — from the GSTIN when there is one. */
+  gstStateCode: string | null;
   status: VendorStatus;
   type: VendorType;
   contactPerson: string | null;
@@ -131,6 +135,10 @@ export interface ExpenseDto {
   vendorName: string | null;
   amount: string;
   gstAmount: string;
+  /** This bill's GST is claimable input tax credit (its own setting, else the category's). */
+  itcEligible: boolean;
+  /** The bill's own setting; null = follows the category. */
+  itcOverride: boolean | null;
   total: string;
   paymentMethod: FinancePayMethod;
   referenceNumber: string | null;
@@ -225,12 +233,14 @@ export interface FinanceDashboardDto {
 
 export const createExpenseCategorySchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(60),
+  itcEligible: z.boolean().optional(),
 });
 export type CreateExpenseCategoryInput = z.infer<typeof createExpenseCategorySchema>;
 
 export const updateExpenseCategorySchema = z.object({
   name: z.string().trim().min(1).max(60).optional(),
   active: z.boolean().optional(),
+  itcEligible: z.boolean().optional(),
 });
 export type UpdateExpenseCategoryInput = z.infer<typeof updateExpenseCategorySchema>;
 
@@ -257,6 +267,8 @@ const contactShape = {
   address: optionalText(300),
   city: optionalText(80),
   state: optionalText(80),
+  /** Two-digit GST state code — only needed when there is no GSTIN (it is taken from the GSTIN otherwise). */
+  gstStateCode: z.union([z.literal(''), z.string().trim().regex(/^\d{2}$/, 'GST state code must be two digits')]).nullable().optional().transform((v) => (v === '' ? null : v)),
   type: z.enum(vendorTypeTuple).optional(),
   contactPerson: clearable(120),
   altMobile: clearable(20),
@@ -306,6 +318,8 @@ export const createExpenseSchema = z.object({
   vendorId: z.string().uuid().optional(),
   amount: paise.refine((v) => v > 0, 'Amount must be greater than zero'),
   gstAmount: paise.default(0),
+  /** Whether this bill's GST is claimable input credit; omitted / null = the category's setting. */
+  itcEligible: z.boolean().nullable().optional(),
   paymentMethod: z.enum(payMethodTuple).default('CASH'),
   referenceNumber: z.string().trim().max(60).optional(),
   description: z.string().trim().max(500).optional(),
@@ -322,6 +336,7 @@ export const updateExpenseSchema = z.object({
   vendorId: z.string().uuid().nullish(),
   amount: paise.optional(),
   gstAmount: paise.optional(),
+  itcEligible: z.boolean().nullable().optional(),
   paymentMethod: z.enum(payMethodTuple).optional(),
   referenceNumber: z.string().trim().max(60).nullish(),
   description: z.string().trim().max(500).nullish(),
