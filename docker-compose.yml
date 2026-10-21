@@ -7,8 +7,9 @@ services:
       POSTGRES_USER: azad
       POSTGRES_PASSWORD: azad
       POSTGRES_DB: azad_ev
+    # Reachable only from this machine (the API runs on the same host). Never publish it on all interfaces.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - azad_ev_pgdata:/var/lib/postgresql/data
     healthcheck:
