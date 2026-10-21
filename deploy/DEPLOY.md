@@ -126,6 +126,11 @@ cat web/.env
 npm run build          # builds packages/shared → api → web (in that order)
 ```
 
+The API build first regenerates the Prisma client from `api/prisma/schema.prisma` (`npm run prisma:generate`), so
+a release that adds models compiles against them. It needs no database connection. A failed API build leaves
+`api/dist` empty (the build clears it first): the running API keeps working from memory, but **do not restart
+it** until `npm run build` succeeds.
+
 ### 3a. Apply migrations (only if the release changed the Prisma schema)
 
 ```

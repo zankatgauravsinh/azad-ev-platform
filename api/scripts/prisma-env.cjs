@@ -2,7 +2,8 @@
 /*
  * Runs the Prisma CLI with the database settings from `api/.env` or, failing that, the repository-root `.env`
  * (the server keeps it there; the Prisma CLI on its own only looks in api/). Variables already set in the
- * environment win. Used by `npm run prisma:deploy`. Values are never printed.
+ * environment win. Used by `npm run prisma:deploy` and `npm run prisma:generate` (run by every API build).
+ * Values are never printed.
  *
  *   node scripts/prisma-env.cjs migrate deploy
  */
