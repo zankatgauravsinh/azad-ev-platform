@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { GstModule } from '../gst/gst.module';
 import { CustomersModule } from '../customers/customers.module';
 import { SalesModule } from '../sales/sales.module';
 import { FinanceController } from './finance.controller';
@@ -21,7 +22,7 @@ import { MonthlyClosingModule } from './monthly-closing.module';
 import { VendorPayablesModule } from '../vendor-payables/vendor-payables.module';
 
 @Module({
-  imports: [CustomersModule, SalesModule, MonthlyClosingModule, VendorPayablesModule], // CustomerTimelineService + SequenceService (StorageModule is @Global)
+  imports: [CustomersModule, SalesModule, MonthlyClosingModule, VendorPayablesModule, GstModule], // CustomerTimelineService + SequenceService (StorageModule is @Global)
   controllers: [FinanceController, ExpensesController, VendorsController, VendorOptionsController, IncomeController, BankController],
   providers: [
     ExpenseCategoriesService,

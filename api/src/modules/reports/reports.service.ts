@@ -21,6 +21,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { ExportService, type ExportData } from '../../export/export.service';
+import { GstService } from '../gst/gst.service';
 import { PnlService } from '../finance/pnl.service';
 import { fillMonths } from '../dashboard/chart-utils';
 import { formatInr, formatInrExact } from '../../common/utils/money';
@@ -47,6 +48,7 @@ export class ReportsService {
     private readonly tenant: TenantContext,
     private readonly exporter: ExportService,
     private readonly pnl: PnlService,
+    private readonly gst: GstService,
   ) {}
 
   private resolveRange(input: ReportRangeInput): Bucket {
@@ -633,21 +635,18 @@ export class ReportsService {
     return { title: 'Profit & Loss', columns: [{ header: 'Section', width: 2 }, { header: 'Line', width: 4 }, { header: 'Amount', width: 2 }], rows };
   }
 
+  /** Output tax vs eligible input credit per month — the same engine as the GST module (and Finance → GST). */
   private async gstExport(input: ReportRangeInput): Promise<ExportData> {
     const { from, to } = this.range(input);
-    const [incomeGst, expenseGst] = await Promise.all([
-      this.prisma.income.aggregate({ _sum: { gstAmount: true }, where: { incomeDate: { gte: from, lte: to } } }),
-      this.prisma.expense.aggregate({ _sum: { gstAmount: true }, where: { status: 'APPROVED', expenseDate: { gte: from, lte: to } } }),
-    ]);
-    const output = incomeGst._sum.gstAmount ?? 0n;
-    const input2 = expenseGst._sum.gstAmount ?? 0n;
+    const months = await this.gst.monthlyTotals(from, new Date(to.getTime() + 1));
+    const output = months.reduce((t, m) => t + m.output, 0n);
+    const input2 = months.reduce((t, m) => t + m.input, 0n);
     return {
       title: 'GST Summary',
-      columns: [{ header: 'Head', width: 4 }, { header: 'GST', width: 2 }],
+      columns: [{ header: 'Month', width: 2 }, { header: 'Output GST', width: 2 }, { header: 'Input credit', width: 2 }, { header: 'Net', width: 2 }],
       rows: [
-        ['Output GST (on income)', inr(String(output))],
-        ['Input GST (on expenses)', inr(String(input2))],
-        ['Net GST payable', inr(String(output - input2))],
+        ...months.map((m) => [m.month, inr(String(m.output)), inr(String(m.input)), inr(String(m.output - m.input))]),
+        ['Total', inr(String(output)), inr(String(input2)), inr(String(output - input2))],
       ],
     };
   }

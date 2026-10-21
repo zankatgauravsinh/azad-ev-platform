@@ -4,58 +4,31 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { fillMonths } from '../dashboard/chart-utils';
 import { financialYear, sumBig } from './finance.helpers';
+import { GstService } from '../gst/gst.service';
 
 @Injectable()
 export class PnlService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenant: TenantContext,
+    private readonly gst: GstService,
   ) {}
 
-  /** GST collected (on income) vs paid (on approved expenses), with a monthly breakdown. */
+  /**
+   * GST collected (output tax on every invoice, net of credit notes, plus other income with GST) vs paid
+   * (eligible input credit on purchase bills), with a monthly breakdown — from the same engine as the GST returns.
+   */
   async gstSummary(query: GstSummaryQuery): Promise<GstSummaryDto> {
-    const company = this.tenant.requireCompanyId();
     const settings = await this.prisma.companySetting.findFirst();
     const now = new Date();
     const fy = financialYear(now, settings?.financialYearStartMonth ?? 4);
     const from = query.from ?? fy.from;
     const to = query.to ?? fy.to;
-
-    const [collectedAgg, paidAgg, accessorySaleGst, accessoryPurchaseGst, scooterPurchaseGst, monthly] = await Promise.all([
-      this.prisma.income.aggregate({ _sum: { gstAmount: true }, where: { incomeDate: { gte: from, lte: to } } }),
-      this.prisma.expense.aggregate({ _sum: { gstAmount: true }, where: { status: 'APPROVED', expenseDate: { gte: from, lte: to } } }),
-      this.prisma.accessorySale.aggregate({ _sum: { gstAmount: true }, where: { status: 'ACTIVE', invoiceDate: { gte: from, lte: to } } }),
-      this.prisma.accessoryPurchase.aggregate({ _sum: { gstAmount: true }, where: { status: 'ACTIVE', purchaseDate: { gte: from, lte: to } } }),
-      // GST paid on scooters bought (input GST), by purchase date — not for scooters whose cost (GST included) was
-      // already recorded as a 'Vehicle Purchase' expense.
-      this.prisma.$queryRaw<{ gst: bigint | null }[]>`
-        SELECT SUM("purchaseGst")::bigint AS gst FROM "InventoryUnit"
-        WHERE "companyId" = ${company} AND "deletedAt" IS NULL AND "costInExpenses" = false
-          AND COALESCE("purchaseDate", "createdAt") >= ${from} AND COALESCE("purchaseDate", "createdAt") <= ${to}`,
-      this.prisma.$queryRaw<{ month: string; collected: bigint; paid: bigint }[]>`
-        SELECT month, SUM(collected)::bigint AS collected, SUM(paid)::bigint AS paid FROM (
-          SELECT to_char(date_trunc('month', "incomeDate"), 'YYYY-MM') AS month, "gstAmount" AS collected, 0::bigint AS paid
-          FROM "Income" WHERE "companyId" = ${company} AND "incomeDate" >= ${from} AND "incomeDate" <= ${to}
-          UNION ALL
-          SELECT to_char(date_trunc('month', "expenseDate"), 'YYYY-MM') AS month, 0::bigint AS collected, "gstAmount" AS paid
-          FROM "Expense" WHERE "companyId" = ${company} AND "deletedAt" IS NULL AND status = 'APPROVED' AND "expenseDate" >= ${from} AND "expenseDate" <= ${to}
-          UNION ALL
-          SELECT to_char(date_trunc('month', "invoiceDate"), 'YYYY-MM') AS month, "gstAmount" AS collected, 0::bigint AS paid
-          FROM "AccessorySale" WHERE "companyId" = ${company} AND status = 'ACTIVE' AND "invoiceDate" >= ${from} AND "invoiceDate" <= ${to}
-          UNION ALL
-          SELECT to_char(date_trunc('month', "purchaseDate"), 'YYYY-MM') AS month, 0::bigint AS collected, "gstAmount" AS paid
-          FROM "AccessoryPurchase" WHERE "companyId" = ${company} AND status = 'ACTIVE' AND "purchaseDate" >= ${from} AND "purchaseDate" <= ${to}
-          UNION ALL
-          SELECT to_char(date_trunc('month', COALESCE("purchaseDate", "createdAt")), 'YYYY-MM') AS month, 0::bigint AS collected, "purchaseGst" AS paid
-          FROM "InventoryUnit" WHERE "companyId" = ${company} AND "deletedAt" IS NULL AND "costInExpenses" = false
-            AND COALESCE("purchaseDate", "createdAt") >= ${from} AND COALESCE("purchaseDate", "createdAt") <= ${to}
-        ) t GROUP BY month ORDER BY month`,
-    ]);
-
-    const collected = (collectedAgg._sum.gstAmount ?? 0n) + (accessorySaleGst._sum.gstAmount ?? 0n);
-    const paid = (paidAgg._sum.gstAmount ?? 0n) + (accessoryPurchaseGst._sum.gstAmount ?? 0n) + (scooterPurchaseGst[0]?.gst ?? 0n);
-    const collectedMonths = fillMonths(monthly.map((m) => ({ month: m.month, amount: m.collected, count: 0 })), now);
-    const paidMonths = fillMonths(monthly.map((m) => ({ month: m.month, amount: m.paid, count: 0 })), now);
+    const months = await this.gst.monthlyTotals(from, new Date(to.getTime() + 1));
+    const collected = months.reduce((t, m) => t + m.output, 0n);
+    const paid = months.reduce((t, m) => t + m.input, 0n);
+    const collectedMonths = fillMonths(months.map((m) => ({ month: m.month, amount: m.output, count: 0 })), now);
+    const paidMonths = fillMonths(months.map((m) => ({ month: m.month, amount: m.input, count: 0 })), now);
     return {
       range: { from: from.toISOString(), to: to.toISOString() },
       collected: String(collected),

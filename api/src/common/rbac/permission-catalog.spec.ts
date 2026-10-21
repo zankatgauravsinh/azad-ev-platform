@@ -27,8 +27,8 @@ describe('permission catalog', () => {
   });
 
   it('matches the approved catalog size (regression lock)', () => {
-    expect(PERMISSIONS.length).toBe(81); // + rto.view / rto.generate / rto.edit (RTO invoices), + inventory.cost, + accessories.sell / accessories.cancel, + audit.view, + bookings.terms
-    expect(PERMISSION_MODULES.length).toBe(27);
+    expect(PERMISSIONS.length).toBe(83); // + rto.view / rto.generate / rto.edit (RTO invoices), + inventory.cost, + accessories.sell / accessories.cancel, + audit.view, + bookings.terms, + gst.view / gst.manage
+    expect(PERMISSION_MODULES.length).toBe(28);
   });
 
   it('RTO invoices: Owner and Manager generate, only the Owner edits, the Accountant views', () => {
@@ -87,6 +87,6 @@ describe('permission catalog', () => {
   it('exposes modules as a readonly ordered list', () => {
     const first: PermissionModule = PERMISSION_MODULES[0];
     expect(first).toBe('customers');
-    expect(PERMISSION_MODULES[PERMISSION_MODULES.length - 1]).toBe('audit');
+    expect(PERMISSION_MODULES[PERMISSION_MODULES.length - 1]).toBe('gst');
   });
 });

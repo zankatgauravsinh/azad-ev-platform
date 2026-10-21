@@ -426,8 +426,8 @@ function GstTab(): JSX.Element {
         <div className="sm:ml-auto"><ExportMenu type="gst" /></div>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatCard label="GST collected" value={data ? formatPaise(data.collected) : '—'} tone="positive" hint="On income" />
-        <StatCard label="GST paid (input)" value={data ? formatPaise(data.paid) : '—'} tone="warning" hint="On expenses" />
+        <StatCard label="GST collected" value={data ? formatPaise(data.collected) : '—'} tone="positive" hint="All invoices, net of credit notes" />
+        <StatCard label="Input credit" value={data ? formatPaise(data.paid) : '—'} tone="warning" hint="Eligible GST on purchase bills" />
         <StatCard label="Net GST payable" value={data ? formatPaise(data.difference) : '—'} tone={data && Number(data.difference) < 0 ? 'positive' : 'default'} />
       </div>
       <div className="overflow-auto rounded-lg border">

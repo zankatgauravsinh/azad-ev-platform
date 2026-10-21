@@ -53,6 +53,7 @@ export const PERMISSION_MODULES = [
   'staff',
   'roles',
   'audit',
+  'gst',
 ] as const;
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
 
@@ -181,6 +182,10 @@ const MODULE_ROWS: Record<PermissionModule, Row[]> = {
   roles: [['manage', 'Manage roles & permissions', true]],
   // Everything anyone did, with IP addresses and old → new values (purchase cost still needs inventory.cost).
   audit: [['view', 'View the audit log (who did what, when)', true]],
+  gst: [
+    ['view', 'View GST returns data (GSTR-1, GSTR-3B)'],
+    ['manage', 'Manage GST: regenerate invoices with GST, mark returns filed', true],
+  ],
 };
 
 /** The full system permission catalog, ordered by module then declaration order. */
