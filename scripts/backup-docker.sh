@@ -10,7 +10,7 @@
 # local connections), so no password is read, passed or printed. No pseudo-terminal is allocated (never
 # `docker exec -t` for a dump: a TTY can rewrite line endings and corrupt the stream). BACKUP_DIR must be an
 # absolute, private folder (see backup_dir_prepare in scripts/lib/backup-lib.sh). Produces one backup set,
-# never overwriting an existing file:
+# never overwriting an existing file (with RETENTION_DAYS set, older sets are pruned afterwards — see below):
 #   <db>-<UTC stamp>.dump             custom-format archive (files mode 600, folder mode 700)
 #   <db>-<UTC stamp>.dump.sha256      checksum (verified after the set is in place)
 #   <db>-<UTC stamp>.toc              pg_restore --list output
@@ -19,7 +19,11 @@
 #                                     and — written last — backup_status=ARCHIVE_VALID
 # Everything is built in a private ".incomplete-…" folder first; a failure removes only that folder. The
 # archive is validated (table of contents readable, every data block decodes) — that proves it is readable,
-# NOT that a restore succeeds: run scripts/restore-test.sh for that. This script never deletes a backup.
+# NOT that a restore succeeds: run scripts/restore-test.sh for that.
+#
+# Retention is OFF unless RETENTION_DAYS is set. When it is, only COMPLETE sets of the same database in the same
+# container and server (same source identity) whose .meta is older than that many days are removed, after the
+# new set is in place — never a set with a <base>.keep file, an older-format set, or anything else.
 set -euo pipefail
 umask 077
 CONTAINER="${1:?Usage: backup-docker.sh <postgres-container> <database>}"
@@ -27,6 +31,8 @@ DB="${2:?Usage: backup-docker.sh <postgres-container> <database>}"
 . "$(dirname "$0")/lib/backup-lib.sh"
 BACKUP_DIR="${BACKUP_DIR:-}"
 [ -n "$BACKUP_DIR" ] || die "Set BACKUP_DIR to the absolute path of the backup folder"
+RETENTION_DAYS="${RETENTION_DAYS:-}"
+retention_days_valid "$RETENTION_DAYS"
 require_tools $CORE_TOOLS docker
 case "$DB" in ''|*[!A-Za-z0-9_]*) die "Unexpected database name: $DB" ;; esac
 
@@ -106,3 +112,5 @@ echo "✓ BACKUP_ARCHIVE_VALID $BASE.dump"
 sed 's/^/  /' "$BASE.meta"
 [ "$STABLE" = yes ] || echo "  NOTE: rows changed while dumping. The archive is a consistent snapshot, but $BASE.counts (counted outside that snapshot) need not match it, so a restore test of this set can only reach RESTORE_TEST_PASSED_TABLES_ONLY. Back up in a quiet window for a fully verifiable set."
 echo "  Readable archive only. To prove it restores: scripts/restore-test.sh $BASE.dump $IMAGE"
+
+[ -z "$RETENTION_DAYS" ] || prune_backup_sets "$BACKUP_DIR" "$DB" "$SOURCE_ID" "$RETENTION_DAYS" "$BASE"

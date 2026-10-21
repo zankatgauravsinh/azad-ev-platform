@@ -1,0 +1,27 @@
+# Nightly backup on the production host (PostgreSQL in Docker): database + uploads, copied to S3.
+# Runs scripts/backup-nightly.sh; see "Nightly backups" in deploy/DEPLOY.md before installing.
+#   sudo cp deploy/azad-backup-docker.service deploy/azad-backup-docker.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now azad-backup-docker.timer
+[Unit]
+Description=AZAD EV POINT nightly backup (database in Docker + uploads, copied to S3)
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+# The user that owns BACKUP_DIR and may run docker (member of the docker group).
+User=ubuntu
+WorkingDirectory=/var/www/html/azad-ev-platform
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+Environment=BACKUP_DIR=/home/ubuntu/azad-backups
+Environment=CONTAINER=azad_ev_postgres
+Environment=DB=azad_ev
+# Backups on this server older than 14 days are removed (a set with a .keep file never is).
+Environment=RETENTION_DAYS=14
+# The API's uploads folder: <pm2 exec cwd>/uploads unless STORAGE_LOCAL_DIR says otherwise. Check before installing.
+Environment=UPLOADS_DIR=/var/www/html/azad-ev-platform/api/uploads
+# The S3 bucket and prefix for the off-server copy (instance role with s3:PutObject only). Replace CHANGE-ME.
+Environment=BACKUP_S3_URI=s3://CHANGE-ME/azad-ev
+ExecStart=/var/www/html/azad-ev-platform/scripts/backup-nightly.sh
+Nice=10
+IOSchedulingClass=idle

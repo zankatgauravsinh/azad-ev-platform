@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Safety tests for scripts/backup.sh, backup-docker.sh, restore.sh and restore-test.sh.
+# Safety tests for scripts/backup.sh, backup-docker.sh, backup-nightly.sh, restore.sh and restore-test.sh.
 #
 #   ./scripts/tests/backup-restore-safety.sh
 #
@@ -15,7 +15,7 @@ umask 077
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 S="$REPO/scripts"
 TMPDIR="${TMPDIR:-/tmp}"; TMPDIR="${TMPDIR%/}"; export TMPDIR
-unset DATABASE_URL PGHOST PGPORT PGUSER PGDATABASE PGPASSWORD PGPASSFILE PGSERVICE PGHOSTADDR PGOPTIONS FORCE CONFIRM_REPLACE RESTORE_DB RETENTION_DAYS ALLOW_REMOTE_HOST
+unset DATABASE_URL PGHOST PGPORT PGUSER PGDATABASE PGPASSWORD PGPASSFILE PGSERVICE PGHOSTADDR PGOPTIONS FORCE CONFIRM_REPLACE RESTORE_DB RETENTION_DAYS ALLOW_REMOTE_HOST BACKUP_DIR CONTAINER DB UPLOADS_DIR BACKUP_S3_URI
 for t in initdb pg_ctl psql pg_dump pg_restore node; do command -v "$t" >/dev/null || { echo "missing $t" >&2; exit 2; }; done
 REAL_PG_RESTORE=$(command -v pg_restore); REAL_PG_DUMP=$(command -v pg_dump)
 IMAGE="${TEST_PG_IMAGE:-postgres:17-alpine}"
@@ -392,9 +392,75 @@ else
   echo "Docker tests SKIPPED (docker or image $IMAGE not available locally; this script never pulls)"
 fi
 
+# ---- backup-nightly.sh (stand-ins for docker and aws; the throwaway cluster is the "container") ----------
+echo "backup-nightly.sh — database + uploads + off-server copy (docker and aws stand-ins, nothing real)"
+mkdir -p "$T/shim-docker" "$T/shim-aws"
+cat > "$T/shim-docker/docker" <<'SH'
+#!/bin/sh
+# Test stand-in for docker: one "container" ($FAKE_CONTAINER, id fakecid) whose commands run on the throwaway cluster.
+case "$1" in
+  inspect)
+    [ "$4" = "$FAKE_CONTAINER" ] || [ "$4" = fakecid ] || { echo "Error: No such object: $4" >&2; exit 1; }
+    case "$3" in *State.Running*) echo "fakecid /$FAKE_CONTAINER true" ;; *Config.Image*) echo "fake/postgres:test" ;; *) exit 1 ;; esac ;;
+  exec)
+    shift; [ "$1" != -i ] || shift; [ "$1" = fakecid ] || exit 1; shift
+    exec env POSTGRES_USER=owner PGHOST=127.0.0.1 PGPORT="$FAKE_PGPORT" PGPASSWORD="$FAKE_PGPASSWORD" "$@" ;;
+  *) exit 1 ;;
+esac
+SH
+cat > "$T/shim-aws/aws" <<'SH'
+#!/bin/sh
+# Test stand-in for the aws CLI: "s3 cp [flags] <file> s3://bucket/key" copies into $FAKE_S3 and logs the key.
+[ "$1" = s3 ] && [ "$2" = cp ] || exit 2
+shift 2; while [ $# -gt 2 ]; do shift; done
+case "$1" in *"${FAKE_S3_FAIL_ON:-/nothing/}") echo "upload failed" >&2; exit 1 ;; esac
+key="${2#s3://}"; mkdir -p "$FAKE_S3/$(dirname "$key")" && cp "$1" "$FAKE_S3/$key" && echo "$key" >> "$FAKE_S3.log"
+SH
+chmod +x "$T/shim-docker/docker" "$T/shim-aws/aws"
+NB="$T/nightly"; UP="$T/app/uploads"; mkdir -p "$UP/units"; echo "photo bytes" > "$UP/units/a.jpg"
+NENV=(env PATH="$T/shim-docker:$T/shim-aws:$PATH" FAKE_CONTAINER=azad_test_pg FAKE_PGPORT="$PORT" FAKE_PGPASSWORD="$PW" FAKE_S3="$T/s3")
+nsets() { find "$NB" -maxdepth 1 -name 'synth-*.meta' 2>/dev/null | wc -l | tr -d ' '; }
+nup() { find "$NB" -maxdepth 1 -name 'uploads-*.tar.gz' 2>/dev/null | wc -l | tr -d ' '; }
+
+run n_noc "${NENV[@]}" BACKUP_DIR="$NB" DB=synth "$S/backup-nightly.sh"
+check "nightly: no CONTAINER refused before anything is written" '[ "$(rc n_noc)" != 0 ] && has n_noc "CONTAINER" && [ ! -e "$NB" ]'
+run n_s3 "${NENV[@]}" BACKUP_DIR="$NB" CONTAINER=azad_test_pg DB=synth BACKUP_S3_URI=https://example.invalid/x "$S/backup-nightly.sh"
+check "nightly: a non-S3 destination refused before anything is written" '[ "$(rc n_s3)" != 0 ] && has n_s3 "s3://bucket/prefix" && [ ! -e "$NB" ]'
+run n_up "${NENV[@]}" BACKUP_DIR="$NB" CONTAINER=azad_test_pg DB=synth UPLOADS_DIR=uploads "$S/backup-nightly.sh"
+check "nightly: a relative UPLOADS_DIR refused before anything is written" '[ "$(rc n_up)" != 0 ] && has n_up "absolute" && [ ! -e "$NB" ]'
+run n_ret0 "${NENV[@]}" BACKUP_DIR="$NB" CONTAINER=azad_test_pg DB=synth RETENTION_DAYS=0 "$S/backup-nightly.sh"
+check "nightly: RETENTION_DAYS=0 refused before anything is written" '[ "$(rc n_ret0)" != 0 ] && [ ! -e "$NB" ]'
+
+run n_ok "${NENV[@]}" BACKUP_DIR="$NB" CONTAINER=azad_test_pg DB=synth UPLOADS_DIR="$UP" BACKUP_S3_URI=s3://bkt/azad RETENTION_DAYS=14 "$S/backup-nightly.sh"
+require n_ok
+NDUMP=$(sed -n 's/^✓ NIGHTLY_BACKUP_DONE //p' "$T/log/n_ok"); NBASE="${NDUMP%.dump}"
+NUA=$(sed -n 's/^✓ UPLOADS_ARCHIVED \([^ ]*\) .*/\1/p' "$T/log/n_ok")
+check "nightly: database set complete (5 files, mode 600), made by backup-docker.sh" '[ "$(find "$NB" -maxdepth 1 -name "synth-*" -perm 600 | wc -l | tr -d " ")" = 5 ] && grep -qx "backup_status=ARCHIVE_VALID" "$NBASE.meta" && grep -qx "tool=backup-docker.sh" "$NBASE.meta"'
+check "nightly: uploads archive holds the uploaded files and its checksum verifies" '[ -f "$NUA" ] && tar -tzf "$NUA" | grep -qx "uploads/units/a.jpg" && (cd "$NB" && sha_verify "$(basename "$NUA").sha256")'
+check "nightly: every new file copied off-server, identical, the .meta of the set last" '[ "$(wc -l < "$T/s3.log" | tr -d " ")" = 7 ] && [ "$(tail -n 1 "$T/s3.log")" = "bkt/azad/$(basename "$NBASE").meta" ] && [ "$(sha_stdin < "$T/s3/bkt/azad/$(basename "$NDUMP")")" = "$(sha_stdin < "$NDUMP")" ] && [ "$(sha_stdin < "$T/s3/bkt/azad/$(basename "$NUA")")" = "$(sha_stdin < "$NUA")" ]'
+
+# Retention: old sets / archives of this source are removed; .keep ones, other sources and other files are not.
+NSRC=$(sed -n 's/^source_identity=//p' "$NBASE.meta")
+nmkset() { for e in dump dump.sha256 toc counts; do echo x > "$NB/$1.$e"; done; printf '%s\n' "$2" > "$NB/$1.meta"; touch -t 202001010000 "$NB/$1".*; }
+nmkset synth-20200101T000000Z "$(printf 'database=synth\nsource_identity=%s\nbackup_status=ARCHIVE_VALID' "$NSRC")"
+nmkset synth-20200102T000000Z "$(printf 'database=synth\nsource_identity=%s\nbackup_status=ARCHIVE_VALID' "$NSRC")"; touch "$NB/synth-20200102T000000Z.keep"
+nmkset synth-20200103T000000Z "$(printf 'database=synth\nsource_identity=9/elsewhere/1\nbackup_status=ARCHIVE_VALID')"
+for u in uploads-20200101T000000Z uploads-20200102T000000Z; do echo x > "$NB/$u.tar.gz"; echo x > "$NB/$u.tar.gz.sha256"; touch -t 202001010000 "$NB/$u".*; done
+touch "$NB/uploads-20200102T000000Z.keep"; echo x > "$NB/notes.txt"; touch -t 202001010000 "$NB/notes.txt"
+sleep 1; run n_ret "${NENV[@]}" BACKUP_DIR="$NB" CONTAINER=azad_test_pg DB=synth UPLOADS_DIR="$UP" RETENTION_DAYS=14 "$S/backup-nightly.sh"
+check "nightly retention: removes the old database set and uploads archive of this server" '[ "$(rc n_ret)" = 0 ] && [ ! -e "$NB/synth-20200101T000000Z.dump" ] && [ ! -e "$NB/synth-20200101T000000Z.meta" ] && [ ! -e "$NB/uploads-20200101T000000Z.tar.gz" ] && [ ! -e "$NB/uploads-20200101T000000Z.tar.gz.sha256" ]'
+check "nightly retention: keeps .keep sets and archives, other servers, unrelated files and the recent backups" '[ -e "$NB/synth-20200102T000000Z.dump" ] && [ -e "$NB/synth-20200103T000000Z.dump" ] && [ -e "$NB/uploads-20200102T000000Z.tar.gz" ] && [ -e "$NB/notes.txt" ] && [ -f "$NDUMP" ] && [ -f "$NUA" ]'
+
+S_BEFORE=$(nsets); U_BEFORE=$(nup)
+sleep 1; run n_s3fail "${NENV[@]}" FAKE_S3_FAIL_ON=.meta BACKUP_DIR="$NB" CONTAINER=azad_test_pg DB=synth UPLOADS_DIR="$UP" BACKUP_S3_URI=s3://bkt/azad "$S/backup-nightly.sh"
+check "nightly: a failed off-server copy fails the run; the local backup is kept" '[ "$(rc n_s3fail)" != 0 ] && has n_s3fail "Off-server copy failed" && [ "$(nsets)" = $((S_BEFORE + 1)) ] && [ "$(nup)" = $((U_BEFORE + 1)) ]'
+S_BEFORE=$(nsets); U_BEFORE=$(nup)
+run n_dbfail "${NENV[@]}" BACKUP_DIR="$NB" CONTAINER=no_such_container DB=synth UPLOADS_DIR="$UP" "$S/backup-nightly.sh"
+check "nightly: a failed database backup stops the run before anything else is written" '[ "$(rc n_dbfail)" != 0 ] && has n_dbfail "Database backup failed" && [ "$(nsets)" = "$S_BEFORE" ] && [ "$(nup)" = "$U_BEFORE" ]'
+
 # ---- secrets ------------------------------------------------------------------------------------------
 echo "secrets"
-check "password absent from every output and every backup file" '! grep -rqF -- "$PW" "$T/log" "$B" && ! grep -rqF -- "$ENC" "$T/log" "$B"'
+check "password absent from every output and every backup file" '! grep -rqF -- "$PW" "$T/log" "$B" "$NB" "$T/s3" && ! grep -rqF -- "$ENC" "$T/log" "$B" "$NB" "$T/s3"'
 check "no temporary password file left behind" '[ -z "$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name "azad-pgpass.*" -newer "$T/log/initdb" 2>/dev/null)" ]'
 
 echo

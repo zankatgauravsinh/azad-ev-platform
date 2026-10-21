@@ -32,7 +32,7 @@ cd "$(dirname "$0")/.."
 BACKUP_DIR="${1:-${BACKUP_DIR:-}}"
 [ -n "$BACKUP_DIR" ] || die "Set BACKUP_DIR (absolute path) or pass it as the first argument"
 RETENTION_DAYS="${RETENTION_DAYS:-}"
-case "$RETENTION_DAYS" in '') ;; *[!0-9]*|0) die "RETENTION_DAYS must be a whole number of days (1 or more), or unset for no pruning" ;; esac
+retention_days_valid "$RETENTION_DAYS"
 require_tools $CORE_TOOLS node psql pg_dump pg_restore
 
 pg_env_from_database_url
@@ -106,15 +106,4 @@ sed 's/^/  /' "$BASE.meta"
 [ "$STABLE" = yes ] || echo "  NOTE: rows changed while dumping. The archive is a consistent snapshot, but $BASE.counts (counted outside that snapshot) need not match it, so a restore test of this set can only reach RESTORE_TEST_PASSED_TABLES_ONLY. Back up in a quiet window for a fully verifiable set."
 echo "  Readable archive only. To prove it restores: scripts/restore-test.sh $BASE.dump <postgres-image>"
 
-if [ -n "$RETENTION_DAYS" ]; then
-  echo "→ Retention: removing complete sets of '$PGDATABASE' from this same server older than $RETENTION_DAYS days (.keep sets are kept)"
-  find "$BACKUP_DIR" -maxdepth 1 -type f -name "$PGDATABASE-????????T??????Z.meta" -mtime "+$RETENTION_DAYS" | sort | while IFS= read -r meta; do
-    old="${meta%.meta}"
-    [ "$old" != "$BASE" ] || continue
-    [ ! -e "$old.keep" ] || { echo "  kept $(basename "$old") (.keep)"; continue; }
-    grep -qx 'backup_status=ARCHIVE_VALID' "$meta" && grep -qx "database=$PGDATABASE" "$meta" && grep -qx "source_identity=$SOURCE_ID" "$meta" \
-      || { echo "  kept $(basename "$old") (not a complete set of this database on this server)"; continue; }
-    rm -f "$old.dump" "$old.dump.sha256" "$old.toc" "$old.counts" "$old.meta"
-    echo "  removed $(basename "$old")"
-  done
-fi
+[ -z "$RETENTION_DAYS" ] || prune_backup_sets "$BACKUP_DIR" "$PGDATABASE" "$SOURCE_ID" "$RETENTION_DAYS" "$BASE"

@@ -1,11 +1,13 @@
 # shellcheck shell=bash
-# Shared by scripts/backup.sh, backup-docker.sh, restore.sh and restore-test.sh (bash 3.2 compatible).
+# Shared by scripts/backup.sh, backup-docker.sh, backup-nightly.sh, restore.sh and restore-test.sh (bash 3.2
+# compatible).
 #
 # A backup SET is five files that share one base name, <db>-<UTC stamp>:
 #   .dump  .dump.sha256  .toc  .counts  .meta
 # They are written in a private ".incomplete-…" folder inside the backup folder and only then linked into
 # place, the .meta LAST — so a set is complete exactly when its .meta says backup_status=ARCHIVE_VALID.
-# Nothing here deletes anything outside the calling invocation's own temporary folder.
+# Nothing here deletes anything outside the calling invocation's own temporary folder, except the opt-in
+# retention helpers (prune_backup_sets, prune_uploads_archives), which remove only what they are told to.
 #
 # Restore results — the same labels and exit codes from restore-test.sh and restore.sh (see "What a restore
 # check can honestly claim" below):
@@ -238,3 +240,68 @@ restore_verification_level() {
 
 # The operator guidance printed with every *_TABLES_ONLY result.
 TABLES_ONLY_GUIDANCE="Row counts and/or the migration history were NOT verified against the source, so this is NOT a full verification and not enough for a release. Back up again in a quiet window (API stopped) and re-test until the full result."
+
+# ---- Retention (opt-in) -------------------------------------------------------------------------------
+retention_days_valid() {   # <value>: '' (no pruning) or a whole number of days, 1 or more
+  case "$1" in '') ;; *[!0-9]*|0) die "RETENTION_DAYS must be a whole number of days (1 or more), or unset for no pruning" ;; esac
+}
+
+# Removes COMPLETE sets of <db> from the same source (<source identity> in the .meta) whose .meta is older than
+# <days> days — never <current base>, a set with a <base>.keep file, an older-format set or anything else.
+prune_backup_sets() {   # <backup dir> <db> <source identity> <days> <current base>
+  local dir="$1" db="$2" src="$3" days="$4" current="$5"
+  echo "→ Retention: removing complete sets of '$db' from this same server older than $days days (.keep sets are kept)"
+  find "$dir" -maxdepth 1 -type f -name "$db-????????T??????Z.meta" -mtime "+$days" | sort | while IFS= read -r meta; do
+    old="${meta%.meta}"
+    [ "$old" != "$current" ] || continue
+    [ ! -e "$old.keep" ] || { echo "  kept $(basename "$old") (.keep)"; continue; }
+    grep -qx 'backup_status=ARCHIVE_VALID' "$meta" && grep -qx "database=$db" "$meta" && grep -qx "source_identity=$src" "$meta" \
+      || { echo "  kept $(basename "$old") (not a complete set of this database on this server)"; continue; }
+    rm -f "$old.dump" "$old.dump.sha256" "$old.toc" "$old.counts" "$old.meta"
+    echo "  removed $(basename "$old")"
+  done
+}
+
+# ---- Uploaded files (photos, documents) ---------------------------------------------------------------
+# Archives the uploads folder as <backup dir>/uploads-<UTC stamp>.tar.gz with a .sha256 next to it. Built in a
+# private temporary file, checked (the archive lists) and only then linked into place — never overwriting.
+# Prints the archive's path on its last line.
+archive_uploads() {   # <uploads dir> <backup dir>
+  local src="$1" dir="$2" stamp name work
+  stamp=$(date -u +%Y%m%dT%H%M%SZ); name="uploads-$stamp.tar.gz"
+  [ ! -e "$dir/$name" ] && [ ! -e "$dir/$name.sha256" ] || { echo "Refusing to overwrite existing $dir/$name" >&2; return 1; }
+  work=$(mktemp -d "$dir/.incomplete-$name.XXXXXX") || return 1
+  if ! tar -C "$(dirname "$src")" -czf "$work/a.tar.gz" "$(basename "$src")" \
+     || ! tar -tzf "$work/a.tar.gz" > /dev/null; then
+    rm -rf "$work"; echo "Could not archive $src" >&2; return 1
+  fi
+  printf '%s  %s\n' "$(sha256_of "$work/a.tar.gz")" "$name" > "$work/a.tar.gz.sha256"
+  if ! ln "$work/a.tar.gz" "$dir/$name" 2>/dev/null || ! ln "$work/a.tar.gz.sha256" "$dir/$name.sha256" 2>/dev/null; then
+    rm -f "$dir/$name"; rm -rf "$work"; echo "Refusing to overwrite existing $dir/$name" >&2; return 1
+  fi
+  rm -rf "$work"
+  sha256_check "$dir/$name" || { rm -f "$dir/$name" "$dir/$name.sha256"; echo "Checksum verification failed for $dir/$name" >&2; return 1; }
+  echo "$dir/$name"
+}
+
+# Removes uploads-<stamp>.tar.gz archives (and their .sha256) older than <days> days, except those with a .keep
+# file and <current>.
+prune_uploads_archives() {   # <backup dir> <days> <current archive>
+  local dir="$1" days="$2" current="$3"
+  find "$dir" -maxdepth 1 -type f -name 'uploads-????????T??????Z.tar.gz' -mtime "+$days" | sort | while IFS= read -r a; do
+    [ "$a" != "$current" ] || continue
+    [ ! -e "${a%.tar.gz}.keep" ] || { echo "  kept $(basename "$a") (.keep)"; continue; }
+    rm -f "$a" "$a.sha256"
+    echo "  removed $(basename "$a")"
+  done
+}
+
+# ---- Off-server copy ----------------------------------------------------------------------------------
+# Copies files to an S3 prefix (s3://bucket/prefix), in the order given — put a set's .meta last, so a copy
+# whose .meta is present is complete. Needs only s3:PutObject (an instance role; no keys on disk).
+s3_copy() {   # <s3 uri> <file>…
+  local uri="${1%/}" f; shift
+  for f in "$@"; do
+    aws s3 cp --only-show-errors --no-progress "$f" "$uri/$(basename "$f")" || { echo "Upload to $uri failed for $(basename "$f")" >&2; return 1; }
+  done
+}

@@ -21,6 +21,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the pro
 
 Migrations: `20261020090000_vendor_profile_and_scooter_vendor`, `20261021090000_vendor_payments_and_purchase_orders`. Tests: `vendors.e2e-spec.ts`, `vendor-payables.e2e-spec.ts` (25); 777 unit, all e2e suites, 527 web green.
 
+### Added — Operations
+- **Nightly backups for the Docker production host** (`scripts/backup-nightly.sh`, `deploy/azad-backup-docker.service` + `.timer`, 02:30 IST): database set via `backup-docker.sh`, the uploads folder as a checked `uploads-<stamp>.tar.gz`, 14-day retention on the server (`.keep` sets kept), and an off-server copy to S3 through an instance role that may only add files. `backup-docker.sh` gains the opt-in `RETENTION_DAYS` of `backup.sh` (shared `prune_backup_sets`). Setup in `deploy/DEPLOY.md` → Nightly backups.
+- The API build regenerates the Prisma client; Postgres is published on 127.0.0.1 only.
+
 ### Planned
 - Test Rides module; more finance dashboard charts; S3 storage driver for attachments (interface already S3-ready).
 

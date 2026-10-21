@@ -191,6 +191,80 @@ pm2 logs <api-app-name> --lines 50             # no errors
 Then in a browser, smoke-test what the release touched. For any auth/role-gated feature,
 check it as the intended role **and** as a role that should not see it.
 
+## Nightly backups (database + uploads, copied to S3)
+
+`deploy/azad-backup-docker.timer` runs `scripts/backup-nightly.sh` every night at 02:30 India time (caught up
+at boot if the server was off). Each run:
+
+1. backs up the database with `scripts/backup-docker.sh` (a complete, checked set; see §2);
+2. archives the API's uploads folder (photos, documents, PIs) as `uploads-<UTC stamp>.tar.gz` + `.sha256`;
+3. removes this server's backups older than `RETENTION_DAYS` (14) — never a set or archive with a `.keep` file
+   next to it (mark release backups with `touch <base>.keep`), never anything else in the folder;
+4. copies the new files to `BACKUP_S3_URI` (`s3://bucket/prefix`), the set's `.meta` last.
+
+Any failure exits non-zero, so `systemctl status azad-backup-docker` shows it failed; a backup already written
+stays. The server may only **write** files to the bucket (`s3:PutObject`): it cannot list, read or delete
+them, and with versioning on, an overwrite keeps the earlier copy — so someone who breaks into the server cannot
+wipe the off-server copies. S3 deletes them itself after the lifecycle period.
+
+**Pruning covers every set of this database in `BACKUP_DIR`**, the ones you took by hand before a deploy too
+(same container and server). Keep one for good with `touch <its base name>.keep`, e.g. the backup taken before
+release 3.4.
+
+### One-time setup
+
+**S3 bucket** (AWS console → S3 → Create bucket), in the server's region:
+- a private name, e.g. `azad-ev-backups-<something unique>`; **Block all public access** on (the default);
+  default encryption SSE-S3 (the default); **Bucket Versioning: Enable**;
+- Management → Lifecycle rule "expire backups": whole bucket (or prefix `azad-ev/`), **Expire current versions
+  of objects after 90 days** and **Permanently delete noncurrent versions after 90 days**.
+
+**IAM role for the server** (IAM → Roles → Create role → AWS service → EC2), with this inline policy (bucket name
+replaced), then EC2 → the instance → Actions → Security → **Modify IAM role** → attach it:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::BUCKET-NAME/azad-ev/*" }
+  ]
+}
+```
+
+**AWS CLI on the server** (if `aws --version` fails): `sudo snap install aws-cli --classic`. Check the role
+is in use (no keys are configured): `aws sts get-caller-identity` names the role.
+
+**Where uploads live**: the API stores files in `<pm2 exec cwd>/uploads` unless `STORAGE_LOCAL_DIR` is set:
+
+```bash
+pm2 show azad-api | grep 'exec cwd'
+grep '^STORAGE_LOCAL_DIR' .env
+```
+
+**Install the timer** — first edit `deploy/azad-backup-docker.service`: `BACKUP_S3_URI` (replace `CHANGE-ME`
+with the bucket), `UPLOADS_DIR` (from the check above), and `User` / `BACKUP_DIR` if not `ubuntu`. The user
+must be able to run `docker` without sudo. Then:
+
+```bash
+sudo cp deploy/azad-backup-docker.service deploy/azad-backup-docker.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start azad-backup-docker.service       # one run now, to check it
+journalctl -u azad-backup-docker -n 60 --no-pager     # ends with "✓ NIGHTLY_BACKUP_DONE …"
+sudo systemctl enable --now azad-backup-docker.timer
+systemctl list-timers azad-backup-docker.timer        # the next run
+```
+
+Check the bucket in the console: the `.dump`, `.meta` and `uploads-….tar.gz` of the run are there.
+
+**After a deploy that pulls a newer copy of the unit**, copy it again and `sudo systemctl daemon-reload` (the
+installed copy in `/etc/systemd/system` is what runs — keep your edited values).
+
+### Restoring from S3
+
+Download a set (all five files of one `<db>-<stamp>`, plus its `uploads-….tar.gz` and `.sha256`) from the S3
+console to a private folder, then follow §2 (`restore-test.sh`) and "Rollback" below. Uploads: check the
+checksum (`sha256sum -c uploads-….tar.gz.sha256`) and unpack into the API folder with `tar -xzf`.
+
 ## Client IP and proxy trust
 
 The API trusts **only loopback proxy hops** (`api/src/common/http/configure-http-app.ts`): a reverse proxy
