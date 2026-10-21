@@ -269,6 +269,7 @@ export interface InvoiceGstBreakdownDto {
   placeOfSupply: string;
   buyerName: string | null;
   buyerGstin: string | null;
+  /** Taxable value of the TAXABLE lines (excludes pure-agent / exempt amounts). */
   taxable: string;
   cgst: string;
   sgst: string;

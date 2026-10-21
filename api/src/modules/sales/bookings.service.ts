@@ -607,7 +607,7 @@ export class BookingsService {
     const snap = sale.taxSnapshots[0];
     const current: InvoiceGstBreakdownDto | null = snap ? {
       version: snap.version, supplyType: snap.supplyType, placeOfSupply: gstPlaceOfSupply(snap.placeOfSupplyStateCode), buyerName: snap.buyerName, buyerGstin: snap.buyerGstin,
-      taxable: snap.totalTaxable.toString(), cgst: snap.totalCGST.toString(), sgst: snap.totalSGST.toString(), igst: snap.totalIGST.toString(), totalTax: snap.totalTax.toString(),
+      taxable: taxableOnly(snap.lines.map((l) => ({ treatment: l.treatment, taxable: l.taxableAmount }))), cgst: snap.totalCGST.toString(), sgst: snap.totalSGST.toString(), igst: snap.totalIGST.toString(), totalTax: snap.totalTax.toString(),
       lines: snap.lines.map((l) => ({ description: l.description, code: l.code, codeType: l.codeType, ratePercent: l.ratePercent === null ? null : l.ratePercent.toFixed(2), treatment: l.treatment, taxable: l.taxableAmount.toString(), tax: l.taxTotal.toString() })),
     } : null;
 
@@ -629,7 +629,7 @@ export class BookingsService {
     }
     const proposed: InvoiceGstBreakdownDto | null = prepared ? {
       version: (snap?.version ?? 0) + 1, supplyType: prepared.supplyType, placeOfSupply: gstPlaceOfSupply(prepared.placeOfSupplyStateCode), buyerName: prepared.buyerName, buyerGstin: prepared.buyerGstin,
-      taxable: prepared.result.totals.totalTaxable.toString(), cgst: prepared.result.totals.totalCGST.toString(), sgst: prepared.result.totals.totalSGST.toString(),
+      taxable: taxableOnly(prepared.lines.map(({ result }) => ({ treatment: result.treatment, taxable: result.taxableAmount }))), cgst: prepared.result.totals.totalCGST.toString(), sgst: prepared.result.totals.totalSGST.toString(),
       igst: prepared.result.totals.totalIGST.toString(), totalTax: prepared.result.totals.totalTax.toString(),
       lines: prepared.lines.map(({ plan, result }) => ({ description: plan.description, code: result.code, codeType: result.codeType, ratePercent: result.ratePercent, treatment: result.treatment, taxable: result.taxableAmount.toString(), tax: result.taxTotal.toString() })),
     } : null;
@@ -835,4 +835,9 @@ export class BookingsService {
       throw new BadRequestException(`A ${booking.status.toLowerCase()} booking cannot be edited`);
     }
   }
+}
+
+/** The taxable value of an invoice: its TAXABLE lines only (pure-agent RTO / insurance / registration carry no GST). */
+function taxableOnly(lines: { treatment: string; taxable: bigint }[]): string {
+  return lines.filter((l) => l.treatment === 'TAXABLE').reduce((t, l) => t + l.taxable, 0n).toString();
 }
