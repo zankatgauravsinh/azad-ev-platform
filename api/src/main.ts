@@ -8,6 +8,9 @@ import { AppModule } from './app.module';
 import { AppConfigService } from './config/app-config.service';
 import { configureHttpApp } from './common/http/configure-http-app';
 
+/** The WebView origins of the native app (Capacitor). */
+const NATIVE_APP_ORIGINS = ['http://localhost', 'https://localhost', 'capacitor://localhost'];
+
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: false });
   configureHttpApp(app);
@@ -15,12 +18,10 @@ async function bootstrap(): Promise<void> {
 
   app.setGlobalPrefix('api/v1');
   app.use(helmet());
-  // Desktop web uses WEB_ORIGIN. In non-production also allow the Capacitor
-  // native WebView origins so the Android/iOS debug app can reach the API.
-  const corsOrigins = [config.get('WEB_ORIGIN')];
-  if (!config.isProduction) {
-    corsOrigins.push('https://localhost', 'http://localhost', 'capacitor://localhost');
-  }
+  // The website uses WEB_ORIGIN; the Android / iOS app (Capacitor) always calls from its own WebView origin —
+  // http(s)://localhost on Android, capacitor://localhost on iOS — in production too. Safe to allow: the app
+  // authenticates with bearer tokens it sends itself, not with browser cookies.
+  const corsOrigins = [config.get('WEB_ORIGIN'), ...NATIVE_APP_ORIGINS];
   app.enableCors({
     origin: corsOrigins,
     credentials: true,
