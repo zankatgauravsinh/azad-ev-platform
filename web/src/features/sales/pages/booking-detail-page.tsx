@@ -28,6 +28,7 @@ import { VehicleDetailsDialog } from '../components/vehicle-details-dialog';
 import { CustomerDetailDialog } from '@/features/customers/components/customer-detail-dialog';
 import { CreateReturnDialog } from '@/features/returns/components/create-return-dialog';
 import { ReturnDetailDialog } from '@/features/returns/components/return-detail-dialog';
+import { RecordHistory } from '@/features/audit/components/record-history';
 
 export function BookingDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -276,6 +277,7 @@ export function BookingDetailPage(): JSX.Element {
       <CancelBookingDialog open={cancelOpen} onOpenChange={setCancelOpen} booking={b} />
       {editable && <BookingFormDialog open={editOpen} onOpenChange={setEditOpen} booking={b} />}
       <VehicleDetailsDialog open={vehicleOpen} onOpenChange={setVehicleOpen} unit={b.unit} />
+      <RecordHistory entityType="Booking" entityId={b.id} collapsible />
     </div>
   );
 }

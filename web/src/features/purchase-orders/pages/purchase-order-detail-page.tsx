@@ -30,6 +30,7 @@ import { purchaseOrdersApi } from '../api';
 import { PurchaseOrderFormDialog } from '../components/purchase-order-form-dialog';
 import { ReceiveAccessoriesDialog } from '../components/receive-accessories-dialog';
 import { ReceiptBadge, orderStatusTone } from '../components/order-badges';
+import { RecordHistory } from '@/features/audit/components/record-history';
 
 const fmtDate = (iso: string | null): string => (iso ? new Date(iso).toLocaleDateString('en-IN') : '—');
 
@@ -227,6 +228,7 @@ export function PurchaseOrderDetailPage(): JSX.Element {
       />
       {receivingLine && <UnitFormDialog open onOpenChange={(o) => !o && setReceivingLine(null)} orderLine={receivingLine} onSaved={() => void qc.invalidateQueries({ queryKey: ['purchase-orders'] })} />}
       <ReceiveAccessoriesDialog open={receivingAccessories} onOpenChange={setReceivingAccessories} order={order} />
+      <RecordHistory entityType="PurchaseOrder" entityId={order.id} collapsible />
     </div>
   );
 }

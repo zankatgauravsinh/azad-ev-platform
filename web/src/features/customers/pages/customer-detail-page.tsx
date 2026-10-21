@@ -14,7 +14,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/common/empty-state';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
-import { useCustomer, useCustomerActivity, useCustomerRelated, useDeleteCustomer } from '../hooks';
+import { useCustomer, useCustomerRelated, useDeleteCustomer } from '../hooks';
+import { RecordHistory } from '@/features/audit/components/record-history';
 import { LeadStatusBadge } from '../components/lead-status-badge';
 import { CustomerFormDialog } from '../components/customer-form-dialog';
 import { ChangeStatusDialog } from '../components/change-status-dialog';
@@ -99,7 +100,7 @@ export function CustomerDetailPage(): JSX.Element {
           <TabsTrigger value="service">Service</TabsTrigger>
           <TabsTrigger value="warranty">Warranty</TabsTrigger>
           <TabsTrigger value="notes">Notes</TabsTrigger>
-          <TabsTrigger value="activity">Activity Log</TabsTrigger>
+          <TabsTrigger value="activity">History</TabsTrigger>
         </TabsList>
         </div>
 
@@ -147,7 +148,7 @@ export function CustomerDetailPage(): JSX.Element {
         <TabsContent value="service"><RelatedList customerId={customer.id} customerName={customer.name} kind="service" /></TabsContent>
         <TabsContent value="warranty"><RelatedList customerId={customer.id} customerName={customer.name} kind="warranty" /></TabsContent>
         <TabsContent value="notes"><Card><CardContent className="p-6"><NotesPanel customerId={customer.id} /></CardContent></Card></TabsContent>
-        <TabsContent value="activity"><ActivityLog customerId={customer.id} /></TabsContent>
+        <TabsContent value="activity"><Card><CardContent className="p-6"><RecordHistory entityType="Customer" entityId={customer.id} /></CardContent></Card></TabsContent>
       </Tabs>
 
       <CustomerFormDialog open={editOpen} onOpenChange={setEditOpen} customer={customer} />
@@ -213,20 +214,3 @@ function Row({ left, sub, right, onView }: { left: string; sub: string; right: R
   );
 }
 
-function ActivityLog({ customerId }: { customerId: string }): JSX.Element {
-  const { data: entries = [], isLoading } = useCustomerActivity(customerId);
-  if (isLoading) return <Skeleton className="h-24 w-full" />;
-  if (entries.length === 0) return <EmptyState title="No activity" />;
-  return (
-    <Card><CardContent className="p-6">
-      <ul className="space-y-3">
-        {entries.map((e) => (
-          <li key={e.id} className="flex items-center justify-between border-b pb-2 text-sm last:border-0">
-            <div><Badge variant="muted">{titleCase(e.action)}</Badge> <span className="ml-2">{e.summary}</span></div>
-            <span className="text-xs text-muted-foreground">{new Date(e.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
-          </li>
-        ))}
-      </ul>
-    </CardContent></Card>
-  );
-}

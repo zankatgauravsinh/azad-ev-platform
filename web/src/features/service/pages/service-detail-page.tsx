@@ -24,6 +24,7 @@ import { PaymentStatusBadge } from '@/features/sales/components/status-badges';
 import { useServiceJob, useLabourItems, useServiceInvalidate } from '../hooks';
 import { serviceApi, type ServiceDoc } from '../api';
 import { ServiceStatusBadge, PriorityBadge } from '../components/badges';
+import { RecordHistory } from '@/features/audit/components/record-history';
 
 export function ServiceDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -104,6 +105,7 @@ export function ServiceDetailPage(): JSX.Element {
         <Inspection job={job} run={run} busy={busy} canWorkflow={canWorkflow} />
         <Feedback job={job} run={run} busy={busy} canWorkflow={canWorkflow} />
       </div>
+      <RecordHistory entityType="ServiceJob" entityId={job.id} collapsible />
       <CancelJobDialog open={cancelOpen} onOpenChange={setCancelOpen} code={job.code} onConfirm={(reason) => run(() => serviceApi.changeStatus(job.id, 'CANCELLED', reason), `Job card ${job.code} cancelled`)} />
     </div>
   );

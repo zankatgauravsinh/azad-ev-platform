@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useBlocker } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
-import { ChevronRight, ImagePlus, KeyRound, Receipt, Trash2 } from 'lucide-react';
+import { ChevronRight, ImagePlus, KeyRound, Receipt, ScrollText, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   BACKUP_FREQUENCIES, CURRENCIES, DATE_FORMATS, LANGUAGES, TIME_FORMATS, WEEKDAYS,
@@ -137,6 +137,21 @@ export function SettingsPage(): JSX.Element {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">GST Management</p>
                 <p className="text-xs text-muted-foreground">GST registration, tax classifications, component mappings and product defaults.</p>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+            </CardContent>
+          </Card>
+        </Link>
+      )}
+
+      {can('audit.view') && (
+        <Link to="/settings/audit-log" className="mb-6 block">
+          <Card className="transition-colors hover:border-accent">
+            <CardContent className="flex items-center gap-3 p-4">
+              <span className="rounded-lg bg-primary/10 p-2 text-primary"><ScrollText className="h-5 w-5" /></span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">Audit log</p>
+                <p className="text-xs text-muted-foreground">Who did what and when — every change, sign-in and download, with old and new values.</p>
               </div>
               <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
             </CardContent>

@@ -20,6 +20,7 @@ import { UnitMedia } from '../components/unit-media';
 import { UnitFormDialog } from '../components/unit-form-dialog';
 import { ChangeStatusDialog } from '../components/change-status-dialog';
 import { IdentificationCorrectionDialog } from '../components/identification-correction-dialog';
+import { RecordHistory } from '@/features/audit/components/record-history';
 
 export function InventoryDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -121,6 +122,7 @@ export function InventoryDetailPage(): JSX.Element {
           <TabsTrigger value="history">Bookings &amp; Sales</TabsTrigger>
           <TabsTrigger value="service">Service</TabsTrigger>
           <TabsTrigger value="media">Documents &amp; Photos</TabsTrigger>
+          <TabsTrigger value="audit">History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="info">
@@ -265,6 +267,13 @@ export function InventoryDetailPage(): JSX.Element {
           <Card>
             <CardContent className="p-6">
               <UnitMedia unitId={unit.id} photos={unit.photos} documents={unit.documents} canEdit={canUpdate} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="audit">
+          <Card>
+            <CardContent className="p-6">
+              <RecordHistory entityType="InventoryUnit" entityId={unit.id} />
             </CardContent>
           </Card>
         </TabsContent>

@@ -5,6 +5,7 @@ import { BookingDetailPage } from './booking-detail-page';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const h = vi.hoisted(() => ({ perms: { current: new Set<string>() }, booking: { current: null as any }, deliver: vi.fn(), invoicePdf: vi.fn(), note: vi.fn(), openBlob: vi.fn(), saveBlob: vi.fn(), printBlob: vi.fn() }));
+vi.mock('@/features/audit/components/record-history', () => ({ RecordHistory: () => null }));
 vi.mock('@/features/auth/auth-context', () => ({ useCan: (p: string) => h.perms.current.has(p), useAuth: () => ({ can: (p: string) => h.perms.current.has(p) }) }));
 
 const fullUnit = {

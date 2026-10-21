@@ -44,6 +44,7 @@ import { vendorPayablesApi } from '../payables-api';
 import { VendorFormDialog } from '../components/vendor-form-dialog';
 import { PayVendorDialog, dueLabel } from '../components/pay-vendor-dialog';
 import { ReasonDialog } from '../components/reason-dialog';
+import { RecordHistory } from '@/features/audit/components/record-history';
 
 const fmtDate = (iso: string | null): string => (iso ? new Date(iso).toLocaleDateString('en-IN') : '—');
 const METHOD_LABEL: Record<string, string> = { CASH: 'Cash', UPI: 'UPI', CARD: 'Card', BANK_TRANSFER: 'Bank transfer', CHEQUE: 'Cheque' };
@@ -166,6 +167,7 @@ export function VendorDetailPage(): JSX.Element {
           <TabsTrigger value="scooters">Scooters ({vendor.scooterCount})</TabsTrigger>
           <TabsTrigger value="statement">Statement</TabsTrigger>
           {canCost && <TabsTrigger value="orders">Purchase orders</TabsTrigger>}
+          <TabsTrigger value="audit">History</TabsTrigger>
         </TabsList>
         <TabsContent value="overview"><OverviewTab vendor={vendor} onPay={() => setPaying({ preselect: [] })} /></TabsContent>
         <TabsContent value="bills"><BillsTab vendor={vendor} canPay={canManage} onPay={(preselect) => setPaying({ preselect })} /></TabsContent>
@@ -173,6 +175,7 @@ export function VendorDetailPage(): JSX.Element {
         <TabsContent value="scooters"><ScootersTab vendor={vendor} canPay={canManage && canCost} onPay={(unitId) => setPaying({ preselect: [{ kind: 'SCOOTER', id: unitId }] })} /></TabsContent>
         <TabsContent value="statement"><StatementTab vendor={vendor} /></TabsContent>
         {canCost && <TabsContent value="orders"><OrdersTab vendor={vendor} canManage={canManage} /></TabsContent>}
+        <TabsContent value="audit"><Card><CardContent className="p-4"><RecordHistory entityType="Vendor" entityId={vendor.id} /></CardContent></Card></TabsContent>
       </Tabs>
 
       <VendorFormDialog open={editing} onOpenChange={setEditing} vendor={vendor} />

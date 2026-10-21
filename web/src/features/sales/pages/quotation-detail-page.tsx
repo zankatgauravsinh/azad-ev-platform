@@ -16,6 +16,7 @@ import { salesApi } from '../api';
 import { QuotationStatusBadge } from '../components/status-badges';
 import { ConvertQuotationDialog } from '../components/convert-quotation-dialog';
 import { WhatsAppShareButton } from '@/features/whatsapp/components/whatsapp-share-button';
+import { RecordHistory } from '@/features/audit/components/record-history';
 
 export function QuotationDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -86,6 +87,7 @@ export function QuotationDetailPage(): JSX.Element {
       </div>
 
       <ConvertQuotationDialog open={convertOpen} onOpenChange={setConvertOpen} quotation={q} />
+      <RecordHistory entityType="Quotation" entityId={q.id} collapsible />
     </div>
   );
 }

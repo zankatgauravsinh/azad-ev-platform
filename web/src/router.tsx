@@ -25,6 +25,7 @@ import { GstManagementPage } from '@/features/tax/pages/gst-management-page';
 import { ModelsPage } from '@/features/catalog/pages/models-page';
 import { ReportsPage } from '@/features/reports/pages/reports-page';
 import { WarrantyPage } from '@/features/warranty/pages/warranty-page';
+import { AuditLogPage } from '@/features/audit/pages/audit-log-page';
 import { FinancePage } from '@/features/finance/pages/finance-page';
 import { VendorsPage } from '@/features/vendors/pages/vendors-page';
 import { VendorDetailPage } from '@/features/vendors/pages/vendor-detail-page';
@@ -76,6 +77,7 @@ export const router = createBrowserRouter([
           { path: '/settings', element: <SettingsPage /> },
           { path: '/settings/roles', element: <RolesPage /> },
           { path: '/settings/gst', element: <GstManagementPage /> },
+          { path: '/settings/audit-log', element: <AuditLogPage /> },
           { path: '/staff', element: <StaffListPage /> },
           { path: '*', element: <NotFound /> },
         ],

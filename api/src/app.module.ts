@@ -7,6 +7,7 @@ import { AppConfigModule } from './config/config.module';
 import { TenantModule } from './tenant/tenant.module';
 import { TenantInterceptor } from './tenant/tenant.interceptor';
 import { AuditInterceptor } from './activity-log/audit.interceptor';
+import { AuditModule } from './modules/audit/audit.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { StorageModule } from './storage/storage.module';
 import { ExportModule } from './export/export.module';
@@ -82,6 +83,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     RolesModule,
     TaxModule,
     RbacModule,
+    AuditModule,
   ],
   providers: [
     // Order matters: authenticate → throttle → authorize.

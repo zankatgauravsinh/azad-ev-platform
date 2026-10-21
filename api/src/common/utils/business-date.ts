@@ -62,3 +62,18 @@ export function noonOf(date: BusinessDate, timeZone: string): Date {
   const guess = wall - offsetAt(wall);
   return new Date(wall - offsetAt(guess));
 }
+
+/** The instant a calendar day begins (00:00) in `timeZone` — for "from this day" / "to this day" filters. */
+export function startOfBusinessDay(date: BusinessDate, timeZone: string): Date {
+  const [year, month, day] = date.split('-').map(Number) as [number, number, number];
+  const wall = Date.UTC(year, month - 1, day);
+  const offsetAt = (t: number): number => wallClockAsUtc(new Date(t), timeZone) - t;
+  const guess = wall - offsetAt(wall);
+  return new Date(wall - offsetAt(guess));
+}
+
+/** The calendar day after `date` ('YYYY-MM-DD'). */
+export function nextBusinessDate(date: BusinessDate): BusinessDate {
+  const [year, month, day] = date.split('-').map(Number) as [number, number, number];
+  return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+}

@@ -5,6 +5,7 @@ import { BookingDetailPage } from './booking-detail-page';
 
 // Batch 6: the booking-detail "Request return" button (deferred in Batch 2) gates on returns.create.
 const h = vi.hoisted(() => ({ perms: { current: new Set<string>() } }));
+vi.mock('@/features/audit/components/record-history', () => ({ RecordHistory: () => null }));
 vi.mock('@/features/auth/auth-context', () => ({ useCan: (p: string) => h.perms.current.has(p), useAuth: () => ({ can: (p: string) => h.perms.current.has(p) }) }));
 
 // A delivered booking (has sale + actualDelivery) → Request return is state-eligible.
