@@ -608,6 +608,9 @@ export class BookingsService {
     const current: InvoiceGstBreakdownDto | null = snap ? {
       version: snap.version, supplyType: snap.supplyType, placeOfSupply: gstPlaceOfSupply(snap.placeOfSupplyStateCode), buyerName: snap.buyerName, buyerGstin: snap.buyerGstin,
       taxable: taxableOnly(snap.lines.map((l) => ({ treatment: l.treatment, taxable: l.taxableAmount }))), cgst: snap.totalCGST.toString(), sgst: snap.totalSGST.toString(), igst: snap.totalIGST.toString(), totalTax: snap.totalTax.toString(),
+      linesTotal: snap.totalGross.toString(),
+      discount: { amount: snap.discountAmount.toString(), treatment: snap.discountTreatment },
+      exchange: { amount: snap.exchangeAmount.toString(), treatment: snap.exchangeTreatment },
       lines: snap.lines.map((l) => ({ description: l.description, code: l.code, codeType: l.codeType, ratePercent: l.ratePercent === null ? null : l.ratePercent.toFixed(2), treatment: l.treatment, taxable: l.taxableAmount.toString(), tax: l.taxTotal.toString() })),
     } : null;
 
@@ -631,6 +634,9 @@ export class BookingsService {
       version: (snap?.version ?? 0) + 1, supplyType: prepared.supplyType, placeOfSupply: gstPlaceOfSupply(prepared.placeOfSupplyStateCode), buyerName: prepared.buyerName, buyerGstin: prepared.buyerGstin,
       taxable: taxableOnly(prepared.lines.map(({ result }) => ({ treatment: result.treatment, taxable: result.taxableAmount }))), cgst: prepared.result.totals.totalCGST.toString(), sgst: prepared.result.totals.totalSGST.toString(),
       igst: prepared.result.totals.totalIGST.toString(), totalTax: prepared.result.totals.totalTax.toString(),
+      linesTotal: prepared.result.totals.totalGross.toString(),
+      discount: { amount: prepared.discountAmount.toString(), treatment: prepared.discountTreatment },
+      exchange: { amount: prepared.exchangeAmount.toString(), treatment: prepared.exchangeTreatment },
       lines: prepared.lines.map(({ plan, result }) => ({ description: plan.description, code: result.code, codeType: result.codeType, ratePercent: result.ratePercent, treatment: result.treatment, taxable: result.taxableAmount.toString(), tax: result.taxTotal.toString() })),
     } : null;
     const same = (b: InvoiceGstBreakdownDto): string => JSON.stringify({ ...b, version: 0, buyerName: null });

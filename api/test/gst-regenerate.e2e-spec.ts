@@ -119,6 +119,30 @@ describe('Regenerate invoice with GST (e2e)', () => {
     await post(`/bookings/${filedMonth}/invoice/gst`, { reason: 'Add GST to the invoice' }).expect(409);
   });
 
+  it('a discount taken after tax is flagged; with the discount reducing the taxable value, regenerating lowers the GST — total unchanged', async () => {
+    await prisma.companySetting.updateMany({ where: { companyId: A.id }, data: { gstDiscountTreatment: 'AFTER_TAX_ADJUSTMENT' } });
+    const k = `${stamp}${serial++}`;
+    const unitId = (await post('/inventory/units', { modelId: A.modelId, variant: 'Max', colour: 'Red', vin: `GRD${k}`, motorNumber: `GRDM${k}`, batteryNumber: `GRDB${k}` }).expect(201)).body.id;
+    // ₹1,05,000 scooter, ₹5,000 discount → the customer pays ₹1,00,000.
+    const b = (await post('/bookings', { customerId, unitId, exShowroom: 10_500_000, discount: 500_000, advanceAmount: 0 }).expect(201)).body;
+    await post(`/bookings/${b.id}/invoice`).expect(201);
+    const before = (await get(`/bookings/${b.id}/invoice/gst`).expect(200)).body;
+    expect(before.current).toMatchObject({ linesTotal: '10500000', totalTax: '500000', discount: { amount: '500000', treatment: 'AFTER_TAX_ADJUSTMENT' } });
+    expect(before.total).toBe('10000000');
+
+    await prisma.companySetting.updateMany({ where: { companyId: A.id }, data: { gstDiscountTreatment: 'REDUCES_VEHICLE_TAXABLE_VALUE' } });
+    const issues = (await get(`/gst/issues?period=${today.slice(0, 7)}`).expect(200)).body as { code: string; link: { id: string } | null }[];
+    expect(issues.find((i) => i.code === 'DISCOUNT_TREATMENT_CHANGED')?.link?.id).toBe(b.id);
+    const p = (await get(`/bookings/${b.id}/invoice/gst`).expect(200)).body;
+    expect(p.proposed).toMatchObject({ version: 2, linesTotal: '10000000', taxable: '9523810', totalTax: '476190', discount: { amount: '500000', treatment: 'REDUCES_VEHICLE_TAXABLE_VALUE' } });
+    await post(`/bookings/${b.id}/invoice/gst`, { reason: 'Discount reduces the taxable value (s.15(3)(a))' }).expect(201);
+    const sale = await saleOf(b.id);
+    expect(sale.total).toBe(10_000_000n);
+    expect(sale.taxSnapshots.map((s) => [s.version, s.totalTax])).toEqual([[1, 500_000n], [2, 476_190n]]);
+    const after = (await get(`/gst/issues?period=${today.slice(0, 7)}`).expect(200)).body as { code: string; reference: string | null }[];
+    expect(after.filter((i) => i.code === 'DISCOUNT_TREATMENT_CHANGED' && i.reference === sale.invoiceNumber)).toEqual([]);
+  });
+
   it('none of these routes fell back to an automatic audit entry', async () => {
     expect(await prisma.activityLog.count({ where: { companyId: A.id, source: 'AUTO' } })).toBe(0);
   });

@@ -11,6 +11,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const proposed = {
   version: 1, supplyType: 'INTRA', placeOfSupply: '24-Gujarat', buyerName: 'Kavya', buyerGstin: null, taxable: '10000000', cgst: '250000', sgst: '250000', igst: '0', totalTax: '500000',
+  linesTotal: '10500000', discount: { amount: '0', treatment: null }, exchange: { amount: '0', treatment: null },
   lines: [{ description: 'Electric scooter', code: '87116010', codeType: 'HSN', ratePercent: '5.00', treatment: 'TAXABLE', taxable: '10000000', tax: '500000' }],
 };
 const preview = (over: Record<string, unknown> = {}) => ({ invoiceNumber: 'INV0016', invoiceDate: '2026-09-02', total: '10500000', current: null, proposed, blocker: null, unchanged: false, ...over });
@@ -29,6 +30,18 @@ describe('RegenerateInvoiceGstDialog', () => {
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'Invoiced before GST was set up' } });
     fireEvent.click(button);
     await waitFor(() => expect(h.regenerate).toHaveBeenCalledWith('b1', { reason: 'Invoiced before GST was set up' }));
+  });
+
+  it('shows how the invoice adds up to its total — GST inside it; warns when the discount is taken after tax', () => {
+    h.preview.current = preview({
+      total: '10000000',
+      current: { ...proposed, linesTotal: '10500000', discount: { amount: '500000', treatment: 'AFTER_TAX_ADJUSTMENT' } },
+      proposed: { ...proposed, version: 2, linesTotal: '10000000', taxable: '9523810', totalTax: '476190', discount: { amount: '500000', treatment: 'REDUCES_VEHICLE_TAXABLE_VALUE' } },
+    });
+    render(<RegenerateInvoiceGstDialog open onOpenChange={() => {}} bookingId="b1" />);
+    expect(screen.getByText(/Lines ₹1,05,000.00 − discount after tax ₹5,000.00 =/)).toBeInTheDocument();
+    expect(screen.getByText(/The discount is taken after tax/)).toBeInTheDocument();
+    expect(screen.getByText(/Discount ₹5,000.00 reduced the scooter’s taxable value/)).toBeInTheDocument();
   });
 
   it('explains why it cannot be done, without the action', () => {

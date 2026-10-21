@@ -19,7 +19,7 @@ const NOT_CONFIGURED = '__none__';
 const loading = <Card><CardContent className="p-6"><Skeleton className="h-20 w-full" /></CardContent></Card>;
 
 // ── Discount / exchange policy ─────────────────────────────
-function TreatmentSelect({ name, label, value, disabled, onChange }: { name: string; label: string; value: GstAdjustmentTreatment | null; disabled: boolean; onChange: (v: GstAdjustmentTreatment | null) => void }): JSX.Element {
+function TreatmentSelect({ name, label, hint, value, disabled, onChange }: { name: string; label: string; hint: string; value: GstAdjustmentTreatment | null; disabled: boolean; onChange: (v: GstAdjustmentTreatment | null) => void }): JSX.Element {
   return (
     <div className="space-y-1.5">
       <Label>{label}</Label>
@@ -30,6 +30,7 @@ function TreatmentSelect({ name, label, value, disabled, onChange }: { name: str
           {GST_ADJUSTMENT_TREATMENTS.map((t) => <SelectItem key={t} value={t}>{gstAdjustmentTreatmentLabel(t)}</SelectItem>)}
         </SelectContent>
       </Select>
+      <p className="text-xs text-muted-foreground">{hint}</p>
     </div>
   );
 }
@@ -64,8 +65,8 @@ export function GstPolicyCard({ canManage }: { canManage: boolean }): JSX.Elemen
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <TreatmentSelect name="discount-treatment" label="Discount treatment" value={settings.gstDiscountTreatment} disabled={!canManage || update.isPending} onChange={(v) => void save({ gstDiscountTreatment: v })} />
-          <TreatmentSelect name="exchange-treatment" label="Exchange treatment" value={settings.gstExchangeTreatment} disabled={!canManage || update.isPending} onChange={(v) => void save({ gstExchangeTreatment: v })} />
+          <TreatmentSelect name="discount-treatment" label="Discount treatment" hint="Usually “Reduces vehicle taxable value”: a discount shown on the invoice at the sale lowers the value GST is charged on (CGST Act s.15(3)(a)), so less GST." value={settings.gstDiscountTreatment} disabled={!canManage || update.isPending} onChange={(v) => void save({ gstDiscountTreatment: v })} />
+          <TreatmentSelect name="exchange-treatment" label="Exchange treatment" hint="Usually “After-tax adjustment”: the old vehicle is part of the payment, not a discount — GST stays on the full price." value={settings.gstExchangeTreatment} disabled={!canManage || update.isPending} onChange={(v) => void save({ gstExchangeTreatment: v })} />
         </div>
       </CardContent>
     </Card>

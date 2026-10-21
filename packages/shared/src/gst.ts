@@ -275,6 +275,11 @@ export interface InvoiceGstBreakdownDto {
   sgst: string;
   igst: string;
   totalTax: string;
+  /** What the lines add up to (GST included); minus any after-tax discount / exchange it is the invoice total. */
+  linesTotal: string;
+  /** How the booking's discount / exchange entered the GST (null treatment = none on the booking). */
+  discount: { amount: string; treatment: 'REDUCES_VEHICLE_TAXABLE_VALUE' | 'AFTER_TAX_ADJUSTMENT' | null };
+  exchange: { amount: string; treatment: 'REDUCES_VEHICLE_TAXABLE_VALUE' | 'AFTER_TAX_ADJUSTMENT' | null };
   lines: { description: string; code: string | null; codeType: 'HSN' | 'SAC'; ratePercent: string | null; treatment: string; taxable: string; tax: string }[];
 }
 

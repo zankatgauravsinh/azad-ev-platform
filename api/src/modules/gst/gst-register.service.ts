@@ -25,6 +25,8 @@ export interface GstContext {
   effectiveFrom: string | null;
   companyStateCode: string | null;
   sixDigitHsn: boolean;
+  /** The company's current discount treatment (GST Management). */
+  discountTreatment: 'REDUCES_VEHICLE_TAXABLE_VALUE' | 'AFTER_TAX_ADJUSTMENT' | null;
 }
 
 /** Everything the GST returns of a date range are built from. */
@@ -55,13 +57,14 @@ export class GstRegisterService {
   constructor(private readonly prisma: PrismaService) {}
 
   async context(): Promise<GstContext> {
-    const s = await this.prisma.companySetting.findFirst({ select: { timezone: true, gstEnabled: true, gstEffectiveFrom: true, gstStateCode: true, gstAatoAbove5Cr: true } });
+    const s = await this.prisma.companySetting.findFirst({ select: { timezone: true, gstEnabled: true, gstEffectiveFrom: true, gstStateCode: true, gstAatoAbove5Cr: true, gstDiscountTreatment: true } });
     return {
       timeZone: resolveTimeZone(s?.timezone),
       gstEnabled: s?.gstEnabled ?? false,
       effectiveFrom: s?.gstEffectiveFrom ? s.gstEffectiveFrom.toISOString().slice(0, 10) : null,
       companyStateCode: s?.gstStateCode ?? null,
       sixDigitHsn: s?.gstAatoAbove5Cr ?? false,
+      discountTreatment: s?.gstDiscountTreatment ?? null,
     };
   }
 
@@ -78,7 +81,7 @@ export class GstRegisterService {
     const day = (d: Date): string => businessDateOf(d, ctx.timeZone);
     const gstDue = (date: string): boolean => ctx.gstEnabled && (!ctx.effectiveFrom || date >= ctx.effectiveFrom);
     const docs: GstDoc[] = [
-      ...(await this.scooterInvoices(from, to, day, gstDue, issues)),
+      ...(await this.scooterInvoices(from, to, day, gstDue, ctx, issues)),
       ...(await this.accessoryInvoices(from, to, day, gstDue, issues)),
       ...(await this.serviceBills(from, to, day, gstDue, ctx, issues)),
       ...(await this.creditNotes(from, to, day, issues)),
@@ -90,7 +93,7 @@ export class GstRegisterService {
 
   // ── Outward ──────────────────────────────────────────────────────────────────────────────────────────
 
-  private async scooterInvoices(from: Date, to: Date, day: (d: Date) => string, gstDue: (date: string) => boolean, issues: GstIssueDto[]): Promise<GstDoc[]> {
+  private async scooterInvoices(from: Date, to: Date, day: (d: Date) => string, gstDue: (date: string) => boolean, ctx: GstContext, issues: GstIssueDto[]): Promise<GstDoc[]> {
     const sales = await this.prisma.sale.findMany({
       where: { invoicedAt: { gte: from, lt: to }, invoiceNumber: { not: null } },
       include: {
@@ -107,6 +110,13 @@ export class GstRegisterService {
       if (!snap) {
         if (gstDue(date)) issues.push({ code: 'INVOICE_WITHOUT_GST', severity: 'ERROR', message: `Tax invoice ${sale.invoiceNumber} (${date}) has no GST breakdown — regenerate it with GST before filing.`, reference: sale.invoiceNumber, link });
         return { id: sale.id, kind: 'INVOICE', series: 'SCOOTER', number: sale.invoiceNumber!, date, buyerName: sale.customer.name, buyerGstin: null, placeOfSupply: null, supplyType: 'INTRA', value: sale.total, cancelled: false, original: null, link, lines: [] };
+      }
+      // Issued with the discount handled another way than the company now sets (e.g. after tax, before the CA's
+      // decision that a discount reduces the taxable value): regenerating applies the current treatment.
+      if (snap.discountAmount > 0n && ctx.discountTreatment && snap.discountTreatment !== ctx.discountTreatment) {
+        const now = ctx.discountTreatment === 'REDUCES_VEHICLE_TAXABLE_VALUE' ? 'reduces the taxable value' : 'is taken after tax';
+        const then = snap.discountTreatment === 'AFTER_TAX_ADJUSTMENT' ? 'taken after tax' : 'deducted from the taxable value';
+        issues.push({ code: 'DISCOUNT_TREATMENT_CHANGED', severity: 'WARNING', message: `Tax invoice ${sale.invoiceNumber} has its discount ${then}; the discount now ${now} — regenerate the invoice with GST to apply it (same number, date and total).`, reference: sale.invoiceNumber, link });
       }
       if (sale.customer.gstin && !snap.buyerGstin && !isValidGstin(sale.customer.gstin)) {
         issues.push({ code: 'BUYER_GSTIN_INVALID', severity: 'WARNING', message: `${sale.customer.name}'s GSTIN on record is not valid, so ${sale.invoiceNumber} is reported as B2C. Correct it and regenerate the invoice if the buyer is registered.`, reference: sale.invoiceNumber, link: { type: 'customer', id: sale.customer.id } });
