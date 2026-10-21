@@ -14,6 +14,11 @@ import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { SequenceService } from '../sales/sequence.service';
 import { resolveBankDirection } from './finance.helpers';
 import { MonthlyClosingService } from './monthly-closing.service';
+import { createdFields, diffFields } from '../../activity-log/audit-diff';
+import { formatInrExact } from '../../common/utils/money';
+
+const BANK_FIELDS = ['txnNumber', 'txnDate', 'type', 'direction', 'amount', 'bankName', 'reference', 'notes', 'reconStatus'] as const;
+const bankSnapshot = (b: Record<(typeof BANK_FIELDS)[number], unknown>): Record<(typeof BANK_FIELDS)[number], unknown> => Object.fromEntries(BANK_FIELDS.map((f) => [f, b[f]])) as Record<(typeof BANK_FIELDS)[number], unknown>;
 
 type BankRow = Prisma.BankTransactionGetPayload<Record<string, never>>;
 
@@ -53,7 +58,7 @@ export class BankService {
     const direction = resolveBankDirection(dto.type, dto.direction);
     const created = await this.prisma.$transaction(async (tx) => {
       const txnNumber = await this.sequence.next('bank', tx);
-      return tx.bankTransaction.create({
+      const row = await tx.bankTransaction.create({
         data: {
           companyId: company,
           txnNumber,
@@ -67,8 +72,13 @@ export class BankService {
           createdById: userId,
         },
       });
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: 'CREATE', entityType: 'BankTransaction', entityId: row.id, entityLabel: txnNumber,
+        summary: `Bank ${dto.type.toLowerCase()} ${txnNumber}: ${direction === 'CREDIT' ? '+' : '−'}${formatInrExact(row.amount)}${row.bankName ? ` (${row.bankName})` : ''}`,
+        changes: createdFields(bankSnapshot(row)),
+      }, tx);
+      return row;
     });
-    await this.activityLog.record({ actorId: userId, action: 'CREATE', entityType: 'BankTransaction', entityId: created.id, summary: `Bank ${dto.type} ${created.txnNumber}` });
     return this.toDto(created);
   }
 
@@ -76,7 +86,7 @@ export class BankService {
     const found = await this.prisma.bankTransaction.findFirst({ where: { id } });
     if (!found) throw new NotFoundException('Bank transaction not found');
     const updated = await this.prisma.bankTransaction.update({ where: { id }, data: { reconStatus: dto.reconStatus } });
-    await this.activityLog.record({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'BankTransaction', entityId: id, summary: `Bank ${found.txnNumber} marked ${dto.reconStatus.toLowerCase()}` });
+    await this.activityLog.record({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'BankTransaction', entityId: id, entityLabel: found.txnNumber, summary: `Bank ${found.txnNumber} marked ${dto.reconStatus.toLowerCase()}`, changes: { reconStatus: { from: found.reconStatus, to: dto.reconStatus } } });
     return this.toDto(updated);
   }
 
@@ -84,8 +94,14 @@ export class BankService {
     const found = await this.prisma.bankTransaction.findFirst({ where: { id } });
     if (!found) throw new NotFoundException('Bank transaction not found');
     await this.closing.assertOpen(found.txnDate);
-    await this.prisma.bankTransaction.delete({ where: { id } });
-    await this.activityLog.record({ actorId: userId, action: 'DELETE', entityType: 'BankTransaction', entityId: id, summary: `Deleted bank txn ${found.txnNumber}` });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.bankTransaction.delete({ where: { id } });
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: 'DELETE', entityType: 'BankTransaction', entityId: id, entityLabel: found.txnNumber,
+        summary: `Deleted bank ${found.type.toLowerCase()} ${found.txnNumber} of ${formatInrExact(found.amount)}`,
+        changes: diffFields(bankSnapshot(found), {} as ReturnType<typeof bankSnapshot>, BANK_FIELDS),
+      }, tx);
+    });
   }
 
   private toDto(b: BankRow): BankTransactionDto {

@@ -25,6 +25,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { MonthlyClosingService } from '../finance/monthly-closing.service';
 import { SaleTaxSnapshotReader } from '../tax/sale-tax-snapshot.reader';
 import { SaleTaxConsistencyError, assertSaleTaxDocumentConsistent } from '../tax/sale-tax-consistency';
+import { formatInrExact } from '../../common/utils/money';
 
 const include = {
   sale: { select: { id: true, invoiceNumber: true, total: true, taxAmount: true } },
@@ -242,6 +243,7 @@ export class ReturnsService {
 
       // Full-sale credit note (invoice reversal). Amounts recorded; P&L/GST wiring is Group 5.
       const creditNoteNumber = await this.sequence.next('creditNote', tx);
+      let refundNumber: string | null = null;
       await tx.creditNote.create({
         data: {
           creditNoteNumber,
@@ -259,7 +261,7 @@ export class ReturnsService {
 
       // Refund only when money is actually due back.
       if (refundDue > 0n) {
-        const refundNumber = await this.sequence.next('refund', tx);
+        refundNumber = await this.sequence.next('refund', tx);
         await tx.refund.create({
           data: {
             refundNumber,
@@ -285,9 +287,23 @@ export class ReturnsService {
 
       // Accessory-restock seam — reverse accessory stock-out on return. No-op until accessory Group 6.
       await this.restockReturnedAccessories(accessoryRestockContext(row, dto.disposition), tx);
-    });
 
-    await this.audit(userId, ActivityAction.STATUS_CHANGE, id, `Return ${row.returnNumber} completed → ${dto.disposition} (credit note issued${refundDue > 0n ? `, refund ${refundDue}` : ''})`);
+      // Same transaction: the credit note, the refund and their record commit together.
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'VehicleReturn', entityId: id, entityLabel: row.returnNumber,
+        summary: `Return ${row.returnNumber} completed → ${dto.disposition}: credit note ${creditNoteNumber} for ${formatInrExact(saleTotal)}${refundNumber ? `, refund ${refundNumber} of ${formatInrExact(refundDue)} by ${dto.refundMethod}` : ', nothing to refund'}`,
+        changes: {
+          status: { from: row.status, to: 'COMPLETED' },
+          disposition: { from: null, to: dto.disposition },
+          creditNoteNumber: { from: null, to: creditNoteNumber },
+          creditNoteTotal: { from: null, to: saleTotal.toString() },
+          deductionAmount: { from: null, to: deduction.toString() },
+          ...(refundNumber ? { refundNumber: { from: null, to: refundNumber }, refundAmount: { from: null, to: refundDue.toString() }, refundMethod: { from: null, to: dto.refundMethod ?? null } } : {}),
+        },
+        reason: dto.deductionReason ?? null,
+        metadata: { saleId: row.saleId, bookingId: row.bookingId, unitId: row.unitId },
+      }, tx);
+    });
     return this.get(id);
   }
 

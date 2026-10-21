@@ -16,6 +16,7 @@ import { CustomerTimelineService } from '../customers/customer-timeline.service'
 import { SequenceService } from '../sales/sequence.service';
 import { formatInr } from '../../common/utils/money';
 import { MonthlyClosingService } from './monthly-closing.service';
+import { diffFields } from '../../activity-log/audit-diff';
 
 const incomeInclude = { customer: { select: { name: true } } } satisfies Prisma.IncomeInclude;
 type IncomeRow = Prisma.IncomeGetPayload<{ include: typeof incomeInclude }>;
@@ -117,8 +118,14 @@ export class IncomeService {
     const found = await this.prisma.income.findFirst({ where: { id } });
     if (!found) throw new NotFoundException('Income not found');
     await this.closing.assertOpen(found.incomeDate);
-    await this.prisma.income.delete({ where: { id } });
-    await this.activityLog.record({ actorId: userId, action: 'DELETE', entityType: 'Income', entityId: id, summary: `Deleted income ${found.incomeNumber}` });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.income.delete({ where: { id } });
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: 'DELETE', entityType: 'Income', entityId: id, entityLabel: found.incomeNumber,
+        summary: `Deleted income ${found.incomeNumber} of ${formatInr(found.amount + found.gstAmount)}`,
+        changes: diffFields(found, {} as typeof found, ['incomeDate', 'source', 'amount', 'gstAmount', 'paymentMethod', 'referenceNumber', 'description'] as (keyof typeof found)[]),
+      }, tx);
+    });
   }
 
   private toDto(i: IncomeRow): IncomeDto {

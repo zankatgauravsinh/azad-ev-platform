@@ -4,6 +4,8 @@ import type { Response } from 'express';
 import {
   cashBookQuerySchema,
   closeMonthSchema,
+  reopenMonthSchema,
+  type ReopenMonthInput,
   createCashAdjustmentSchema,
   createExpenseCategorySchema,
   createRecurringExpenseSchema,
@@ -162,7 +164,7 @@ export class FinanceController {
   @HttpCode(204)
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Reopen a closed month' })
-  async reopenMonth(@Param('id') id: string, @CurrentUser('id') userId: string): Promise<void> {
-    await this.closings.reopen(id, userId);
+  async reopenMonth(@Param('id') id: string, @Body(new ZodValidationPipe(reopenMonthSchema)) dto: ReopenMonthInput, @CurrentUser('id') userId: string): Promise<void> {
+    await this.closings.reopen(id, dto.reason, userId);
   }
 }

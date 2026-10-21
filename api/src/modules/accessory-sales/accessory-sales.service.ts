@@ -30,6 +30,7 @@ import { formatInrExact } from '../../common/utils/money';
 import { resolveTimeZone } from '../../common/utils/business-date';
 import { weightedAvgCost } from '../../common/utils/inventory-cost';
 import { accessoryGstRates } from '../accessories/accessory-gst-rates';
+import { createdFields } from '../../activity-log/audit-diff';
 
 type Tx = Prisma.TransactionClient;
 
@@ -222,7 +223,7 @@ export class AccessorySalesService {
 
       if (dto.payment) await this.insertPayment(tx, sale.id, invoiceNumber, customer.id, dto.payment, actor, now);
       await this.timeline.record({ customerId: customer.id, type: CustomerEventType.INVOICE_GENERATED, title: `Accessories invoice ${invoiceNumber}`, description: `${lines.map((l) => `${l.accessory.name} × ${l.qty}`).join(', ')} · ${formatInrExact(total)}`, entityType: 'AccessorySale', entityId: sale.id, actorId: actor.id }, tx);
-      await this.activityLog.recordInTransaction({ actorId: actor.id, action: ActivityAction.CREATE, entityType: 'AccessorySale', entityId: sale.id, summary: `Accessory sale ${invoiceNumber} to ${customer.name} — ${formatInrExact(total)}` }, tx);
+      await this.activityLog.recordInTransaction({ actorId: actor.id, action: ActivityAction.CREATE, entityType: 'AccessorySale', entityId: sale.id, entityLabel: invoiceNumber, summary: `Accessory sale ${invoiceNumber} to ${customer.name} — ${formatInrExact(total)}`, changes: createdFields({ customer: customer.name, total }) }, tx);
       return sale;
     });
     return this.getById(created.id, canSeeCost);
@@ -287,7 +288,7 @@ export class AccessorySalesService {
         });
       }
       await this.timeline.record({ customerId: sale.customerId, type: CustomerEventType.NOTE_ADDED, title: `Accessories invoice ${sale.invoiceNumber} cancelled`, description: paidNow > 0n ? `${dto.reason} · refunded ${formatInrExact(paidNow)}` : dto.reason, entityType: 'AccessorySale', entityId: id, actorId: actor.id }, tx);
-      await this.activityLog.recordInTransaction({ actorId: actor.id, action: ActivityAction.STATUS_CHANGE, entityType: 'AccessorySale', entityId: id, summary: `Cancelled accessory sale ${sale.invoiceNumber}${paidNow > 0n ? ` (refunded ${formatInrExact(paidNow)})` : ''} — ${dto.reason}` }, tx);
+      await this.activityLog.recordInTransaction({ actorId: actor.id, action: ActivityAction.CANCEL, entityType: 'AccessorySale', entityId: id, entityLabel: sale.invoiceNumber, summary: `Cancelled accessory sale ${sale.invoiceNumber}${paidNow > 0n ? ` (refunded ${formatInrExact(paidNow)}${dto.refundMode ? ` by ${dto.refundMode}` : ''})` : ''}`, reason: dto.reason, changes: { status: { from: 'ACTIVE', to: 'CANCELLED' }, ...(paidNow > 0n ? { refunded: { from: null, to: paidNow.toString() } } : {}) } }, tx);
     });
     return this.getById(id, canSeeCost);
   }
@@ -314,7 +315,12 @@ export class AccessorySalesService {
     const payment = await tx.payment.create({
       data: { receiptNumber, context: PaymentContext.ACCESSORY, accessorySaleId: saleId, amount: BigInt(dto.amount), mode: dto.mode, reference: dto.reference ?? null, receivedById: actor.id, paidAt: at, createdById: actor.id, updatedById: actor.id },
     });
-    await this.timeline.record({ customerId, type: CustomerEventType.ADVANCE_PAYMENT, title: `Payment received for ${invoiceNumber} (${dto.mode})`, description: `${receiptNumber} · ${formatInrExact(BigInt(dto.amount))}`, entityType: 'Payment', entityId: payment.id, actorId: actor.id }, tx);
+    await this.timeline.record({ customerId, type: CustomerEventType.ADVANCE_PAYMENT, title: `Payment received for ${invoiceNumber} (${dto.mode})`, description: `${receiptNumber} · ${formatInrExact(BigInt(dto.amount))}`, entityType: 'Payment', entityId: payment.id, actorId: actor.id }, tx);    await this.activityLog.recordInTransaction({
+      actorId: actor.id, action: ActivityAction.PAYMENT, entityType: 'AccessorySale', entityId: saleId, entityLabel: invoiceNumber,
+      summary: `Received ${formatInrExact(payment.amount)} (${payment.mode}) for accessory invoice ${invoiceNumber} — receipt ${receiptNumber}`,
+      changes: createdFields({ receiptNumber, amount: payment.amount, mode: payment.mode, reference: payment.reference, paidAt: payment.paidAt }),
+      metadata: { paymentId: payment.id },
+    }, tx);
   }
 
   private async hsnCodes(accessories: { id: string; taxClassificationId: string | null }[]): Promise<Map<string, string | null>> {

@@ -21,6 +21,11 @@ import { SequenceService } from '../sales/sequence.service';
 import { formatInr } from '../../common/utils/money';
 import { MonthlyClosingService } from './monthly-closing.service';
 import { VendorBillsService } from '../vendor-payables/vendor-bills.service';
+import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
+
+const EXPENSE_FIELDS = ['expenseDate', 'category', 'vendor', 'amount', 'gstAmount', 'paymentMethod', 'referenceNumber', 'description', 'dueDate', 'status', 'paid'] as const;
+type ExpenseLike = { expenseDate: Date; category?: { name: string } | null; vendor?: { name: string } | null; amount: bigint; gstAmount: bigint; paymentMethod: string; referenceNumber: string | null; description: string | null; dueDate: Date | null; status: string; paid: boolean };
+const expenseSnapshot = (e: ExpenseLike): Record<(typeof EXPENSE_FIELDS)[number], unknown> => ({ expenseDate: e.expenseDate, category: e.category?.name ?? null, vendor: e.vendor?.name ?? null, amount: e.amount, gstAmount: e.gstAmount, paymentMethod: e.paymentMethod, referenceNumber: e.referenceNumber, description: e.description, dueDate: e.dueDate, status: e.status, paid: e.paid });
 
 /** Scooter purchases used to be recorded as expenses in this category; since the cutover they live on the scooter. */
 const VEHICLE_PURCHASE_CATEGORY = 'Vehicle Purchase';
@@ -102,7 +107,7 @@ export class ExpensesService {
       });
     });
 
-    await this.activityLog.record({ actorId: userId, action: 'CREATE', entityType: 'Expense', entityId: created.id, summary: `Recorded expense ${created.expenseNumber} — ${formatInr(amount + gstAmount)}` });
+    await this.activityLog.record({ actorId: userId, action: 'CREATE', entityType: 'Expense', entityId: created.id, entityLabel: created.expenseNumber, summary: `Recorded expense ${created.expenseNumber} — ${formatInr(amount + gstAmount)} (${created.category.name})`, changes: createdFields(expenseSnapshot(created)) });
     await this.postCreateNotifications(company, created);
     return this.toDto(created);
   }
@@ -133,7 +138,10 @@ export class ExpensesService {
       },
       include: expenseInclude,
     });
-    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Expense', entityId: id, summary: `Updated expense ${updated.expenseNumber}` });
+    const changes = diffFields(expenseSnapshot(existing), expenseSnapshot(updated), EXPENSE_FIELDS);
+    if (Object.keys(changes).length) {
+      await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Expense', entityId: id, entityLabel: updated.expenseNumber, summary: `Updated expense ${updated.expenseNumber}: ${changesSummary(changes)}`, changes });
+    }
     return this.toDto(updated);
   }
 
@@ -142,7 +150,7 @@ export class ExpensesService {
     const existing = await this.getRowOrThrow(id);
     if (existing.status !== 'DRAFT') throw new BadRequestException('Only draft expenses can be submitted');
     const updated = await this.prisma.expense.update({ where: { id }, data: { status: 'PENDING', updatedById: userId }, include: expenseInclude });
-    await this.activityLog.record({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'Expense', entityId: id, summary: `Expense ${updated.expenseNumber} submitted for approval` });
+    await this.activityLog.record({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'Expense', entityId: id, entityLabel: updated.expenseNumber, summary: `Expense ${updated.expenseNumber} submitted for approval`, changes: { status: { from: existing.status, to: 'PENDING' } } });
     return this.toDto(updated);
   }
 
@@ -153,7 +161,7 @@ export class ExpensesService {
     if (existing.paid) throw new BadRequestException('A settled (paid) expense cannot change approval status');
     if ((await this.vendorBills.allocatedTo({ kind: 'EXPENSE', id })) > 0n) throw new BadRequestException('Part of this expense is paid through a vendor payment — cancel that payment before changing its approval');
     const updated = await this.prisma.expense.update({ where: { id }, data: { status: dto.status, updatedById: userId }, include: expenseInclude });
-    await this.activityLog.record({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'Expense', entityId: id, summary: `Expense ${updated.expenseNumber} ${dto.status.toLowerCase()}` });
+    await this.activityLog.record({ actorId: userId, action: dto.status === 'APPROVED' ? 'APPROVE' : 'STATUS_CHANGE', entityType: 'Expense', entityId: id, entityLabel: updated.expenseNumber, summary: `Expense ${updated.expenseNumber} ${dto.status.toLowerCase()} — ${formatInr(updated.amount + updated.gstAmount)}`, changes: { status: { from: existing.status, to: dto.status } } });
     return this.toDto(updated);
   }
 
@@ -164,7 +172,7 @@ export class ExpensesService {
     await this.closing.assertOpen(existing.expenseDate);
     if ((await this.vendorBills.allocatedTo({ kind: 'EXPENSE', id })) > 0n) throw new BadRequestException('Part of this expense is paid through a vendor payment — pay the rest from the vendor’s page');
     const updated = await this.prisma.expense.update({ where: { id }, data: { paid: true, settledDate: new Date(), updatedById: userId }, include: expenseInclude });
-    await this.activityLog.record({ actorId: userId, action: 'PAYMENT', entityType: 'Expense', entityId: id, summary: `Settled expense ${updated.expenseNumber}` });
+    await this.activityLog.record({ actorId: userId, action: 'PAYMENT', entityType: 'Expense', entityId: id, entityLabel: updated.expenseNumber, summary: `Settled expense ${updated.expenseNumber}: ${formatInr(updated.amount + updated.gstAmount)} (${updated.paymentMethod})`, changes: { paid: { from: false, to: true }, settledDate: { from: null, to: updated.settledDate?.toISOString() ?? null } } });
     return this.toDto(updated);
   }
 
@@ -176,28 +184,29 @@ export class ExpensesService {
       // What vendor payments applied to it stays with the vendor as an advance.
       return this.vendorBills.releaseAllocations(tx, { kind: 'EXPENSE', id });
     });
-    await this.activityLog.record({ actorId: userId, action: 'DELETE', entityType: 'Expense', entityId: id, summary: `Deleted expense${released > 0n ? ' (its vendor payment stays with the vendor as an advance)' : ''}` });
+    await this.activityLog.record({ actorId: userId, action: 'DELETE', entityType: 'Expense', entityId: id, entityLabel: existing.expenseNumber, summary: `Deleted expense ${existing.expenseNumber} of ${formatInr(existing.amount + existing.gstAmount)}${released > 0n ? ' (its vendor payment stays with the vendor as an advance)' : ''}`, changes: diffFields(expenseSnapshot(existing), {} as ReturnType<typeof expenseSnapshot>, EXPENSE_FIELDS) });
   }
 
   // ── Attachments (Invoice / GST Bill / Photo / PDF) ──
   async addAttachment(id: string, file: UploadedFile, type: string, userId: string): Promise<ExpenseDto> {
     const company = this.tenant.requireCompanyId();
-    await this.getRowOrThrow(id);
+    const expense = await this.getRowOrThrow(id);
     const attType = (['INVOICE', 'GST_BILL', 'PHOTO', 'PDF', 'OTHER'].includes(type) ? type : 'OTHER') as ExpenseAttachmentType;
     const stored = await this.storage.save({ buffer: file.buffer, originalName: file.originalname, mimeType: file.mimetype, folder: `expenses/${id}` });
-    await this.prisma.expenseAttachment.create({
+    const att = await this.prisma.expenseAttachment.create({
       data: { companyId: company, expenseId: id, type: attType, fileKey: stored.fileKey, fileName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size, createdById: userId },
     });
-    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Expense', entityId: id, summary: `Attached ${attType.toLowerCase()} to expense` });
+    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Expense', entityId: id, entityLabel: expense.expenseNumber, summary: `Attached ${attType.toLowerCase().replace('_', ' ')} "${file.originalname}" to expense ${expense.expenseNumber}`, metadata: { attachmentId: att.id, fileName: file.originalname, type: attType, sizeBytes: file.size } });
     return this.get(id);
   }
 
   async removeAttachment(id: string, attachmentId: string, userId: string): Promise<ExpenseDto> {
+    const expense = await this.getRowOrThrow(id);
     const att = await this.prisma.expenseAttachment.findFirst({ where: { id: attachmentId, expenseId: id } });
     if (!att) throw new NotFoundException('Attachment not found');
     await this.prisma.expenseAttachment.delete({ where: { id: attachmentId } });
     await this.storage.remove(att.fileKey).catch(() => undefined);
-    void userId;
+    await this.activityLog.record({ actorId: userId, action: 'DELETE', entityType: 'Expense', entityId: id, entityLabel: expense.expenseNumber, summary: `Removed attachment "${att.fileName}" from expense ${expense.expenseNumber}`, metadata: { attachmentId, fileName: att.fileName, type: att.type } });
     return this.get(id);
   }
 

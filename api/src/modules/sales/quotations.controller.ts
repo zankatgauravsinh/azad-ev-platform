@@ -97,7 +97,7 @@ export class QuotationsController {
   @Permissions('quotations.delete')
   @HttpCode(204)
   @ApiParam({ name: 'id', format: 'uuid' })
-  async remove(@Param('id') id: string): Promise<void> {
-    await this.quotations.remove(id);
+  async remove(@Param('id') id: string, @CurrentUser('id') userId: string): Promise<void> {
+    await this.quotations.remove(id, userId);
   }
 }

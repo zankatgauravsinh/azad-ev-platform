@@ -39,6 +39,8 @@ import { isAfterBusinessToday, resolveTimeZone } from '../../common/utils/busine
 import { formatInrExact } from '../../common/utils/money';
 import { EarlyDeliveryDateError, FutureDeliveryDateError, deliveryLowerBound, resolveDeliveryDate, type DeliveryLowerBound, type ResolvedDeliveryDate } from './delivery-date';
 import { computeTotal, sumAccessories } from './pricing';
+import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
+import { FINANCE_AUDIT_FIELDS, INSURANCE_AUDIT_FIELDS, bookingPriceSnapshot } from './sales-audit';
 
 type Tx = Prisma.TransactionClient;
 
@@ -126,12 +128,16 @@ export class BookingsService {
         include,
       });
       await this.recordBookingTimeline(tx, created, userId);
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.CREATE, entityType: 'Booking', entityId: created.id, entityLabel: created.code,
+        summary: `Created booking ${created.code} for ${created.customer.name} — ${created.unit.vin}, total ${formatInrExact(created.total)}`,
+        changes: createdFields({ status: created.status, customer: created.customer.name, vin: created.unit.vin, ...bookingPriceSnapshot(created), advanceAmount: created.advanceAmount, expectedDelivery: created.expectedDelivery }),
+      }, tx);
       if (dto.advanceAmount > 0) {
-        await this.insertPayment(tx, created.id, { amount: dto.advanceAmount, mode: 'CASH' }, userId, created.customerId);
+        await this.insertPayment(tx, created.id, { amount: dto.advanceAmount, mode: 'CASH' }, userId, created.customerId, created.code);
       }
       return created;
     });
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'Booking', entityId: booking.id, summary: `Created booking ${booking.code}` });
     return this.getById(booking.id);
   }
 
@@ -182,12 +188,21 @@ export class BookingsService {
       });
       await tx.quotation.update({ where: { id: quotation.id }, data: { status: QuotationStatus.ACCEPTED, updatedById: userId } });
       await this.recordBookingTimeline(tx, created, userId);
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.CREATE, entityType: 'Booking', entityId: created.id, entityLabel: created.code,
+        summary: `Converted quotation ${quotation.code} → booking ${created.code} — ${created.unit.vin}, total ${formatInrExact(created.total)}`,
+        changes: createdFields({ status: created.status, customer: created.customer.name, vin: created.unit.vin, ...bookingPriceSnapshot(created), advanceAmount: created.advanceAmount, expectedDelivery: created.expectedDelivery }),
+        metadata: { quotation: { id: quotation.id, code: quotation.code } },
+      }, tx);
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'Quotation', entityId: quotation.id, entityLabel: quotation.code,
+        summary: `Quotation ${quotation.code} accepted — converted to booking ${created.code}`, changes: { status: { from: quotation.status, to: QuotationStatus.ACCEPTED } },
+      }, tx);
       if (dto.advanceAmount > 0) {
-        await this.insertPayment(tx, created.id, { amount: dto.advanceAmount, mode: 'CASH' }, userId, created.customerId);
+        await this.insertPayment(tx, created.id, { amount: dto.advanceAmount, mode: 'CASH' }, userId, created.customerId, created.code);
       }
       return created;
     });
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'Booking', entityId: booking.id, summary: `Converted quotation ${quotation.code} → booking ${booking.code}` });
     return this.getById(booking.id);
   }
 
@@ -201,15 +216,21 @@ export class BookingsService {
   async update(id: string, dto: UpdateBookingInput, userId: string) {
     const existing = await this.getById(id);
     this.assertEditable(existing);
-    await this.prisma.booking.update({
-      where: { id },
-      data: {
-        financeRequired: dto.financeRequired,
-        insuranceRequired: dto.insuranceRequired,
-        expectedDelivery: dto.expectedDelivery,
-        notes: dto.notes,
-        updatedById: userId,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.booking.update({
+        where: { id },
+        data: {
+          financeRequired: dto.financeRequired,
+          insuranceRequired: dto.insuranceRequired,
+          expectedDelivery: dto.expectedDelivery,
+          notes: dto.notes,
+          updatedById: userId,
+        },
+      });
+      const changes = diffFields(existing, updated, ['financeRequired', 'insuranceRequired', 'expectedDelivery', 'notes']);
+      if (Object.keys(changes).length) {
+        await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Booking', entityId: id, entityLabel: existing.code, summary: `Updated booking ${existing.code}: ${changesSummary(changes)}`, changes }, tx);
+      }
     });
     return this.getById(id);
   }
@@ -217,7 +238,10 @@ export class BookingsService {
   async confirm(id: string, userId: string) {
     const booking = await this.getById(id);
     if (booking.status !== BookingStatus.DRAFT) throw new BadRequestException(`Booking is already ${booking.status}`);
-    await this.prisma.booking.update({ where: { id }, data: { status: BookingStatus.CONFIRMED, updatedById: userId } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.booking.update({ where: { id }, data: { status: BookingStatus.CONFIRMED, updatedById: userId } });
+      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'Booking', entityId: id, entityLabel: booking.code, summary: `Confirmed booking ${booking.code}`, changes: { status: { from: booking.status, to: BookingStatus.CONFIRMED } } }, tx);
+    });
     return this.getById(id);
   }
 
@@ -230,8 +254,13 @@ export class BookingsService {
       await tx.booking.update({ where: { id }, data: { status: BookingStatus.CANCELLED, notes: dto.reason ? `Cancelled: ${dto.reason}` : booking.notes, updatedById: userId } });
       // Its quotation is open again — it can be converted anew while it is still valid.
       if (booking.quotationId) await tx.quotation.updateMany({ where: { id: booking.quotationId, status: QuotationStatus.ACCEPTED }, data: { status: QuotationStatus.SENT, updatedById: userId } });
+      const paid = booking.paymentSummary?.paid;
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.CANCEL, entityType: 'Booking', entityId: id, entityLabel: booking.code,
+        summary: `Cancelled booking ${booking.code} — ${booking.unit.vin} released${paid ? `; ${formatInrExact(BigInt(paid))} received stays with the booking` : ''}`,
+        changes: { status: { from: booking.status, to: BookingStatus.CANCELLED } }, reason: dto.reason ?? null,
+      }, tx);
     });
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'Booking', entityId: id, summary: `Cancelled booking ${booking.code}` });
     return this.getById(id);
   }
 
@@ -253,7 +282,7 @@ export class BookingsService {
       const balance = (fresh?.total ?? 0n) - (paid._sum.amount ?? 0n);
       if (balance <= 0n) throw new BadRequestException('This booking is already fully paid');
       if (BigInt(dto.amount) > balance) throw new BadRequestException(`The payment exceeds the balance due of ${formatInrExact(balance)}`);
-      return this.insertPayment(tx, id, dto, userId, booking.customerId);
+      return this.insertPayment(tx, id, dto, userId, booking.customerId, booking.code);
     });
     return payment;
   }
@@ -268,6 +297,7 @@ export class BookingsService {
     const booking = await this.getById(id);
     if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot update finance on a cancelled booking');
     const wasApproved = booking.finance?.status === FinanceStatus.APPROVED;
+    const before = booking.finance;
     const finance = await this.prisma.$transaction(async (tx) => {
       const detail = await tx.financeDetail.upsert({
         where: { bookingId: id },
@@ -277,6 +307,10 @@ export class BookingsService {
       await tx.booking.update({ where: { id }, data: { financeRequired: true, updatedById: userId } });
       if (dto.status === FinanceStatus.APPROVED && !wasApproved) {
         await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.FINANCE_APPROVED, title: `Finance approved (${dto.financeCompany})`, entityType: 'Booking', entityId: id, actorId: userId }, tx);
+      }
+      const changes = before ? diffFields(before, detail, FINANCE_AUDIT_FIELDS) : createdFields(Object.fromEntries(FINANCE_AUDIT_FIELDS.map((f) => [f, detail[f]])));
+      if (Object.keys(changes).length) {
+        await this.activityLog.recordInTransaction({ actorId: userId, action: before ? ActivityAction.UPDATE : ActivityAction.CREATE, entityType: 'Booking', entityId: id, entityLabel: booking.code, summary: `${before ? 'Updated' : 'Added'} finance for booking ${booking.code}: ${changesSummary(changes)}`, changes, metadata: { part: 'finance' } }, tx);
       }
       return detail;
     });
@@ -288,6 +322,7 @@ export class BookingsService {
     const booking = await this.getById(id);
     if (booking.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot update insurance on a cancelled booking');
     const isNew = !booking.insurance;
+    const before = booking.insurance;
     const insurance = await this.prisma.$transaction(async (tx) => {
       const detail = await tx.insuranceDetail.upsert({
         where: { bookingId: id },
@@ -298,6 +333,10 @@ export class BookingsService {
       if (isNew) {
         await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.INSURANCE_ADDED, title: `Insurance added (${dto.provider})`, entityType: 'Booking', entityId: id, actorId: userId }, tx);
       }
+      const changes = before ? diffFields(before, detail, INSURANCE_AUDIT_FIELDS) : createdFields(Object.fromEntries(INSURANCE_AUDIT_FIELDS.map((f) => [f, detail[f]])));
+      if (Object.keys(changes).length) {
+        await this.activityLog.recordInTransaction({ actorId: userId, action: before ? ActivityAction.UPDATE : ActivityAction.CREATE, entityType: 'Booking', entityId: id, entityLabel: booking.code, summary: `${before ? 'Updated' : 'Added'} insurance for booking ${booking.code}: ${changesSummary(changes)}`, changes, metadata: { part: 'insurance' } }, tx);
+      }
       return detail;
     });
     return insurance;
@@ -305,8 +344,18 @@ export class BookingsService {
 
   // ── Delivery scheduling ────────────────────────────────
   async scheduleDelivery(id: string, dto: ScheduleDeliveryInput, userId: string) {
-    await this.getById(id);
-    await this.prisma.booking.update({ where: { id }, data: { expectedDelivery: dto.expectedDelivery, deliveryExecutiveId: dto.deliveryExecutiveId ?? null, pendingDocuments: dto.pendingDocuments ?? null, updatedById: userId } });
+    const existing = await this.getById(id);
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.booking.update({ where: { id }, data: { expectedDelivery: dto.expectedDelivery, deliveryExecutiveId: dto.deliveryExecutiveId ?? null, pendingDocuments: dto.pendingDocuments ?? null, updatedById: userId }, include: { deliveryExecutive: { select: { name: true } } } });
+      const changes = diffFields(
+        { expectedDelivery: existing.expectedDelivery, deliveryExecutive: existing.deliveryExecutive?.name ?? null, pendingDocuments: existing.pendingDocuments },
+        { expectedDelivery: updated.expectedDelivery, deliveryExecutive: updated.deliveryExecutive?.name ?? null, pendingDocuments: updated.pendingDocuments },
+        ['expectedDelivery', 'deliveryExecutive', 'pendingDocuments'],
+      );
+      if (Object.keys(changes).length) {
+        await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Booking', entityId: id, entityLabel: existing.code, summary: `Scheduled delivery for booking ${existing.code}: ${changesSummary(changes)}`, changes }, tx);
+      }
+    });
     return this.getById(id);
   }
 
@@ -368,7 +417,7 @@ export class BookingsService {
     // Calculated BEFORE the transaction: if it fails nothing is written and no invoice number is used.
     // It never alters the commercial figures — the Sale still copies the booking's amounts as-is.
     const saleTax = await this.saleTax.prepare(booking, { invoicedAt });
-    const sale = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       const invoiceNumber = await this.sequence.next('invoice', tx);
       const created = await tx.sale.create({
         data: {
@@ -397,9 +446,15 @@ export class BookingsService {
       if (saleTax) await this.saleTax.persist(tx, created.id, saleTax, userId);
       await tx.booking.update({ where: { id }, data: { status: BookingStatus.CONVERTED, updatedById: userId } });
       await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.INVOICE_GENERATED, title: `Invoice ${invoiceNumber} generated`, entityType: 'Sale', entityId: created.id, actorId: userId }, tx);
+      // Filed under the booking (its History shows the invoice); the invoice's own id rides in metadata.
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.CREATE, entityType: 'Booking', entityId: booking.id, entityLabel: `${booking.code} · ${invoiceNumber}`,
+        summary: `Generated tax invoice ${invoiceNumber} for booking ${booking.code}: ${formatInrExact(created.total)}${saleTax ? ' (with GST)' : ''}`,
+        changes: { status: { from: booking.status, to: BookingStatus.CONVERTED }, invoiceNumber: { from: null, to: invoiceNumber }, total: { from: null, to: created.total.toString() }, taxAmount: { from: null, to: created.taxAmount.toString() } },
+        metadata: { saleId: created.id, invoiceNumber },
+      }, tx);
       return created;
     });
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'Sale', entityId: sale.id, summary: `Generated invoice ${sale.invoiceNumber}` });
     return this.getById(id);
   }
 
@@ -549,12 +604,19 @@ export class BookingsService {
     await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.VEHICLE_ASSIGNED, title: `Vehicle allocated (${booking.unit.vin})`, entityType: 'InventoryUnit', entityId: booking.unitId, actorId: userId }, tx);
   }
 
-  private async insertPayment(tx: Tx, bookingId: string, dto: AddPaymentInput, userId: string, customerId: string) {
+  private async insertPayment(tx: Tx, bookingId: string, dto: AddPaymentInput, userId: string, customerId: string, bookingCode: string) {
     const receiptNumber = await this.sequence.next('receipt', tx);
     const payment = await tx.payment.create({
       data: { receiptNumber, context: PaymentContext.BOOKING_ADVANCE, bookingId, amount: BigInt(dto.amount), mode: dto.mode, reference: dto.reference ?? null, receivedById: userId, paidAt: dto.paidAt ?? new Date(), createdById: userId, updatedById: userId },
     });
     await this.timeline.record({ customerId, type: CustomerEventType.ADVANCE_PAYMENT, title: `Payment received (${dto.mode})`, description: receiptNumber, entityType: 'Payment', entityId: payment.id, actorId: userId }, tx);
+    // Filed under the booking, so its History shows every rupee received.
+    await this.activityLog.recordInTransaction({
+      actorId: userId, action: ActivityAction.PAYMENT, entityType: 'Booking', entityId: bookingId, entityLabel: bookingCode,
+      summary: `Received ${formatInrExact(payment.amount)} (${payment.mode}) for booking ${bookingCode} — receipt ${receiptNumber}`,
+      changes: createdFields({ receiptNumber, amount: payment.amount, mode: payment.mode, reference: payment.reference, paidAt: payment.paidAt }),
+      metadata: { paymentId: payment.id },
+    }, tx);
     return payment;
   }
 

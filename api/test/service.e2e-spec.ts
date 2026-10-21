@@ -119,6 +119,10 @@ describe('Service & after-sales (e2e)', () => {
     const total = Number(billed.body.bill.total);
     const paid = await http().post(`/api/v1/service/jobs/${jobId}/payments`).set('Authorization', auth(ownerToken)).send({ amount: total, mode: 'CASH' }).expect(201);
     expect(paid.body.bill.status).toBe('PAID');
+    // Audit: the bill's figures and the payment's amount, mode and receipt.
+    const log = await prisma.activityLog.findMany({ where: { entityId: jobId }, orderBy: { createdAt: 'asc' } });
+    expect(log.find((e) => e.summary.startsWith('Bill for'))!.changes).toMatchObject({ discount: { to: '5000' }, total: { to: String(total) } });
+    expect(log.find((e) => e.action === 'PAYMENT')!.changes).toMatchObject({ amount: { from: null, to: String(total) }, mode: { from: null, to: 'CASH' }, receiptNumber: { from: null, to: expect.any(String) } });
   });
 
   it('completes QC → READY → DELIVERED and stamps delivery', async () => {

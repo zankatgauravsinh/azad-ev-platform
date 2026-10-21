@@ -9,6 +9,8 @@ import { TenantContext } from '../../tenant/tenant-context.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { dayRange } from './finance.helpers';
 import { MonthlyClosingService } from './monthly-closing.service';
+import { createdFields } from '../../activity-log/audit-diff';
+import { formatInrExact } from '../../common/utils/money';
 
 /**
  * A bill settled through a vendor payment leaves the drawer with that payment (counted once, as the payment) —
@@ -79,10 +81,17 @@ export class CashbookService {
     const company = this.tenant.requireCompanyId();
     const adjDate = dto.date ?? new Date();
     await this.closing.assertOpen(adjDate);
-    const created = await this.prisma.cashAdjustment.create({
-      data: { companyId: company, adjDate, amount: BigInt(dto.amount), notes: dto.notes, createdById: userId },
+    const created = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.cashAdjustment.create({
+        data: { companyId: company, adjDate, amount: BigInt(dto.amount), notes: dto.notes, createdById: userId },
+      });
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: 'CREATE', entityType: 'CashAdjustment', entityId: row.id,
+        summary: `Cash adjustment ${row.amount >= 0n ? '+' : '−'}${formatInrExact(row.amount < 0n ? -row.amount : row.amount)}${row.notes ? ` — ${row.notes}` : ''}`,
+        changes: createdFields({ adjDate: row.adjDate, amount: row.amount, notes: row.notes }),
+      }, tx);
+      return row;
     });
-    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'CashAdjustment', entityId: created.id, summary: `Cash adjustment ${dto.amount >= 0 ? '+' : ''}${dto.amount}` });
     return { id: created.id };
   }
 

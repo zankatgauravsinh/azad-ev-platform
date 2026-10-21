@@ -33,6 +33,9 @@ import { VendorFormDialog } from '@/features/vendors/components/vendor-form-dial
 import { CreateBankDialog } from '../components/create-bank-dialog';
 import { ExpenseDetailDialog } from '../components/expense-detail-dialog';
 import { RecurringDialog } from '../components/recurring-dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 
 const iso = (d: string): string => new Date(d).toLocaleDateString('en-IN');
 
@@ -457,6 +460,17 @@ function ClosingTab({ canManage }: { canManage: boolean }): JSX.Element {
     try { await closeMonth.mutateAsync({ year: Number(year), month: Number(month) }); toast.success('Month closed'); }
     catch (e) { toast.error(apiErrorMessage(e)); }
   };
+  const [reopening, setReopening] = useState<MonthlyClosingDto | null>(null);
+  const [reason, setReason] = useState('');
+  const reopen = async (): Promise<void> => {
+    if (!reopening) return;
+    try {
+      await reopenMonth.mutateAsync({ id: reopening.id, reason: reason.trim() });
+      toast.success(`${reopening.label} reopened`);
+      setReopening(null);
+      setReason('');
+    } catch (e) { toast.error(apiErrorMessage(e)); }
+  };
 
   return (
     <div className="space-y-4">
@@ -477,12 +491,29 @@ function ClosingTab({ canManage }: { canManage: boolean }): JSX.Element {
               <TableRow key={c.id}>
                 <TableCell className="font-medium">{c.label}</TableCell>
                 <TableCell className="text-muted-foreground">{iso(c.closedAt)}</TableCell>
-                {canManage && <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => reopenMonth.mutate(c.id)}><Unlock className="h-4 w-4" /> Reopen</Button></TableCell>}
+                {canManage && <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => { setReopening(c); setReason(''); }}><Unlock className="h-4 w-4" /> Reopen</Button></TableCell>}
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </div>
+      <Dialog open={Boolean(reopening)} onOpenChange={(o) => { if (!o) setReopening(null); }}>
+        <DialogContent className="w-[calc(100%-2rem)] max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reopen {reopening?.label}?</DialogTitle>
+            <DialogDescription>Its transactions can be added, changed and deleted again. The reason is kept in the audit log.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1">
+            <Label htmlFor="reopen-reason">Reason</Label>
+            <Textarea id="reopen-reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Supplier bill for September arrived late" />
+            {reason.trim().length > 0 && reason.trim().length < 5 && <p className="text-xs text-destructive">At least 5 characters</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReopening(null)}>Keep closed</Button>
+            <Button onClick={() => void reopen()} disabled={reason.trim().length < 5 || reopenMonth.isPending}><Unlock className="h-4 w-4" /> Reopen month</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -214,8 +214,12 @@ describe('Finance & Expenses (e2e)', () => {
       .send({ categoryId, amount: 1000, expenseDate: '2020-01-15T00:00:00.000Z', description: `locked ${stamp}` }).expect(400);
     // …closing the same month twice conflicts…
     await http().post('/api/v1/finance/closings').set('Authorization', auth(ownerToken)).send({ year: 2020, month: 1 }).expect(409);
-    // …reopening lifts the lock.
-    await http().delete(`/api/v1/finance/closings/${closing.body.id}`).set('Authorization', auth(ownerToken)).expect(204);
+    // …reopening needs a reason (kept in the audit log), then lifts the lock.
+    await http().delete(`/api/v1/finance/closings/${closing.body.id}`).set('Authorization', auth(ownerToken)).expect(400);
+    await http().delete(`/api/v1/finance/closings/${closing.body.id}`).set('Authorization', auth(ownerToken)).send({ reason: 'ok' }).expect(400);
+    await http().delete(`/api/v1/finance/closings/${closing.body.id}`).set('Authorization', auth(ownerToken)).send({ reason: 'Late supplier bill' }).expect(204);
+    const reopened = await prisma.activityLog.findFirstOrThrow({ where: { entityType: 'MonthlyClosing', entityId: closing.body.id, summary: { startsWith: 'Reopened' } } });
+    expect(reopened).toMatchObject({ reason: 'Late supplier bill', entityLabel: 'January 2020', changes: { status: { from: 'CLOSED', to: 'OPEN' } } });
     const ok = await http().post('/api/v1/expenses').set('Authorization', auth(accountantToken))
       .send({ categoryId, amount: 1000, expenseDate: '2020-01-15T00:00:00.000Z', description: `unlocked ${stamp}` }).expect(201);
     expect(ok.body.status).toBe('APPROVED');

@@ -9,6 +9,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { ExpensesService } from './expenses.service';
+import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
+import { formatInr } from '../../common/utils/money';
+
+const RECURRING_FIELDS = ['name', 'category', 'vendor', 'amount', 'gstAmount', 'paymentMethod', 'dayOfMonth', 'description', 'active'] as const;
+type RecurringLike = { name: string; category?: { name: string } | null; vendor?: { name: string } | null; amount: bigint; gstAmount: bigint; paymentMethod: string; dayOfMonth: number; description: string | null; active: boolean };
+const recurringSnapshot = (r: RecurringLike): Record<(typeof RECURRING_FIELDS)[number], unknown> => ({ name: r.name, category: r.category?.name ?? null, vendor: r.vendor?.name ?? null, amount: r.amount, gstAmount: r.gstAmount, paymentMethod: r.paymentMethod, dayOfMonth: r.dayOfMonth, description: r.description, active: r.active });
 
 const recurringInclude = {
   category: { select: { name: true } },
@@ -49,12 +55,12 @@ export class RecurringExpensesService {
       },
       include: recurringInclude,
     });
-    await this.activityLog.record({ actorId: userId, action: 'CREATE', entityType: 'RecurringExpense', entityId: created.id, summary: `Created recurring expense ${created.name}` });
+    await this.activityLog.record({ actorId: userId, action: 'CREATE', entityType: 'RecurringExpense', entityId: created.id, entityLabel: created.name, summary: `Created recurring expense ${created.name}: ${formatInr(created.amount + created.gstAmount)} on day ${created.dayOfMonth}`, changes: createdFields(recurringSnapshot(created)) });
     return this.toDto(created);
   }
 
   async update(id: string, dto: UpdateRecurringExpenseInput, userId: string): Promise<RecurringExpenseDto> {
-    await this.getRowOrThrow(id);
+    const existing = await this.getRowOrThrow(id);
     const updated = await this.prisma.recurringExpense.update({
       where: { id },
       data: {
@@ -71,13 +77,17 @@ export class RecurringExpensesService {
       },
       include: recurringInclude,
     });
+    const changes = diffFields(recurringSnapshot(existing), recurringSnapshot(updated), RECURRING_FIELDS);
+    if (Object.keys(changes).length) {
+      await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'RecurringExpense', entityId: id, entityLabel: updated.name, summary: `Updated recurring expense ${updated.name}: ${changesSummary(changes)}`, changes });
+    }
     return this.toDto(updated);
   }
 
   async remove(id: string, userId: string): Promise<void> {
-    await this.getRowOrThrow(id);
+    const existing = await this.getRowOrThrow(id);
     await this.prisma.recurringExpense.delete({ where: { id } });
-    await this.activityLog.record({ actorId: userId, action: 'DELETE', entityType: 'RecurringExpense', entityId: id, summary: 'Deleted recurring expense' });
+    await this.activityLog.record({ actorId: userId, action: 'DELETE', entityType: 'RecurringExpense', entityId: id, entityLabel: existing.name, summary: `Deleted recurring expense ${existing.name} (${formatInr(existing.amount + existing.gstAmount)} monthly)`, changes: diffFields(recurringSnapshot(existing), {} as ReturnType<typeof recurringSnapshot>, RECURRING_FIELDS) });
   }
 
   /**
@@ -127,6 +137,9 @@ export class RecurringExpensesService {
           .updateMany({ where: { id: t.id }, data: { lastRunYear: t.lastRunYear, lastRunMonth: t.lastRunMonth } })
           .catch(() => undefined);
       }
+    }
+    if (due.length) {
+      await this.activityLog.record({ actorId: userId, action: 'CREATE', entityType: 'RecurringExpense', summary: `Ran recurring expenses for ${MONTHS[month - 1]} ${year}: ${created} of ${due.length} created (${due.map((t) => t.name).join(', ')})`, metadata: { year, month, created, due: due.length } });
     }
     return { created };
   }

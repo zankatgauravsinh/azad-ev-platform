@@ -26,15 +26,24 @@ export class MonthlyClosingService {
     const created = await this.prisma.monthlyClosing.create({
       data: { companyId: company, year: dto.year, month: dto.month, notes: dto.notes ?? null, closedById: userId },
     });
-    await this.activityLog.record({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'MonthlyClosing', entityId: created.id, summary: `Closed ${MONTHS[dto.month - 1]} ${dto.year}` });
+    await this.activityLog.record({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'MonthlyClosing', entityId: created.id, entityLabel: `${MONTHS[dto.month - 1]} ${dto.year}`, summary: `Closed ${MONTHS[dto.month - 1]} ${dto.year}`, reason: dto.notes ?? null, changes: { status: { from: 'OPEN', to: 'CLOSED' } } });
     return this.toDto(created);
   }
 
-  async reopen(id: string, userId: string): Promise<void> {
+  /** Unlocks a closed month. Always with a reason, kept in the audit log with who closed it and when. */
+  async reopen(id: string, reason: string, userId: string): Promise<void> {
     const found = await this.prisma.monthlyClosing.findFirst({ where: { id } });
     if (!found) throw new NotFoundException('Closing not found');
-    await this.prisma.monthlyClosing.delete({ where: { id } });
-    await this.activityLog.record({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'MonthlyClosing', entityId: id, summary: `Reopened ${MONTHS[found.month - 1]} ${found.year}` });
+    const label = `${MONTHS[found.month - 1]} ${found.year}`;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.monthlyClosing.delete({ where: { id } });
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: 'STATUS_CHANGE', entityType: 'MonthlyClosing', entityId: id, entityLabel: label,
+        summary: `Reopened ${label} — its transactions can be changed again`, reason,
+        changes: { status: { from: 'CLOSED', to: 'OPEN' } },
+        metadata: { year: found.year, month: found.month, closedAt: found.closedAt.toISOString(), closedById: found.closedById },
+      }, tx);
+    });
   }
 
   /** Throw if `date` falls inside a locked month. Called by every finance mutation. */

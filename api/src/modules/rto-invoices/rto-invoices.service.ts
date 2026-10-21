@@ -24,6 +24,9 @@ import { businessDateOf, resolveTimeZone } from '../../common/utils/business-dat
 import { SequenceService } from '../sales/sequence.service';
 import { buildRtoInvoiceDocument } from './rto-invoice-document';
 import { RtoInvoicePdfService } from './rto-invoice-pdf.service';
+import { createdFields, diffFields } from '../../activity-log/audit-diff';
+
+const RTO_FIELDS = ['listPrice', 'discount', 'sellingPrice', 'gstRateBp', 'supplyType', 'cgst', 'sgst', 'igst', 'gstAmount', 'total', 'hsnCode', 'policyNumber', 'deliveryDate'] as const;
 
 export interface Actor {
   id: string;
@@ -147,7 +150,7 @@ export class RtoInvoicesService {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new ConflictException(`Booking ${booking.code} already has an RTO invoice`);
       throw e;
     }
-    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.CREATE, entityType: 'RtoInvoice', entityId: created.id, summary: `Generated RTO invoice ${created.invoiceNumber} for booking ${booking.code} — ${formatInrExact(created.total)}` });
+    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.CREATE, entityType: 'RtoInvoice', entityId: created.id, entityLabel: created.invoiceNumber, summary: `Generated RTO invoice ${created.invoiceNumber} for booking ${booking.code} — ${formatInrExact(created.total)}`, changes: createdFields(Object.fromEntries(RTO_FIELDS.map((f) => [f, created[f]]))), metadata: { bookingId: booking.id, bookingCode: booking.code } });
     return (await this.toDtos([created]))[0]!;
   }
 
@@ -173,7 +176,7 @@ export class RtoInvoicesService {
       `${formatInrExact(r.listPrice)}${r.discount > 0n ? ` − ${formatInrExact(r.discount)}` : ''} @ ${r.gstRateBp / 100}% ${r.supplyType} = ${formatInrExact(r.total)}`;
     const was = describe(before);
     const now = describe(updated);
-    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'RtoInvoice', entityId: id, summary: `Revised RTO invoice ${updated.invoiceNumber} (revision ${updated.revision}): ${was} → ${now}` });
+    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'RtoInvoice', entityId: id, entityLabel: updated.invoiceNumber, summary: `Revised RTO invoice ${updated.invoiceNumber} (revision ${updated.revision}): ${was} → ${now}`, changes: { ...diffFields(before, updated, RTO_FIELDS), revision: { from: before.revision, to: updated.revision } }, metadata: { bookingId: updated.bookingId } });
     return (await this.toDtos([updated]))[0]!;
   }
 

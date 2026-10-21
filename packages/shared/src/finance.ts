@@ -481,6 +481,12 @@ export const closeMonthSchema = z.object({
 });
 export type CloseMonthInput = z.infer<typeof closeMonthSchema>;
 
+/** Reopening a closed month unlocks its transactions again — the reason is kept in the audit log. */
+export const reopenMonthSchema = z.object({
+  reason: z.string().trim().min(5, 'Give a reason of at least 5 characters').max(300),
+});
+export type ReopenMonthInput = z.infer<typeof reopenMonthSchema>;
+
 export interface GstSummaryDto {
   range: { from: string; to: string };
   collected: string;

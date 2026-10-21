@@ -49,7 +49,8 @@ export const financeApi = {
   runRecurring: async (): Promise<{ created: number }> => (await apiClient.post('/finance/recurring/run')).data,
   closings: async (): Promise<MonthlyClosingDto[]> => (await apiClient.get('/finance/closings')).data,
   closeMonth: async (body: CloseMonthInput): Promise<MonthlyClosingDto> => (await apiClient.post('/finance/closings', body)).data,
-  reopenMonth: async (id: string): Promise<void> => { await apiClient.delete(`/finance/closings/${id}`); },
+  /** Reopening a closed month needs a reason (kept in the audit log). */
+  reopenMonth: async (v: { id: string; reason: string }): Promise<void> => { await apiClient.delete(`/finance/closings/${v.id}`, { data: { reason: v.reason } }); },
 };
 
 export const expensesApi = {

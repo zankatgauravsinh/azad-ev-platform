@@ -186,6 +186,9 @@ describe('Vehicle Returns (e2e)', () => {
       expect(res.body.refunds[0].amount).toBe('10500000');
       expect(res.body.disposition).toBe('AVAILABLE');
       expect(await unitStatus(s.unitId)).toBe('AVAILABLE');
+      // Audit: the credit note and refund numbers and amounts, in one entry written with them.
+      const done = await prisma.activityLog.findFirstOrThrow({ where: { entityId: f1Return, summary: { contains: 'completed' } } });
+      expect(done.changes).toMatchObject({ creditNoteNumber: { to: res.body.creditNote.creditNoteNumber }, creditNoteTotal: { to: '10500000' }, refundAmount: { to: '10500000' }, refundMethod: { to: 'UPI' } });
       // Original booking/sale/payments untouched.
       const booking = await http().get(`/api/v1/bookings/${s.bookingId}`).set('Authorization', auth(ownerToken)).expect(200);
       expect(booking.body.status).toBe('CONVERTED'); // never CANCELLED after delivery
@@ -283,7 +286,7 @@ describe('Vehicle Returns (e2e)', () => {
       const closing = await http().post('/api/v1/finance/closings').set('Authorization', auth(ownerToken)).send({ year: now.getFullYear(), month: now.getMonth() + 1 }).expect(201);
       await http().post(`/api/v1/returns/${rid}/complete`).set('Authorization', auth(ownerToken))
         .send({ disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(400);
-      await http().delete(`/api/v1/finance/closings/${closing.body.id}`).set('Authorization', auth(ownerToken)).expect(204);
+      await http().delete(`/api/v1/finance/closings/${closing.body.id}`).set('Authorization', auth(ownerToken)).send({ reason: 'Reopened by the test' }).expect(204);
       // Reopened → completes.
       await http().post(`/api/v1/returns/${rid}/complete`).set('Authorization', auth(ownerToken))
         .send({ disposition: 'AVAILABLE', deductionAmount: 0, refundMethod: 'UPI' }).expect(201);

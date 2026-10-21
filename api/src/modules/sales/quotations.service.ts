@@ -23,6 +23,9 @@ import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { BookingsService } from './bookings.service';
 import { businessDateOf } from '../../common/utils/business-date';
 import { computeTotal, sumAccessories } from './pricing';
+import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
+import { QUOTATION_AUDIT_FIELDS, quotationSnapshot } from './sales-audit';
+import { formatInr } from '../../common/utils/money';
 
 const include = {
   customer: { select: { id: true, name: true, phone: true, address: true, city: true } },
@@ -98,9 +101,13 @@ export class QuotationsService {
         { customerId: dto.customerId, type: CustomerEventType.QUOTATION, title: `Quotation ${code} created`, entityType: 'Quotation', entityId: created.id, actorId: userId },
         tx,
       );
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.CREATE, entityType: 'Quotation', entityId: created.id, entityLabel: code,
+        summary: `Created quotation ${code} for ${created.customer.name}: ${formatInr(created.total)}`,
+        changes: createdFields(quotationSnapshot(created)),
+      }, tx);
       return created;
     });
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'Quotation', entityId: quotation.id, summary: `Created quotation ${quotation.code}` });
     return quotation;
   }
 
@@ -125,7 +132,7 @@ export class QuotationsService {
         extendedWarranty: dto.extendedWarranty ?? Number(existing.extendedWarranty),
       };
       const total = computeTotal({ ...merged, accessoriesTotal });
-      return tx.quotation.update({
+      const updated = await tx.quotation.update({
         where: { id },
         data: {
           variantId: dto.variantId,
@@ -149,6 +156,14 @@ export class QuotationsService {
         },
         include,
       });
+      const changes = diffFields(quotationSnapshot(existing), quotationSnapshot(updated), QUOTATION_AUDIT_FIELDS);
+      if (Object.keys(changes).length) {
+        await this.activityLog.recordInTransaction({
+          actorId: userId, action: ActivityAction.UPDATE, entityType: 'Quotation', entityId: id, entityLabel: existing.code,
+          summary: `Updated quotation ${existing.code}: ${changesSummary(changes)}`, changes,
+        }, tx);
+      }
+      return updated;
     });
   }
 
@@ -156,7 +171,7 @@ export class QuotationsService {
     const src = await this.getById(id);
     return this.prisma.$transaction(async (tx) => {
       const code = await this.sequence.next('quotation', tx);
-      return tx.quotation.create({
+      const copy = await tx.quotation.create({
         data: {
           code,
           customerId: src.customerId,
@@ -182,18 +197,41 @@ export class QuotationsService {
         },
         include,
       });
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.CREATE, entityType: 'Quotation', entityId: copy.id, entityLabel: code,
+        summary: `Created quotation ${code} as a copy of ${src.code}: ${formatInr(copy.total)}`,
+        changes: createdFields(quotationSnapshot(copy)), metadata: { copiedFrom: { id: src.id, code: src.code } },
+      }, tx);
+      return copy;
     });
   }
 
   async changeStatus(id: string, dto: ChangeQuotationStatusInput, userId: string) {
-    await this.getById(id);
-    return this.prisma.quotation.update({ where: { id }, data: { status: dto.status, updatedById: userId }, include });
+    const existing = await this.getById(id);
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.quotation.update({ where: { id }, data: { status: dto.status, updatedById: userId }, include });
+      if (existing.status !== dto.status) {
+        await this.activityLog.recordInTransaction({
+          actorId: userId, action: ActivityAction.STATUS_CHANGE, entityType: 'Quotation', entityId: id, entityLabel: existing.code,
+          summary: `Quotation ${existing.code}: ${existing.status} → ${dto.status}`, changes: { status: { from: existing.status, to: dto.status } },
+        }, tx);
+      }
+      return updated;
+    });
   }
 
-  async remove(id: string): Promise<void> {
+  /** Deletes a quotation that never became a booking; its last state is kept in the audit log. */
+  async remove(id: string, userId: string): Promise<void> {
     const q = await this.getById(id);
     if (q.booking) throw new BadRequestException('A converted quotation cannot be deleted');
-    await this.prisma.quotation.delete({ where: { id } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.quotation.delete({ where: { id } });
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.DELETE, entityType: 'Quotation', entityId: id, entityLabel: q.code,
+        summary: `Deleted quotation ${q.code} for ${q.customer.name} (${formatInr(q.total)})`,
+        changes: diffFields(quotationSnapshot(q), {} as ReturnType<typeof quotationSnapshot>, QUOTATION_AUDIT_FIELDS),
+      }, tx);
+    });
   }
 
   async convertToBooking(id: string, dto: ConvertQuotationInput, userId: string) {

@@ -35,6 +35,8 @@ import { WarrantyService } from './warranty.service';
 import { ServicePdfService, type ServiceDocType } from './service-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { MonthlyClosingService } from '../finance/monthly-closing.service';
+import { createdFields, diffFields } from '../../activity-log/audit-diff';
+import { formatInrExact } from '../../common/utils/money';
 
 type Tx = Prisma.TransactionClient;
 export interface Actor {
@@ -416,8 +418,15 @@ export class ServiceJobsService {
     const base = taxable > 0n ? taxable : 0n;
     const taxAmount = (base * BigInt(Math.round(dto.taxPercentage * 100))) / 10000n;
     const total = base + taxAmount;
-    await this.prisma.serviceJob.update({ where: { id }, data: { discount, taxAmount, partsTotal, labourTotal, total, updatedById: actor.id } });
-    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, summary: `Bill generated for ${job.code}` });
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.serviceJob.update({ where: { id }, data: { discount, taxAmount, partsTotal, labourTotal, total, updatedById: actor.id } });
+      const changes = diffFields(job, updated, ['partsTotal', 'labourTotal', 'discount', 'taxAmount', 'total']);
+      await this.activityLog.recordInTransaction({
+        actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, entityLabel: job.code,
+        summary: `Bill for ${job.code}: ${formatInrExact(total)} (discount ${formatInrExact(discount)}, tax ${dto.taxPercentage}%)`,
+        changes, metadata: { taxPercentage: dto.taxPercentage },
+      }, tx);
+    });
     return this.getById(id, actor);
   }
 
@@ -428,10 +437,15 @@ export class ServiceJobsService {
     await this.closing.assertOpen(new Date());
     await this.prisma.$transaction(async (tx) => {
       const receiptNumber = await this.sequence.next('receipt', tx);
-      await tx.payment.create({ data: { receiptNumber, context: PaymentContext.SERVICE, serviceJobId: id, amount: BigInt(dto.amount), mode: dto.mode, reference: dto.reference ?? null, receivedById: actor.id, paidAt: new Date(), createdById: actor.id, updatedById: actor.id } });
+      const payment = await tx.payment.create({ data: { receiptNumber, context: PaymentContext.SERVICE, serviceJobId: id, amount: BigInt(dto.amount), mode: dto.mode, reference: dto.reference ?? null, receivedById: actor.id, paidAt: new Date(), createdById: actor.id, updatedById: actor.id } });
       await this.timeline.record({ customerId: job.customerId, type: CustomerEventType.ADVANCE_PAYMENT, title: `Service payment received (${dto.mode})`, description: receiptNumber, entityType: 'ServiceJob', entityId: id, actorId: actor.id }, tx);
+      await this.activityLog.recordInTransaction({
+        actorId: actor.id, action: ActivityAction.PAYMENT, entityType: 'ServiceJob', entityId: id, entityLabel: job.code,
+        summary: `Received ${formatInrExact(payment.amount)} (${payment.mode}) for job card ${job.code} — receipt ${receiptNumber}`,
+        changes: createdFields({ receiptNumber, amount: payment.amount, mode: payment.mode, reference: payment.reference, paidAt: payment.paidAt }),
+        metadata: { paymentId: payment.id },
+      }, tx);
     });
-    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.PAYMENT, entityType: 'ServiceJob', entityId: id, summary: `Service payment for ${job.code}` });
     return this.getById(id, actor);
   }
 
