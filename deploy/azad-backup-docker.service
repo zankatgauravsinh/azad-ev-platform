@@ -18,8 +18,10 @@ Environment=CONTAINER=azad_ev_postgres
 Environment=DB=azad_ev
 # Backups on this server older than 14 days are removed (a set with a .keep file never is).
 Environment=RETENTION_DAYS=14
-# The API's uploads folder: <pm2 exec cwd>/uploads unless STORAGE_LOCAL_DIR says otherwise. Check before installing.
-Environment=UPLOADS_DIR=/var/www/html/azad-ev-platform/api/uploads
+# The API's uploads folder: <pm2 exec cwd>/uploads (pm2 runs it from the repo root) unless STORAGE_LOCAL_DIR says otherwise.
+Environment=UPLOADS_DIR=/var/www/html/azad-ev-platform/uploads
+# Use the instance role, not access keys another project may keep in ~/.aws/credentials (they would win otherwise).
+Environment=AWS_SHARED_CREDENTIALS_FILE=/dev/null
 # The S3 bucket and prefix for the off-server copy (instance role with s3:PutObject only). Replace CHANGE-ME.
 Environment=BACKUP_S3_URI=s3://CHANGE-ME/azad-ev
 ExecStart=/var/www/html/azad-ev-platform/scripts/backup-nightly.sh

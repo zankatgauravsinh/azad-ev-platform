@@ -231,8 +231,10 @@ replaced), then EC2 → the instance → Actions → Security → **Modify IAM r
 }
 ```
 
-**AWS CLI on the server** (if `aws --version` fails): `sudo snap install aws-cli --classic`. Check the role
-is in use (no keys are configured): `aws sts get-caller-identity` names the role.
+**AWS CLI on the server** (if `aws --version` fails): `sudo snap install aws-cli --classic`. Check the role:
+`AWS_SHARED_CREDENTIALS_FILE=/dev/null aws sts get-caller-identity` names `assumed-role/<role>/…`. The service
+sets that variable, so access keys kept in `~/.aws/credentials` for another project (they take precedence over
+the role) are left alone and not used.
 
 **Where uploads live**: the API stores files in `<pm2 exec cwd>/uploads` unless `STORAGE_LOCAL_DIR` is set:
 
