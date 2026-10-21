@@ -17,8 +17,8 @@ export function Sidebar({ role, onNavigate }: { role: Role; onNavigate?: () => v
     : null;
 
   return (
-    <div className="flex h-full flex-col gap-2">
-      <div className="flex items-center gap-2 px-4 py-4">
+    <div className="pb-safe flex h-full flex-col gap-2">
+      <div className="flex shrink-0 items-center gap-2 px-4 py-4">
         {logoSrc ? (
           <img src={logoSrc} alt="Logo" className="h-8 w-8 rounded object-contain dark:bg-white dark:p-0.5" />
         ) : (
@@ -30,7 +30,8 @@ export function Sidebar({ role, onNavigate }: { role: Role; onNavigate?: () => v
         </div>
       </div>
 
-      <nav className="flex-1 space-y-0.5 px-2">
+      {/* The menu scrolls on its own when it is taller than the screen; the logo and footer stay in place. */}
+      <nav aria-label="Main menu" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain px-2 pb-2">
         {items.map((item) => {
           const Icon = item.icon;
           if (!item.enabled) {
@@ -73,7 +74,7 @@ export function Sidebar({ role, onNavigate }: { role: Role; onNavigate?: () => v
         })}
       </nav>
 
-      <p className="px-4 py-3 text-[11px] text-muted-foreground">Ride Free. Ride Electric.</p>
+      <p className="shrink-0 px-4 py-3 text-[11px] text-muted-foreground">Ride Free. Ride Electric.</p>
     </div>
   );
 }
