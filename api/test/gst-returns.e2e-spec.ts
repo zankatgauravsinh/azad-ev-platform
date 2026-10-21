@@ -1,11 +1,29 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import ExcelJS from 'exceljs';
 import { Role } from '@azad/shared';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { businessDateOf } from '../src/common/utils/business-date';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 import { enableGst, GstSetup, TEST_GSTIN } from './support/gst-setup';
+
+function binaryParser(res: request.Response, callback: (err: Error | null, body: unknown) => void): void {
+  const chunks: Buffer[] = [];
+  (res as unknown as NodeJS.ReadableStream).on('data', (c: Buffer) => chunks.push(Buffer.from(c)));
+  (res as unknown as NodeJS.ReadableStream).on('end', () => callback(null, Buffer.concat(chunks)));
+}
+const workbook = async (buffer: Buffer): Promise<ExcelJS.Workbook> => {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer as unknown as ArrayBuffer);
+  return wb;
+};
+/** A sheet's rows as plain arrays (ExcelJS rows are 1-based with an empty slot 0). */
+const rowsOf = (wb: ExcelJS.Workbook, name: string): unknown[][] => {
+  const out: unknown[][] = [];
+  wb.getWorksheet(name)!.eachRow({ includeEmpty: true }, (row) => out.push((row.values as unknown[]).slice(1)));
+  return out;
+};
 
 /**
  * The GST module's month: one company's real documents of this month — scooter invoices (B2C, B2B, large
@@ -148,6 +166,37 @@ describe('GST returns (e2e)', () => {
     const s = (await get('/finance/gst-summary').expect(200)).body;
     const month = s.monthly.find((m: { month: string }) => m.month === period);
     expect(month).toMatchObject({ collected: String(500_000 + 518_000 * 2), paid: String(45_000 + 200_000 * 2) });
+  });
+
+  it('exports GSTR-1 in the Offline Tool layout: its sheets, the template headers on row 4, data from row 5', async () => {
+    const file = await get(`/gst/export/gstr1?period=${period}`).buffer().parse(binaryParser).expect(200);
+    expect(file.headers['content-disposition']).toContain(`GSTR1-${period}.xlsx`);
+    const wb = await workbook(file.body as Buffer);
+    expect(wb.worksheets.map((w) => w.name)).toEqual(['b2b', 'b2cl', 'b2cs', 'cdnr', 'cdnur', 'exemp', 'hsn(b2b)', 'hsn(b2c)', 'docs']);
+    const b2b = rowsOf(wb, 'b2b');
+    expect(b2b[3]!.slice(0, 4)).toEqual(['GSTIN/UIN of Recipient', 'Receiver Name', 'Invoice Number', 'Invoice date']);
+    expect(b2b[4]).toEqual([TEST_GSTIN.buyerGujarat, 'Shree Traders', ids.b2b, expect.stringMatching(/^\d{2}-[A-Z][a-z]{2}-\d{4}$/), 105000, '24-Gujarat', 'N', '', 'Regular B2B', '', 5, 100000, 0]);
+    expect(rowsOf(wb, 'b2cs').slice(4)).toEqual([['OE', '24-Gujarat', '', 18, 2000, 0, ''], ['OE', '24-Gujarat', '', 5, 100000, 0, '']]);
+    expect(rowsOf(wb, 'b2cl')[4]!.slice(0, 1)).toEqual([ids.b2cl]);
+    expect(rowsOf(wb, 'hsn(b2c)').slice(4).map((r) => [r[0], r[2]])).toEqual(expect.arrayContaining([['8711', 'NOS-NUMBERS'], ['9987', 'NA']]));
+    expect(rowsOf(wb, 'docs').slice(4).map((r) => [r[0], r[3], r[4]])).toEqual([['Invoices for outward supply', 5, 0], ['Invoices for outward supply', 2, 1], ['Invoices for outward supply', 1, 0], ['Credit Note', 1, 0]]);
+  });
+
+  it('exports GSTR-3B, the sales register and (for purchase-cost holders) the purchase register; each download is recorded', async () => {
+    const g3 = rowsOf(await workbook((await get(`/gst/export/gstr3b?period=${period}`).buffer().parse(binaryParser).expect(200)).body as Buffer), 'GSTR-3B');
+    expect(g3.find((r) => r[0] === '3.1(a)')).toEqual(['3.1(a)', expect.any(String), 303000, 5000, 5270, 5270, 0]);
+    expect(g3.find((r) => r[0] === '6.1' && String(r[1]).startsWith('Paid in cash'))!.slice(3, 6)).toEqual([4550, 3270, 3270]);
+    const sales = rowsOf(await workbook((await get(`/gst/export/sales?period=${period}`).buffer().parse(binaryParser).expect(200)).body as Buffer), 'Sales register');
+    expect(sales.find((r) => r[1] === ids.noGst)![10]).toBe('No GST breakdown');
+    const purchases = rowsOf(await workbook((await get(`/gst/export/purchases?period=${period}`).buffer().parse(binaryParser).expect(200)).body as Buffer), 'Purchase register');
+    expect(purchases.slice(1).map((r) => r[12]).sort()).toEqual(['Blocked — s.17(5)', 'Eligible', 'Eligible', 'Not claimable — supplier GSTIN missing']);
+    await get(`/gst/export/purchases?period=${period}`, as(Role.MANAGER)).expect(403);
+    let downloads = 0;
+    for (let i = 0; i < 40 && downloads < 4; i += 1) {
+      downloads = await prisma.activityLog.count({ where: { companyId: A.id, action: 'DOWNLOAD', entityType: 'gst' } });
+      if (downloads < 4) await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(downloads).toBeGreaterThanOrEqual(4);
   });
 
   it('who may see it: owner, manager and accountant-type roles; not sales; never another company’s data', async () => {

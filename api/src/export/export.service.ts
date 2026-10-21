@@ -10,6 +10,17 @@ export interface ExportColumn {
   width?: number;
 }
 
+/** One sheet of a multi-sheet workbook (e.g. a GSTR-1 Offline Tool sheet). */
+export interface WorkbookSheet {
+  name: string;
+  /** Rows above the column headers (e.g. a summary block), written as they are. */
+  preamble?: (string | number)[][];
+  columns: ExportColumn[];
+  rows: (string | number | null)[][];
+  /** Zero-based columns holding rupee amounts: shown with two decimals. */
+  moneyColumns?: number[];
+}
+
 export interface ExportData {
   title: string;
   columns: ExportColumn[];
@@ -44,6 +55,24 @@ export class ExportService {
 
     const arrayBuffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(arrayBuffer);
+  }
+
+  /** Several sheets in one .xlsx — headers bold; money columns as numbers with two decimals. */
+  async toWorkbook(sheets: WorkbookSheet[]): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'AZAD EV POINT';
+    workbook.created = new Date();
+    for (const s of sheets) {
+      const sheet = workbook.addWorksheet(s.name.slice(0, 31));
+      for (const row of s.preamble ?? []) sheet.addRow(row).font = { bold: true };
+      const header = sheet.addRow(s.columns.map((c) => c.header));
+      header.font = { bold: true };
+      header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
+      s.columns.forEach((c, i) => { sheet.getColumn(i + 1).width = c.width ?? 18; });
+      for (const row of s.rows) sheet.addRow(row.map((v) => v ?? ''));
+      for (const i of s.moneyColumns ?? []) sheet.getColumn(i + 1).numFmt = '0.00';
+    }
+    return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
   toCsv(data: ExportData): Buffer {

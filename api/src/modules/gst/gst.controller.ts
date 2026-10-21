@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { gstPeriodQuerySchema, markGstFiledSchema, unlockGstFilingSchema, type GstPeriodQuery, type MarkGstFiledInput, type UnlockGstFilingInput } from '@azad/shared';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -6,6 +7,8 @@ import { Permissions } from '../../common/decorators/permissions.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { GstService } from './gst.service';
 import { GstFilingService } from './gst-filing.service';
+import { GstExportService, type GstFile } from './gst-export.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 /**
  * GST returns data for one month (`?period=YYYY-MM`): what GSTR-1 and GSTR-3B will carry, the documents behind
@@ -19,6 +22,7 @@ export class GstController {
   constructor(
     private readonly gst: GstService,
     private readonly filing: GstFilingService,
+    private readonly exports: GstExportService,
   ) {}
 
   @Get('overview')
@@ -84,4 +88,43 @@ export class GstController {
   unlock(@Body(new ZodValidationPipe(unlockGstFilingSchema)) dto: UnlockGstFilingInput, @CurrentUser('id') userId: string) {
     return this.filing.unlock(dto, userId);
   }
+
+  @AuditDownload('GSTR-1 Excel')
+  @Get('export/gstr1')
+  @Permissions('gst.view')
+  @ApiOperation({ summary: 'GSTR-1 as Excel in the GST Offline Tool sheet layout' })
+  async exportGstr1(@Query(new ZodValidationPipe(gstPeriodQuerySchema)) q: GstPeriodQuery, @Res() res: Response): Promise<void> {
+    send(res, await this.exports.gstr1(q.period));
+  }
+
+  @AuditDownload('GSTR-3B Excel')
+  @Get('export/gstr3b')
+  @Permissions('gst.view')
+  @ApiOperation({ summary: 'GSTR-3B summary as Excel' })
+  async exportGstr3b(@Query(new ZodValidationPipe(gstPeriodQuerySchema)) q: GstPeriodQuery, @Res() res: Response): Promise<void> {
+    send(res, await this.exports.gstr3b(q.period));
+  }
+
+  @AuditDownload('GST sales register')
+  @Get('export/sales')
+  @Permissions('gst.view')
+  @ApiOperation({ summary: 'Sales register (every document line with its GST) as Excel' })
+  async exportSales(@Query(new ZodValidationPipe(gstPeriodQuerySchema)) q: GstPeriodQuery, @Res() res: Response): Promise<void> {
+    send(res, await this.exports.salesRegister(q.period));
+  }
+
+  @AuditDownload('GST purchase register')
+  @Get('export/purchases')
+  @Permissions('gst.view', 'inventory.cost')
+  @ApiOperation({ summary: 'Purchase register (bills with GST and input credit) as Excel' })
+  async exportPurchases(@Query(new ZodValidationPipe(gstPeriodQuerySchema)) q: GstPeriodQuery, @Res() res: Response): Promise<void> {
+    send(res, await this.exports.purchaseRegister(q.period));
+  }
+}
+
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+function send(res: Response, file: GstFile): void {
+  res.setHeader('Content-Type', XLSX);
+  res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+  res.send(file.buffer);
 }
