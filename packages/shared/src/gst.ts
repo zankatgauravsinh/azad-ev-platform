@@ -218,3 +218,40 @@ export interface GstOverviewDto {
   gstr3b: Gstr3bDto;
   issues: { errors: number; warnings: number; info: number };
 }
+
+// ── Filing: a month's return marked filed on the portal ──────────────────────────────────────────────────
+
+export const GST_RETURN_TYPES = ['GSTR1', 'GSTR3B'] as const;
+export type GstReturnType = (typeof GST_RETURN_TYPES)[number];
+export const GST_RETURN_LABEL: Record<GstReturnType, string> = { GSTR1: 'GSTR-1', GSTR3B: 'GSTR-3B' };
+
+const periodField = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Use YYYY-MM');
+export const markGstFiledSchema = z.object({
+  period: periodField,
+  returnType: z.enum(GST_RETURN_TYPES),
+  /** The portal's acknowledgement reference number — 15 letters / digits; '' when not at hand. */
+  arn: z.string().trim().toUpperCase().regex(/^([A-Z0-9]{15})?$/, 'An ARN is 15 letters and digits').optional().transform((v) => v || undefined),
+  filedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'),
+  notes: z.string().trim().max(300).optional(),
+});
+export type MarkGstFiledInput = z.infer<typeof markGstFiledSchema>;
+
+export const unlockGstFilingSchema = z.object({
+  period: periodField,
+  returnType: z.enum(GST_RETURN_TYPES),
+  reason: z.string().trim().min(5, 'Give a reason of at least 5 characters').max(300),
+});
+export type UnlockGstFilingInput = z.infer<typeof unlockGstFilingSchema>;
+
+export interface GstFilingDto {
+  returnType: GstReturnType;
+  status: 'NOT_FILED' | 'FILED' | 'UNLOCKED';
+  arn: string | null;
+  filedOn: string | null;
+  filedBy: string | null;
+  notes: string | null;
+  unlockedAt: string | null;
+  unlockReason: string | null;
+  /** Figures that differ now from the return as filed (money as paise strings, counts as numbers). */
+  changesSinceFiling: { label: string; filed: string; now: string }[];
+}

@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { Role } from '@azad/shared';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { TEST_GSTIN } from './support/gst-setup';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
@@ -50,7 +51,8 @@ describe('Vendor bills, payments and purchase orders (e2e)', () => {
     app = await createE2eApp();
     prisma = app.get(PrismaService);
     A = await createTestCompany(app, 'Vpy', { roles: [Role.MANAGER, Role.ACCOUNTANT] });
-    vendorId = (await post('/vendors', { name: 'Comptech Motors', type: 'SCOOTER_SUPPLIER', creditDays: 30 }).expect(201)).body.id;
+    // A registered supplier: GST on its bills is claimable input credit (what the GST summary counts as paid).
+    vendorId = (await post('/vendors', { name: 'Comptech Motors', type: 'SCOOTER_SUPPLIER', creditDays: 30, gstNumber: TEST_GSTIN.buyerGujarat }).expect(201)).body.id;
     otherVendorId = (await post('/vendors', { name: 'Twin Motors', type: 'SCOOTER_SUPPLIER' }).expect(201)).body.id;
     variantId = (await post(`/inventory/models/${A.modelId}/variants`, { name: 'Max', colour: 'Red', exShowroomPrice: 13_000_000 }).expect(201)).body.id;
     categoryId = (await post('/finance/categories', { name: 'Spares' }).expect(201)).body.id;

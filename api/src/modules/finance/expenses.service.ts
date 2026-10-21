@@ -13,6 +13,7 @@ import {
   type SetExpenseStatusInput,
   type UpdateExpenseInput,
 } from '@azad/shared';
+import { GstFilingService } from '../gst/gst-filing.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
@@ -54,6 +55,7 @@ export class ExpensesService {
     private readonly closing: MonthlyClosingService,
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
     private readonly vendorBills: VendorBillsService,
+    private readonly gstFiling: GstFilingService,
   ) {}
 
   async list(query: ListExpensesQuery): Promise<Paginated<ExpenseDto>> {
@@ -83,6 +85,7 @@ export class ExpensesService {
     await this.assertNotScooterPurchase(category.name, expenseDate);
     const amount = BigInt(dto.amount);
     const gstAmount = BigInt(dto.gstAmount);
+    if (gstAmount > 0n) await this.gstFiling.assertOpen(expenseDate, 'GSTR3B', 'its input tax credit');
 
     const created = await this.prisma.$transaction(async (tx) => {
       const expenseNumber = await this.sequence.next('expense', tx);
@@ -118,6 +121,10 @@ export class ExpensesService {
     await this.closing.assertOpen(existing.expenseDate);
     if (dto.expenseDate) await this.closing.assertOpen(dto.expenseDate);
     await this.assertNotFuture(dto.expenseDate);
+    // A GST bill of a month whose GSTR-3B is filed: its input credit was claimed as it stands.
+    const touchesGst = dto.amount !== undefined || dto.gstAmount !== undefined || dto.expenseDate !== undefined || dto.vendorId !== undefined || dto.categoryId !== undefined || dto.itcEligible !== undefined;
+    if (touchesGst && existing.gstAmount > 0n) await this.gstFiling.assertOpen(existing.expenseDate, 'GSTR3B', 'this bill’s input tax credit');
+    if (touchesGst && (dto.gstAmount ?? 0) > 0 && dto.expenseDate) await this.gstFiling.assertOpen(dto.expenseDate, 'GSTR3B', 'its input tax credit');
     // Financial fields freeze once approved/paid so approved figures (and P&L /
     // vendor outstanding) can't be altered after the fact.
     if ((existing.status === 'APPROVED' || existing.paid) && (dto.amount !== undefined || dto.gstAmount !== undefined || dto.expenseDate !== undefined || dto.vendorId !== undefined)) {
@@ -181,6 +188,7 @@ export class ExpensesService {
   async remove(id: string, userId: string): Promise<void> {
     const existing = await this.getRowOrThrow(id);
     await this.closing.assertOpen(existing.expenseDate);
+    if (existing.gstAmount > 0n) await this.gstFiling.assertOpen(existing.expenseDate, 'GSTR3B', 'this bill’s input tax credit');
     const released = await this.prisma.$transaction(async (tx) => {
       await tx.expense.update({ where: { id }, data: { deletedAt: new Date(), updatedById: userId } });
       // What vendor payments applied to it stays with the vendor as an advance.

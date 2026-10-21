@@ -1,9 +1,11 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { gstPeriodQuerySchema, type GstPeriodQuery } from '@azad/shared';
+import { gstPeriodQuerySchema, markGstFiledSchema, unlockGstFilingSchema, type GstPeriodQuery, type MarkGstFiledInput, type UnlockGstFilingInput } from '@azad/shared';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { GstService } from './gst.service';
+import { GstFilingService } from './gst-filing.service';
 
 /**
  * GST returns data for one month (`?period=YYYY-MM`): what GSTR-1 and GSTR-3B will carry, the documents behind
@@ -14,7 +16,10 @@ import { GstService } from './gst.service';
 @ApiBearerAuth('access-token')
 @Controller('gst')
 export class GstController {
-  constructor(private readonly gst: GstService) {}
+  constructor(
+    private readonly gst: GstService,
+    private readonly filing: GstFilingService,
+  ) {}
 
   @Get('overview')
   @Permissions('gst.view')
@@ -57,5 +62,26 @@ export class GstController {
   @ApiOperation({ summary: 'What to fix before filing the month' })
   issues(@Query(new ZodValidationPipe(gstPeriodQuerySchema)) q: GstPeriodQuery) {
     return this.gst.issues(q.period);
+  }
+
+  @Get('filings')
+  @Permissions('gst.view')
+  @ApiOperation({ summary: 'GSTR-1 / GSTR-3B of the month: filed or not, ARN, and what changed since filing' })
+  filings(@Query(new ZodValidationPipe(gstPeriodQuerySchema)) q: GstPeriodQuery) {
+    return this.filing.list(q.period);
+  }
+
+  @Post('filings')
+  @Permissions('gst.manage')
+  @ApiOperation({ summary: 'Mark a return filed: its figures are frozen and the month’s documents locked' })
+  markFiled(@Body(new ZodValidationPipe(markGstFiledSchema)) dto: MarkGstFiledInput, @CurrentUser('id') userId: string) {
+    return this.filing.markFiled(dto, userId);
+  }
+
+  @Post('filings/unlock')
+  @Permissions('gst.manage')
+  @ApiOperation({ summary: 'Unlock a filed return (reason required)' })
+  unlock(@Body(new ZodValidationPipe(unlockGstFilingSchema)) dto: UnlockGstFilingInput, @CurrentUser('id') userId: string) {
+    return this.filing.unlock(dto, userId);
   }
 }

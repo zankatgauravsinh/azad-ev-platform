@@ -12,6 +12,7 @@ import {
   type MarkAccessoryPurchasePaidInput,
   type Paginated,
 } from '@azad/shared';
+import { GstFilingService } from '../gst/gst-filing.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
@@ -68,6 +69,7 @@ export class AccessoryPurchasesService {
     private readonly vendorPayments: VendorPaymentsService,
     private readonly vendorBills: VendorBillsService,
     private readonly receipts: PurchaseOrderReceiptsService,
+    private readonly gstFiling: GstFilingService,
   ) {}
 
   /** The GST rate to suggest per active accessory (its classification, else the accessory default in Settings). */
@@ -112,6 +114,7 @@ export class AccessoryPurchasesService {
     const now = new Date();
     const purchaseDate = calendarDay(dto.purchaseDate ?? now);
     if (dto.purchaseDate && isAfterBusinessToday(dto.purchaseDate, now, timeZone)) throw new BadRequestException('The bill date cannot be in the future');
+    await this.gstFiling.assertOpen(purchaseDate, 'GSTR3B', 'a purchase bill of that month');
     const paidAt = dto.payment ? this.paidAtOf(dto.payment.paidAt, purchaseDate, timeZone) : null;
 
     const order = dto.purchaseOrderId ? await this.prisma.purchaseOrder.findFirst({ where: { id: dto.purchaseOrderId }, select: { id: true, vendorId: true, poNumber: true } }) : null;
@@ -234,6 +237,7 @@ export class AccessoryPurchasesService {
     const row = await this.getRowOrThrow(id);
     if (row.status === 'CANCELLED') throw new ConflictException('This purchase is already cancelled');
     await this.closing.assertOpen(row.purchaseDate);
+    if (row.gstAmount > 0n) await this.gstFiling.assertOpen(row.purchaseDate, 'GSTR3B', 'this purchase bill’s input tax credit');
     if (row.paidAt) await this.closing.assertOpen(row.paidAt);
     const now = new Date();
 

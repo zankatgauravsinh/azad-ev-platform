@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { Role } from '@azad/shared';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { TEST_GSTIN } from './support/gst-setup';
 import { createE2eApp, E2E_HOOK_TIMEOUT } from './support/e2e-app';
 import { createTestCompany, purgeTestCompany, TestCompany } from './support/e2e-company';
 
@@ -34,7 +35,7 @@ describe('Accessory purchases (e2e)', () => {
     prisma = app.get(PrismaService);
     A = await createTestCompany(app, 'ApuA', { roles: [Role.MANAGER] });
     B = await createTestCompany(app, 'ApuB');
-    vendorId = (await http().post('/api/v1/vendors').set('Authorization', A.auth()).send({ name: 'Studds Distributor' }).expect(201)).body.id;
+    vendorId = (await http().post('/api/v1/vendors').set('Authorization', A.auth()).send({ name: 'Studds Distributor', gstNumber: TEST_GSTIN.buyerGujarat }).expect(201)).body.id; // registered: its GST is claimable input credit
     helmet = (await http().post('/api/v1/accessories').set('Authorization', A.auth()).send({ name: 'Helmet', sellPrice: 150000 }).expect(201)).body.id;
     guard = (await http().post('/api/v1/accessories').set('Authorization', A.auth()).send({ name: 'Leg guard', sellPrice: 50000 }).expect(201)).body.id;
     await http().post(`/api/v1/accessories/${helmet}/opening-stock`).set('Authorization', A.auth()).send({ quantity: 10, unitCost: 90000 }).expect(201);
@@ -115,7 +116,7 @@ describe('Accessory purchases (e2e)', () => {
   });
 
   it('purchase GST is input GST in the GST summary', async () => {
-    const live = await prisma.accessoryPurchase.aggregate({ where: { companyId: A.id, status: 'ACTIVE' }, _sum: { gstAmount: true } });
+    const live = await prisma.accessoryPurchase.aggregate({ where: { companyId: A.id, status: 'ACTIVE', vendor: { gstNumber: { not: null } } }, _sum: { gstAmount: true } }); // claimable: supplier GSTIN on record
     const gst = await http().get('/api/v1/finance/gst-summary').set('Authorization', A.auth()).expect(200);
     expect(gst.body.paid).toBe(String(live._sum.gstAmount));
   });
@@ -146,7 +147,7 @@ describe('Accessory purchases (e2e)', () => {
     expect(ledger.rows.some((r: { expenseNumber: string }) => r.expenseNumber === firstNumber)).toBe(false);
     const book = await http().get(`/api/v1/finance/cash-book?date=${day(0)}`).set('Authorization', A.auth()).expect(200);
     expect(book.body.rows.some((r: { label: string }) => r.label.startsWith(firstNumber))).toBe(false);
-    const live = await prisma.accessoryPurchase.aggregate({ where: { companyId: A.id, status: 'ACTIVE' }, _sum: { gstAmount: true } });
+    const live = await prisma.accessoryPurchase.aggregate({ where: { companyId: A.id, status: 'ACTIVE', vendor: { gstNumber: { not: null } } }, _sum: { gstAmount: true } }); // claimable: supplier GSTIN on record
     expect((await http().get('/api/v1/finance/gst-summary').set('Authorization', A.auth()).expect(200)).body.paid).toBe(String(live._sum.gstAmount));
   });
 

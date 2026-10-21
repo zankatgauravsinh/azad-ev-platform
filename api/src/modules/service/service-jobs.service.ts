@@ -29,6 +29,7 @@ import {
   type UpdateServiceJobInput,
 } from '@azad/shared';
 import { serviceBillGst } from './service-gst';
+import { GstFilingService } from '../gst/gst-filing.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { CustomerTimelineService } from '../customers/customer-timeline.service';
@@ -81,6 +82,7 @@ export class ServiceJobsService {
     private readonly pdf: ServicePdfService,
     private readonly pdfBrand: PdfBrandService,
     private readonly closing: MonthlyClosingService,
+    private readonly gstFiling?: GstFilingService,
   ) {}
 
   // ── PDF (repeatable; reads the persisted job) ──────────
@@ -441,6 +443,7 @@ export class ServiceJobsService {
   async applyBill(id: string, dto: ServiceBillInput, actor: Actor): Promise<ServiceJobDto> {
     const job = await this.load(id, actor);
     this.assertWritable(job);
+    if (job.billedAt) await this.gstFiling?.assertOpen(job.billedAt, 'GSTR1', `service bill ${job.code}`);
     const { partsTotal, labourTotal } = this.subtotals(job);
     const discount = BigInt(dto.discount);
     const rateBp = Math.round(dto.taxPercentage * 100);
@@ -527,6 +530,7 @@ export class ServiceJobsService {
   private async recompute(tx: Tx, id: string): Promise<void> {
     const job = await tx.serviceJob.findUniqueOrThrow({ where: { id }, include: { parts: true, labour: true } });
     const { partsTotal, labourTotal } = this.subtotals(job);
+    if (job.billedAt) await this.gstFiling?.assertOpen(job.billedAt, 'GSTR1', `service bill ${job.code}`);
     if (job.taxRateBp !== null) {
       // A billed job: its GST follows the parts and labour at the stored rate, for the stored buyer.
       const settings = await tx.companySetting.findFirst({ select: { gstStateCode: true } });

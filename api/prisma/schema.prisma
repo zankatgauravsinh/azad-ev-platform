@@ -2956,3 +2956,43 @@ model DocumentShareLink {
   @@index([companyId])
   @@index([docType, entityId])
 }
+
+// ─────────────────────────── GST returns filing ───────────────────────────
+
+enum GstReturnType {
+  GSTR1
+  GSTR3B
+}
+
+enum GstFilingStatus {
+  FILED
+  UNLOCKED
+}
+
+/// A month's GST return marked as filed on the GST portal. Its figures are frozen as filed; while FILED, the
+/// documents of that month that it reports can no longer be changed in the app (corrections then belong to a
+/// later month: a credit note, or an amendment). Unlocking needs a reason; every change is in the audit log.
+model GstReturnFiling {
+  id           String          @id @default(uuid())
+  companyId    String          @default("")
+  /// 'YYYY-MM'
+  period       String
+  returnType   GstReturnType
+  status       GstFilingStatus @default(FILED)
+  /// Acknowledgement reference number from the portal (optional).
+  arn          String?
+  filedOn      DateTime        @db.Date
+  filedById    String?
+  notes        String?
+  /// The return as filed (the GSTR-1 / GSTR-3B figures at the moment it was marked filed).
+  figures      Json
+  unlockedAt   DateTime?
+  unlockedById String?
+  unlockReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, period, returnType])
+  @@index([companyId])
+}

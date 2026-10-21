@@ -122,6 +122,7 @@ export const AUDIT_ENTITY_TYPES: Record<string, { label: string; route?: string;
   User: { label: 'User', route: 'users', viewPermission: 'staff.manage' },
   Role: { label: 'Role', route: 'roles', viewPermission: 'roles.manage' },
   AuditLog: { label: 'Audit log' },
+  GstReturn: { label: 'GST return', route: 'gst', viewPermission: 'gst.view' },
 };
 
 const ROUTE_LABEL: Record<string, string> = Object.fromEntries(

@@ -53,6 +53,8 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   'TaxClassification', 'TaxRate',
   // GST on sales (Stage C): component mapping + immutable snapshots, all carrying companyId.
   'TaxComponentMapping', 'TaxSnapshot', 'TaxSnapshotLine',
+  // GST returns marked filed (release 3.7).
+  'GstReturnFiling',
 ]);
 
 /**
