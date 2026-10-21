@@ -16,6 +16,9 @@ import { TenantContext } from '../../tenant/tenant-context.service';
 import { CustomerTimelineService } from '../customers/customer-timeline.service';
 import { SequenceService } from '../sales/sequence.service';
 import { warrantyInclude, technicianNames } from './warranty.include';
+import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
+import { ActivityLogService } from '../../activity-log/activity-log.service';
+import { ActivityAction } from '@azad/shared';
 
 const claimInclude = { warranty: { include: warrantyInclude } } satisfies Prisma.WarrantyClaimInclude;
 type ClaimRow = Prisma.WarrantyClaimGetPayload<{ include: typeof claimInclude }>;
@@ -52,6 +55,7 @@ export function toClaimDto(c: ClaimRow, names: Map<string, string>): WarrantyCla
 @Injectable()
 export class WarrantyClaimsService {
   constructor(
+    private readonly activityLog: ActivityLogService,
     private readonly prisma: PrismaService,
     private readonly tenant: TenantContext,
     private readonly sequence: SequenceService,
@@ -98,7 +102,7 @@ export class WarrantyClaimsService {
 
     const created = await this.prisma.$transaction(async (tx) => {
       const claimNumber = await this.sequence.next('claim', tx);
-      return tx.warrantyClaim.create({
+      const row = await tx.warrantyClaim.create({
         data: {
           companyId: company,
           claimNumber,
@@ -116,6 +120,8 @@ export class WarrantyClaimsService {
         },
         include: claimInclude,
       });
+      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.CREATE, entityType: 'WarrantyClaim', entityId: row.id, entityLabel: claimNumber, summary: `Raised claim ${claimNumber} on warranty ${warranty.warrantyNumber}: ${dto.complaint.slice(0, 140)}`, changes: createdFields({ complaint: row.complaint, diagnosis: row.diagnosis, claimCost: row.claimCost, manufacturerClaimAmount: row.manufacturerClaimAmount, dealerCost: row.dealerCost }), metadata: { warrantyId: dto.warrantyId } }, tx);
+      return row;
     });
 
     await this.timeline.record({
@@ -157,6 +163,8 @@ export class WarrantyClaimsService {
       if (dto.status === 'COMPLETED') {
         await tx.warranty.updateMany({ where: { id: existing.warrantyId, status: 'ACTIVE' }, data: { status: 'CLAIMED' } });
       }
+      const changes = diffFields(existing, u, ['status', 'diagnosis', 'claimCost', 'manufacturerClaimAmount', 'dealerCost']);
+      await this.activityLog.recordInTransaction({ actorId: userId, action: dto.status === 'APPROVED' ? ActivityAction.APPROVE : ActivityAction.STATUS_CHANGE, entityType: 'WarrantyClaim', entityId: id, entityLabel: existing.claimNumber, summary: `Claim ${existing.claimNumber} ${dto.status.toLowerCase()}${Object.keys(changes).length > 1 ? `: ${changesSummary(changes)}` : ''}`, changes, reason: dto.note ?? null }, tx);
       return u;
     });
     await this.timeline.record({

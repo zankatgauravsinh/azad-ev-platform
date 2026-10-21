@@ -58,11 +58,11 @@ describe('Audit trail (e2e)', () => {
     expect(out!.ip).toBeTruthy();
   });
 
-  it('a write that records nothing itself gets an automatic entry (route and id, never the body)', async () => {
-    const res = await http().post('/api/v1/finance/categories').set('Authorization', A.auth()).set('User-Agent', UA).send({ name: `Audit probe ${Date.now()}` }).expect(201);
-    const auto = (await entries({ source: 'AUTO' })).find((e) => e.entityId === res.body.id);
-    expect(auto).toMatchObject({ action: 'CREATE', entityType: 'finance', summary: 'POST /finance/categories', actorId: A.user().id, userAgent: UA });
-    expect(JSON.stringify(auto)).not.toContain('Audit probe');
+  it('every write route records its own entry: none of this suite fell back to an automatic one (the safety net is unit-tested)', async () => {
+    await http().post('/api/v1/finance/categories').set('Authorization', A.auth()).set('User-Agent', UA).send({ name: `Audit probe ${Date.now()}` }).expect(201);
+    await http().post('/api/v1/warranties/generate').set('Authorization', A.auth()).expect((r) => expect(r.status).toBeLessThan(300));
+    expect(await entries({ source: 'AUTO' })).toEqual([]);
+    expect((await entries({ entityType: 'ExpenseCategory' }))[0]).toMatchObject({ action: 'CREATE', userAgent: UA, actorId: A.user().id });
   });
 
   it('a route that writes its own entry gets no extra automatic one; @NoAudit routes get none', async () => {

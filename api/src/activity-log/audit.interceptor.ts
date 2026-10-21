@@ -1,4 +1,4 @@
-import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable, from } from 'rxjs';
 import { mergeMap } from 'rxjs/operators';
@@ -32,6 +32,8 @@ export function routeOf(routePath: string | undefined, url: string): { entityTyp
  */
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
+  private readonly logger = new Logger(AuditInterceptor.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly tenant: TenantContext,
@@ -57,8 +59,11 @@ export class AuditInterceptor implements NestInterceptor {
             const { entityType, path } = routeOf(request.route?.path, request.originalUrl ?? request.url);
             const params = Object.fromEntries(Object.entries(request.params ?? {}).filter(([, v]) => typeof v === 'string' && v.length <= 100));
             const created = body && typeof body === 'object' && typeof (body as { id?: unknown }).id === 'string' ? (body as { id: string }).id : null;
-            const entityId = [params.id, created].find((v): v is string => typeof v === 'string' && UUID.test(v)) ?? null;
+            // The record: an :id (or :bookingId…) parameter, else the id of what was created.
+            const entityId = [params.id, ...Object.values(params), created].find((v): v is string => typeof v === 'string' && UUID.test(v)) ?? null;
             const format = typeof request.query?.format === 'string' ? request.query.format : undefined;
+            // A route that records nothing of its own is a gap worth knowing about (downloads are expected here).
+            if (!download) this.logger.warn(`${request.method} /${path} wrote no audit entry of its own — recorded automatically`);
             await this.activityLog.record({
               action,
               source: download ? 'USER' : 'AUTO',

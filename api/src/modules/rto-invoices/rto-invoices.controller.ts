@@ -14,6 +14,7 @@ import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { RtoInvoicesService } from './rto-invoices.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 @ApiTags('RTO invoices')
 @ApiBearerAuth('access-token')
@@ -58,6 +59,7 @@ export class RtoInvoicesController {
     return this.rto.revise(id, dto, { id: user.id, role: user.role });
   }
 
+  @AuditDownload('RTO invoice')
   @Get(':id/pdf')
   @Permissions('rto.view')
   @ApiParam({ name: 'id', format: 'uuid' })

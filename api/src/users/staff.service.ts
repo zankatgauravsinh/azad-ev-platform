@@ -14,6 +14,7 @@ import {
 import { UsersRepository, type UserWithRole } from './users.repository';
 import { PasswordService } from '../auth/password.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import { changesSummary, createdFields, diffFields, type FieldChanges } from '../activity-log/audit-diff';
 
 export interface StaffActor {
   id: string;
@@ -67,7 +68,7 @@ export class StaffService {
       }
       throw e;
     }
-    await this.audit(actor, ActivityAction.CREATE, user, `Created staff ${user.name} (${user.role})`);
+    await this.audit(actor, ActivityAction.CREATE, user, `Created staff ${user.name} (${user.role})`, createdFields({ name: user.name, email: user.email, phone: user.phone, role: user.role }));
     return StaffService.toDto(user);
   }
 
@@ -120,7 +121,8 @@ export class StaffService {
     const updated = await this.repo.update(id, data);
 
     const roleChanged = resolved !== undefined && resolved.roleId !== target.roleId;
-    await this.audit(actor, ActivityAction.UPDATE, updated, roleChanged ? `Updated staff ${updated.name}; role → ${updated.role}` : `Updated staff ${updated.name}`);
+    const changes = diffFields(target, updated, ['name', 'phone', 'role', 'roleId']);
+    await this.audit(actor, ActivityAction.UPDATE, updated, roleChanged ? `Updated staff ${updated.name}; role ${target.role} → ${updated.role}` : `Updated staff ${updated.name}${Object.keys(changes).length ? `: ${changesSummary(changes)}` : ''}`, changes);
     return StaffService.toDto(updated);
   }
 
@@ -135,7 +137,7 @@ export class StaffService {
 
     // Deactivation also kills the refresh session; JwtStrategy already blocks inactive users per request.
     const updated = await this.repo.update(id, isActive ? { isActive: true, updatedById: actor.id } : { isActive: false, refreshTokenHash: null, updatedById: actor.id });
-    await this.audit(actor, ActivityAction.STATUS_CHANGE, updated, `${isActive ? 'Activated' : 'Deactivated'} staff ${updated.name}`);
+    await this.audit(actor, ActivityAction.STATUS_CHANGE, updated, `${isActive ? 'Activated' : 'Deactivated'} staff ${updated.name}`, { isActive: { from: target.isActive, to: isActive } });
     return StaffService.toDto(updated);
   }
 
@@ -200,9 +202,9 @@ export class StaffService {
     if (activeOwners <= 1) throw new BadRequestException(`Cannot ${verb} the last active owner`);
   }
 
-  private audit(actor: StaffActor, action: ActivityAction, user: User, summary: string): Promise<void> {
-    // Never logs passwordHash / refreshTokenHash — only id + human summary.
-    return this.activityLog.record({ actorId: actor.id, action, entityType: 'User', entityId: user.id, summary });
+  private audit(actor: StaffActor, action: ActivityAction, user: User, summary: string, changes?: FieldChanges): Promise<void> {
+    // Never logs passwordHash / refreshTokenHash (audit-diff skips them too).
+    return this.activityLog.record({ actorId: actor.id, action, entityType: 'User', entityId: user.id, entityLabel: user.email, summary, changes: changes ?? null });
   }
 
   /** Client-safe projection — never leaks passwordHash / refreshTokenHash. */

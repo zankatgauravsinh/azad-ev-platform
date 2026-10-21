@@ -24,6 +24,7 @@ import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { SequenceService } from '../sales/sequence.service';
 import { VendorBillsService, visibleBillKinds, type VendorBill } from '../vendor-payables/vendor-bills.service';
 import { costFreePaymentWhere } from '../vendor-payables/vendor-payments.service';
+import { changesSummary, diffFields } from '../../activity-log/audit-diff';
 
 type VendorRow = Prisma.VendorGetPayload<Record<string, never>>;
 interface VendorTotals {
@@ -308,7 +309,9 @@ export class VendorsService {
       if (dto.name && dto.name !== existing.name) await tx.inventoryUnit.updateMany({ where: { vendorId: id }, data: { supplier: row.name } });
       return row;
     });
-    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Vendor', entityId: id, summary: `Updated vendor ${updated.vendorNumber}` });
+    const changes = diffFields(existing, updated, ['name', 'status', 'type', 'contactPerson', 'mobile', 'altMobile', 'email', 'gstNumber', 'pan', 'address', 'city', 'state', 'creditDays', 'bankAccountName', 'bankAccountNumber', 'bankIfsc', 'bankName', 'upiId', 'notes']);
+    if (dto.defaultForScooters !== undefined) changes.defaultForScooters = { from: null, to: dto.defaultForScooters };
+    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Vendor', entityId: id, entityLabel: `${updated.vendorNumber} ${updated.name}`, summary: `Updated vendor ${updated.vendorNumber} ${updated.name}: ${changesSummary(changes) || 'nothing changed'}`, changes });
     return this.get(id, canSeeCost);
   }
 

@@ -108,6 +108,7 @@ export const AUDIT_ENTITY_TYPES: Record<string, { label: string; route?: string;
   VendorPayment: { label: 'Vendor payment', route: 'vendor-payments', viewPermission: 'vendors.view' },
   PurchaseOrder: { label: 'Purchase order', route: 'purchase-orders', viewPermission: 'vendors.view' },
   Expense: { label: 'Expense', route: 'expenses', viewPermission: 'expenses.view' },
+  ExpenseCategory: { label: 'Expense category', viewPermission: 'expenses.view' },
   RecurringExpense: { label: 'Recurring expense', viewPermission: 'expenses.view' },
   Income: { label: 'Income', route: 'income', viewPermission: 'income.view' },
   BankTransaction: { label: 'Bank transaction', route: 'bank-transactions', viewPermission: 'bank.view' },
@@ -120,6 +121,7 @@ export const AUDIT_ENTITY_TYPES: Record<string, { label: string; route?: string;
   TaxComponentMapping: { label: 'GST mapping', viewPermission: 'settings.view' },
   User: { label: 'User', route: 'users', viewPermission: 'staff.manage' },
   Role: { label: 'Role', route: 'roles', viewPermission: 'roles.manage' },
+  AuditLog: { label: 'Audit log' },
 };
 
 const ROUTE_LABEL: Record<string, string> = Object.fromEntries(

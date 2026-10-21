@@ -9,6 +9,11 @@ import {
 } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CustomerTimelineService } from './customer-timeline.service';
+import { ActivityLogService } from '../../activity-log/activity-log.service';
+import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
+
+const FOLLOW_UP_FIELDS = ['dueAt', 'priority', 'note', 'remindBeforeMinutes', 'assignedTo'] as const;
+const followUpSnapshot = (f: { dueAt: Date; priority: string; note: string | null; remindBeforeMinutes: number | null; assignedTo?: { name: string } | null }): Record<(typeof FOLLOW_UP_FIELDS)[number], unknown> => ({ dueAt: f.dueAt, priority: f.priority, note: f.note, remindBeforeMinutes: f.remindBeforeMinutes, assignedTo: f.assignedTo?.name ?? null });
 
 type FollowUpWithAssignee = CustomerFollowUp & {
   assignedTo: { id: string; name: string; role: string } | null;
@@ -23,6 +28,7 @@ export class FollowUpsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly timeline: CustomerTimelineService,
+    private readonly activityLog: ActivityLogService,
   ) {}
 
   async create(customerId: string, dto: CreateFollowUpInput, userId: string): Promise<CustomerFollowUpDto> {
@@ -52,6 +58,7 @@ export class FollowUpsService {
         },
         tx,
       );
+      await this.activityLog.recordInTransaction({ actorId: userId, action: 'CREATE', entityType: 'Customer', entityId: customerId, summary: `Scheduled a follow-up for ${created.dueAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}${created.note ? `: ${created.note.slice(0, 140)}` : ''}`, changes: createdFields(followUpSnapshot(created)), metadata: { followUpId: created.id } }, tx);
       return created;
     });
     return this.toDto(followUp);
@@ -72,7 +79,7 @@ export class FollowUpsService {
     dto: UpdateFollowUpInput,
     userId: string,
   ): Promise<CustomerFollowUpDto> {
-    await this.getOrThrow(customerId, id);
+    const before = await this.getOrThrow(customerId, id);
     const updated = await this.prisma.customerFollowUp.update({
       where: { id },
       data: {
@@ -85,6 +92,8 @@ export class FollowUpsService {
       },
       include: assigneeInclude,
     });
+    const changes = diffFields(followUpSnapshot(before), followUpSnapshot(updated), FOLLOW_UP_FIELDS);
+    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'Customer', entityId: customerId, summary: `Changed a follow-up: ${changesSummary(changes) || 'nothing changed'}`, changes, metadata: { followUpId: id } });
     return this.toDto(updated);
   }
 
@@ -108,18 +117,20 @@ export class FollowUpsService {
         },
         tx,
       );
+      await this.activityLog.recordInTransaction({ actorId: userId, action: 'STATUS_CHANGE', entityType: 'Customer', entityId: customerId, summary: `Completed a follow-up${existing.note ? `: ${existing.note.slice(0, 140)}` : ''}`, changes: { status: { from: existing.status, to: 'COMPLETED' } }, metadata: { followUpId: id } }, tx);
       return done;
     });
     return this.toDto(updated);
   }
 
   async cancel(customerId: string, id: string, userId: string): Promise<CustomerFollowUpDto> {
-    await this.getOrThrow(customerId, id);
+    const existing = await this.getOrThrow(customerId, id);
     const updated = await this.prisma.customerFollowUp.update({
       where: { id },
       data: { status: 'CANCELLED', updatedById: userId },
       include: assigneeInclude,
     });
+    await this.activityLog.record({ actorId: userId, action: 'CANCEL', entityType: 'Customer', entityId: customerId, summary: `Cancelled a follow-up${existing.note ? `: ${existing.note.slice(0, 140)}` : ''}`, changes: { status: { from: existing.status, to: 'CANCELLED' } }, metadata: { followUpId: id } });
     return this.toDto(updated);
   }
 

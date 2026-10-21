@@ -1,6 +1,7 @@
 import { FollowUpsService } from './follow-ups.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { CustomerTimelineService } from './customer-timeline.service';
+import type { ActivityLogService } from '../../activity-log/activity-log.service';
 
 const hoursFromNow = (h: number): Date => new Date(Date.now() + h * 3600 * 1000);
 
@@ -13,6 +14,7 @@ describe('FollowUpsService.reminders (reminder generation)', () => {
     service = new FollowUpsService(
       prisma as unknown as PrismaService,
       {} as CustomerTimelineService,
+      { record: jest.fn(), recordInTransaction: jest.fn() } as unknown as ActivityLogService,
     );
   });
 

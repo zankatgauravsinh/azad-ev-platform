@@ -25,6 +25,9 @@ import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.service';
 import { CustomersRepository } from './customers.repository';
 import { CustomerTimelineService } from './customer-timeline.service';
+import { changesSummary, diffFields } from '../../activity-log/audit-diff';
+
+const CUSTOMER_AUDIT_FIELDS = ['name', 'phone', 'altPhone', 'email', 'address', 'village', 'tehsil', 'district', 'city', 'state', 'pin', 'gstStateCode', 'aadhaarNumber', 'panNumber', 'gstin', 'occupation', 'dateOfBirth', 'gender', 'source', 'lostReason', 'preferredModelId', 'preferredColour', 'preferredFinanceOption', 'assignedToId'] as const;
 
 interface UploadedFile {
   buffer: Buffer;
@@ -138,12 +141,16 @@ export class CustomersService {
       await this.assertPhoneAvailable(dto.phone);
     }
     const customer = await this.phoneConflict(dto.phone ?? existing.phone, () => this.repo.update(id, { ...this.toWriteData(dto), updatedById: userId }));
+    // Aadhaar is recorded masked (audit-diff).
+    const changes = diffFields(existing as unknown as Record<string, unknown>, customer as unknown as Record<string, unknown>, CUSTOMER_AUDIT_FIELDS);
     await this.activityLog.record({
       actorId: userId,
       action: ActivityAction.UPDATE,
       entityType: 'Customer',
       entityId: id,
-      summary: `Updated customer ${customer.name}`,
+      entityLabel: customer.name,
+      summary: `Updated customer ${customer.name}: ${changesSummary(changes) || 'nothing changed'}`,
+      changes,
     });
     return customer;
   }
@@ -196,8 +203,8 @@ export class CustomersService {
   }
 
   async logInteraction(id: string, dto: LogInteractionInput, userId: string) {
-    await this.getById(id);
-    return this.timeline.record({
+    const customer = await this.getById(id);
+    const entry = await this.timeline.record({
       customerId: id,
       type: dto.type,
       title: MANUAL_EVENT_TITLES[dto.type] ?? dto.type,
@@ -205,6 +212,8 @@ export class CustomersService {
       occurredAt: dto.occurredAt,
       actorId: userId,
     });
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'Customer', entityId: id, entityLabel: customer.name, summary: `Logged ${(MANUAL_EVENT_TITLES[dto.type] ?? dto.type).toLowerCase()} with ${customer.name}${dto.note ? `: ${dto.note.slice(0, 140)}` : ''}`, metadata: { type: dto.type, occurredAt: dto.occurredAt ? new Date(dto.occurredAt).toISOString() : null } });
+    return entry;
   }
 
   getTimeline(id: string, type?: string) {

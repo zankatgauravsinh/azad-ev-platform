@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { CustomerEventType, Role, type CustomerNoteDto, type CustomerNoteRevisionDto } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CustomerTimelineService } from './customer-timeline.service';
+import { ActivityLogService } from '../../activity-log/activity-log.service';
 
 const authorInclude = {
   author: { select: { id: true, name: true, role: true } },
@@ -15,6 +16,7 @@ export class NotesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly timeline: CustomerTimelineService,
+    private readonly activityLog: ActivityLogService,
   ) {}
 
   async create(customerId: string, body: string, userId: string): Promise<CustomerNoteDto> {
@@ -35,6 +37,7 @@ export class NotesService {
         },
         tx,
       );
+      await this.activityLog.recordInTransaction({ actorId: userId, action: 'CREATE', entityType: 'Customer', entityId: customerId, summary: `Added a note: ${body.slice(0, 140)}`, changes: { note: { from: null, to: body } }, metadata: { noteId: created.id } }, tx);
       return created;
     });
     return this.toDto(note);
@@ -58,11 +61,13 @@ export class NotesService {
       await tx.customerNoteRevision.create({
         data: { noteId: id, body: existing.body, editedById: existing.updatedById ?? existing.authorId },
       });
-      return tx.customerNote.update({
+      const row = await tx.customerNote.update({
         where: { id },
         data: { body, editCount: { increment: 1 }, updatedById: userId },
         include: authorInclude,
       });
+      await this.activityLog.recordInTransaction({ actorId: userId, action: 'UPDATE', entityType: 'Customer', entityId: customerId, summary: `Edited a note: ${body.slice(0, 140)}`, changes: { note: { from: existing.body, to: body } }, metadata: { noteId: id } }, tx);
+      return row;
     });
     return this.toDto(updated);
   }
@@ -86,7 +91,11 @@ export class NotesService {
     if (role !== Role.OWNER && role !== Role.MANAGER && note.authorId !== userId) {
       throw new ForbiddenException('You can only delete your own notes');
     }
-    await this.prisma.customerNote.delete({ where: { id } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.customerNote.delete({ where: { id } });
+      // The note's text is kept here: the note itself (and its revisions) are gone.
+      await this.activityLog.recordInTransaction({ actorId: userId, action: 'DELETE', entityType: 'Customer', entityId: customerId, summary: `Deleted a note by ${note.author?.name ?? 'someone'}: ${note.body.slice(0, 140)}`, changes: { note: { from: note.body, to: null } }, metadata: { noteId: id } }, tx);
+    });
   }
 
   private async getOrThrow(customerId: string, id: string): Promise<NoteWithAuthor> {

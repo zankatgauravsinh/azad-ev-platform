@@ -18,6 +18,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PermissionResolver, effectivePermissions } from '../../common/rbac/permission-resolver.service';
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request';
 import { AccessorySalesService } from './accessory-sales.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 @ApiTags('Accessory sales')
 @ApiBearerAuth('access-token')
@@ -55,6 +56,7 @@ export class AccessorySalesController {
     return this.sales.getById(id, await this.canSeeCost(req));
   }
 
+  @AuditDownload('Accessory invoice')
   @Get(':id/pdf')
   @Permissions('accessories.view')
   @ApiParam({ name: 'id', format: 'uuid' })

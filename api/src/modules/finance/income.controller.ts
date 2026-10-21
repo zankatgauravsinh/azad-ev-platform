@@ -8,6 +8,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { IncomeService } from './income.service';
 import { FinancePdfService } from './finance-pdf.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 @ApiTags('Finance · Income')
 @ApiBearerAuth('access-token')
@@ -33,6 +34,7 @@ export class IncomeController {
     return this.income.create(dto, userId);
   }
 
+  @AuditDownload('Income receipt')
   @Get(':id/receipt.pdf')
   @ApiParam({ name: 'id', format: 'uuid' })
   async receipt(@Param('id') id: string, @Res() res: Response): Promise<void> {

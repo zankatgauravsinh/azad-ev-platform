@@ -2,12 +2,15 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DEFAULT_EXPENSE_CATEGORIES, type CreateExpenseCategoryInput, type ExpenseCategoryDto, type UpdateExpenseCategoryInput } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantContext } from '../../tenant/tenant-context.service';
+import { changesSummary, diffFields } from '../../activity-log/audit-diff';
+import { ActivityLogService } from '../../activity-log/activity-log.service';
 
 @Injectable()
 export class ExpenseCategoriesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenant: TenantContext,
+    private readonly activityLog: ActivityLogService,
   ) {}
 
   /** Seed the 15 standard categories for the company on first use (idempotent). */
@@ -35,6 +38,7 @@ export class ExpenseCategoriesService {
     const exists = await this.prisma.expenseCategory.findFirst({ where: { name: { equals: dto.name, mode: 'insensitive' } } });
     if (exists) throw new BadRequestException('A category with this name already exists');
     const created = await this.prisma.expenseCategory.create({ data: { companyId: company, name: dto.name, createdById: userId } });
+    await this.activityLog.record({ actorId: userId, action: 'CREATE', entityType: 'ExpenseCategory', entityId: created.id, entityLabel: created.name, summary: `Added expense category ${created.name}`, changes: { name: { from: null, to: created.name } } });
     return { id: created.id, name: created.name, isSystem: created.isSystem, active: created.active, expenseCount: 0 };
   }
 
@@ -46,6 +50,8 @@ export class ExpenseCategoriesService {
       data: { name: dto.name ?? found.name, active: dto.active ?? found.active, updatedById: userId },
       include: { _count: { select: { expenses: true } } },
     });
+    const changes = diffFields(found, updated, ['name', 'active']);
+    await this.activityLog.record({ actorId: userId, action: 'UPDATE', entityType: 'ExpenseCategory', entityId: id, entityLabel: updated.name, summary: `Updated expense category ${updated.name}: ${changesSummary(changes) || 'nothing changed'}`, changes });
     return { id: updated.id, name: updated.name, isSystem: updated.isSystem, active: updated.active, expenseCount: updated._count.expenses };
   }
 }

@@ -18,6 +18,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { DeliveryService } from './delivery.service';
 import { DeliveryPdfService } from './delivery-pdf.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 interface MulterFile {
   buffer: Buffer;
@@ -57,6 +58,7 @@ export class DeliveryController {
     return this.delivery.detail(bookingId);
   }
 
+  @AuditDownload('Delivery note')
   @Get(':bookingId/note.pdf')
   @Permissions('delivery.view')
   @ApiParam({ name: 'bookingId', format: 'uuid' })

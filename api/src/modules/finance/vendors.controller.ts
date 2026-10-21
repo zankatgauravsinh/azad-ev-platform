@@ -22,6 +22,7 @@ import { PermissionResolver, effectivePermissions } from '../../common/rbac/perm
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request';
 import { VendorsService } from './vendors.service';
 import { FinancePdfService } from './finance-pdf.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 @ApiTags('Finance · Vendors')
 @ApiBearerAuth('access-token')
@@ -73,6 +74,7 @@ export class VendorsController {
     return this.vendors.statement(id, query, await this.canSeeCost(req));
   }
 
+  @AuditDownload('Vendor statement')
   @Get(':id/statement.pdf')
   @ApiParam({ name: 'id', format: 'uuid' })
   async statementPdf(@Param('id') id: string, @Query(new ZodValidationPipe(vendorStatementQuerySchema)) query: VendorStatementQuery, @Req() req: AuthenticatedRequest, @Res() res: Response): Promise<void> {
@@ -90,6 +92,7 @@ export class VendorsController {
     return this.vendors.ledger(id, await this.canSeeCost(req));
   }
 
+  @AuditDownload('Vendor ledger')
   @Get(':id/ledger.pdf')
   @ApiParam({ name: 'id', format: 'uuid' })
   async ledgerPdf(@Param('id') id: string, @Req() req: AuthenticatedRequest, @Res() res: Response): Promise<void> {

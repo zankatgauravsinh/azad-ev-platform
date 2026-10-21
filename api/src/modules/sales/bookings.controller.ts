@@ -25,6 +25,7 @@ import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { BookingsService } from './bookings.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 @ApiTags('Bookings')
 @ApiBearerAuth('access-token')
@@ -142,6 +143,7 @@ export class BookingsController {
     return this.bookings.generateInvoice(id, userId);
   }
 
+  @AuditDownload('Booking confirmation')
   @Get(':id/confirmation/pdf')
   @Permissions('bookings.view')
   @ApiParam({ name: 'id', format: 'uuid' })
@@ -153,6 +155,7 @@ export class BookingsController {
     res.send(buffer);
   }
 
+  @AuditDownload('Tax invoice')
   @Get(':id/invoice/pdf')
   @Permissions('bookings.view')
   @ApiParam({ name: 'id', format: 'uuid' })

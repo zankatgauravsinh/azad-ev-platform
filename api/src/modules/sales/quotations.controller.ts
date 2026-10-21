@@ -17,6 +17,7 @@ import { Permissions } from '../../common/decorators/permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { QuotationsService } from './quotations.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 @ApiTags('Quotations')
 @ApiBearerAuth('access-token')
@@ -48,6 +49,7 @@ export class QuotationsController {
     return this.quotations.getById(id);
   }
 
+  @AuditDownload('Quotation')
   @Get(':id/pdf')
   @Permissions('quotations.view')
   @ApiParam({ name: 'id', format: 'uuid' })

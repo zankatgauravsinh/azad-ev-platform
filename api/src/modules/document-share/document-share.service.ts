@@ -69,7 +69,7 @@ export class DocumentShareService {
     const template = settings?.[WHATSAPP_MESSAGE_FIELD[dto.docType]] || DEFAULT_WHATSAPP_MESSAGES[dto.docType];
     const message = renderWhatsAppMessage(template, { ...subject.values, business: settings?.businessName ?? '', link: url, expires: day(expiresAt, timeZone) });
 
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.EXPORT, entityType: 'DocumentShareLink', entityId: dto.entityId, summary: `Shared ${subject.title} with ${subject.customerName} (link valid ${SHARE_LINK_DAYS} days)` });
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.EXPORT, entityType: 'DocumentShareLink', entityId: dto.entityId, entityLabel: subject.title, summary: `Shared ${subject.title} with ${subject.customerName} on WhatsApp (link valid ${SHARE_LINK_DAYS} days)`, metadata: { docType: dto.docType, phone: subject.phone, expiresAt: expiresAt.toISOString() } });
     return { docType: dto.docType, title: subject.title, url, expiresAt: expiresAt.toISOString(), customerName: subject.customerName, phone: subject.phone, whatsAppPhone: toWhatsAppPhone(subject.phone), message };
   }
 
@@ -81,7 +81,9 @@ export class DocumentShareService {
     if (link.expiresAt < new Date()) throw new GoneException('This link has expired — ask the showroom to send it again');
     return this.tenant.runWith(link.companyId, async () => {
       const pdf = await this.render(link.docType, link.entityId);
-      await this.prisma.documentShareLink.update({ where: { id: link.id }, data: { openCount: { increment: 1 }, lastOpenedAt: new Date() } });
+      const opened = await this.prisma.documentShareLink.update({ where: { id: link.id }, data: { openCount: { increment: 1 }, lastOpenedAt: new Date() } });
+      // Each open by the customer, with the IP and device it came from (the link itself is the only identity).
+      await this.activityLog.record({ action: ActivityAction.SHARE_OPEN, source: 'PUBLIC', companyId: link.companyId, entityType: 'DocumentShareLink', entityId: link.entityId, entityLabel: DOCUMENT_SHARE_LABEL[link.docType], summary: `A customer opened the shared ${DOCUMENT_SHARE_LABEL[link.docType].toLowerCase()} (open #${opened.openCount})`, metadata: { docType: link.docType, linkId: link.id, openCount: opened.openCount } });
       return pdf;
     });
   }

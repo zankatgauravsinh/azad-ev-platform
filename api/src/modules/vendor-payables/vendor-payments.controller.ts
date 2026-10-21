@@ -20,6 +20,7 @@ import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request';
 import { FinancePdfService } from '../finance/finance-pdf.service';
 import { VendorPaymentsService } from './vendor-payments.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 /**
  * Payments to vendors. Reading needs vendors.view, paying vendors.manage. Scooter and accessory-purchase bills are
@@ -53,6 +54,7 @@ export class VendorPaymentsController {
     return this.payments.get(id, await this.canSeeCost(req));
   }
 
+  @AuditDownload('Vendor payment voucher')
   @Get(':id/voucher.pdf')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Payment voucher PDF' })

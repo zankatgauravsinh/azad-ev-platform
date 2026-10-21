@@ -58,11 +58,17 @@ describe('Audit log (e2e)', () => {
   });
 
   it('filters: action, record type (with its automatic entries), person, text, date range', async () => {
-    const auto = (await http().post('/api/v1/finance/categories').set('Authorization', A.auth()).send({ name: `Audit filter ${Date.now()}` }).expect(201)).body.id;
+    await http().get(`/api/v1/vendors/${vendorId}/ledger.pdf`).set('Authorization', A.auth()).buffer().expect(200); // a download, filed under the route "vendors"
     expect((await get('/audit-log?action=LOGIN').expect(200)).body.data.every((e: { action: string }) => e.action === 'LOGIN')).toBe(true);
     const vendors = (await get('/audit-log?entityType=Vendor').expect(200)).body.data;
     expect(vendors.map((e: { entityId: string }) => e.entityId)).toContain(vendorId);
-    expect((await get('/audit-log?entityType=CashBook').expect(200)).body.data.map((e: { entityId: string }) => e.entityId)).toContain(auto); // AUTO entries filed under "finance"
+    // The record type includes entries filed under its route (downloads, automatic entries): wait for the download's.
+    let types: string[] = [];
+    for (let i = 0; i < 40 && !types.includes('vendors'); i += 1) {
+      types = (await get(`/audit-log?entityType=Vendor&entityId=${vendorId}`).expect(200)).body.data.map((e: { entityType: string }) => e.entityType);
+      if (!types.includes('vendors')) await new Promise((r) => setTimeout(r, 25));
+    }
+    expect(types).toEqual(expect.arrayContaining(['Vendor', 'vendors']));
     const mine = (await get(`/audit-log?actorId=${A.user(Role.SALES_EXECUTIVE).id}`).expect(200)).body.data;
     expect(mine.length).toBeGreaterThan(0);
     expect(mine.every((e: { actor: { id: string } }) => e.actor.id === A.user(Role.SALES_EXECUTIVE).id)).toBe(true);

@@ -23,6 +23,7 @@ import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request';
 import { FinancePdfService } from '../finance/finance-pdf.service';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 interface MulterFile {
   buffer: Buffer;
@@ -69,6 +70,7 @@ export class PurchaseOrdersController {
     return this.orders.get(id);
   }
 
+  @AuditDownload('Purchase order')
   @Get(':id/pdf')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'The purchase order as a PDF to send to the vendor' })

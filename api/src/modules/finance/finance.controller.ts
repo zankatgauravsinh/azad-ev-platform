@@ -34,6 +34,7 @@ import { FinanceDashboardService } from './finance-dashboard.service';
 import { FinancePdfService } from './finance-pdf.service';
 import { RecurringExpensesService } from './recurring-expenses.service';
 import { MonthlyClosingService } from './monthly-closing.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 @ApiTags('Finance')
 @ApiBearerAuth('access-token')
@@ -82,6 +83,7 @@ export class FinanceController {
     return this.cashbook.cashBook(query.date ?? new Date());
   }
 
+  @AuditDownload('Cash book')
   @Get('cash-book/pdf')
   async cashBookPdf(@Query(new ZodValidationPipe(cashBookQuerySchema)) query: CashBookQuery, @Res() res: Response): Promise<void> {
     const [cb, brand] = await Promise.all([this.cashbook.cashBook(query.date ?? new Date()), this.brand.resolve()]);

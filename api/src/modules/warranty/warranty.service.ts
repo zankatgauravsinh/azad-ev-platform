@@ -28,6 +28,11 @@ import { BookingsService, type DeliveredVehicle } from '../sales/bookings.servic
 import { addMonths, cardCoverage, componentMonthsOf, coverageLabel, daysBetween, extrasOf, normaliseCoverage, periodOf, readExtras, withMonths, type ComponentMonths } from './warranty.helpers';
 import { warrantyInclude, technicianNames, type WarrantyRow } from './warranty.include';
 import { toClaimDto } from './warranty-claims.service';
+import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
+
+/** "Motor 36 mo; Battery 60 mo; Charger not covered" — a warranty card's lines for the audit trail. */
+const coverageText = (lines: { label?: string; item: string; covered: boolean; months?: number | null }[]): string =>
+  lines.map((l) => `${l.label ?? l.item} ${l.covered ? `${l.months ?? '—'} mo` : 'not covered'}`).join('; ');
 
 @Injectable()
 export class WarrantyService implements OnModuleInit {
@@ -51,7 +56,7 @@ export class WarrantyService implements OnModuleInit {
    */
   async issueOnDelivery(d: DeliveredVehicle): Promise<void> {
     if (await this.prisma.warranty.findFirst({ where: { unitId: d.unitId, status: { not: 'CANCELLED' } }, select: { id: true } })) return;
-    await this.create({ unitId: d.unitId, customerId: d.customerId, bookingId: d.bookingId, saleId: d.saleId, purchaseDate: d.deliveredAt }, d.userId);
+    await this.create({ unitId: d.unitId, customerId: d.customerId, bookingId: d.bookingId, saleId: d.saleId, purchaseDate: d.deliveredAt }, d.userId, 'delivery');
   }
 
   // ── Reads ──────────────────────────────────────────────
@@ -161,7 +166,8 @@ export class WarrantyService implements OnModuleInit {
   }
 
   // ── Mutations ──────────────────────────────────────────
-  async create(dto: CreateWarrantyInput, userId: string): Promise<WarrantyDetailDto> {
+  /** `trigger`: issued by hand, automatically when the vehicle was delivered, or by the backfill of missing cards. */
+  async create(dto: CreateWarrantyInput, userId: string, trigger: 'manual' | 'delivery' | 'backfill' = 'manual'): Promise<WarrantyDetailDto> {
     const company = this.tenant.requireCompanyId();
     const unit = await this.prisma.inventoryUnit.findFirst({
       where: { id: dto.unitId },
@@ -222,6 +228,12 @@ export class WarrantyService implements OnModuleInit {
         },
       });
       await tx.freeService.createMany({ data: this.freeServiceSeed(company, warranty.id, startDate, settings) });
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.CREATE, source: trigger === 'manual' ? 'USER' : 'SYSTEM', entityType: 'Warranty', entityId: warranty.id, entityLabel: warrantyNumber,
+        summary: `Issued warranty ${warrantyNumber}: ${periodMonths} months from ${startDate.toISOString().slice(0, 10)}${trigger === 'delivery' ? ' — on delivery' : trigger === 'backfill' ? ' — missing card generated' : ''}`,
+        changes: createdFields({ startDate, endDate, periodMonths, coverage: coverageText(coverage), motorNumber: warranty.motorNumber, batteryNumber: warranty.batteryNumber, invoiceNumber: warranty.invoiceNumber }),
+        metadata: { unitId: dto.unitId, bookingId: warranty.bookingId, trigger },
+      }, tx);
       return warranty;
     });
 
@@ -247,12 +259,13 @@ export class WarrantyService implements OnModuleInit {
     let created = 0;
     for (const b of delivered) {
       try {
-        await this.create({ unitId: b.unitId, bookingId: b.id }, userId);
+        await this.create({ unitId: b.unitId, bookingId: b.id }, userId, 'backfill');
         created += 1;
       } catch {
         // Another warranty was created concurrently, or the unit is ineligible — skip.
       }
     }
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.CREATE, entityType: 'Warranty', summary: delivered.length ? `Generated missing warranty cards: ${created} of ${delivered.length} delivered vehicles` : 'Checked for delivered vehicles without a warranty card — none missing', metadata: { checked: delivered.length, created } });
     return { created };
   }
 
@@ -270,8 +283,10 @@ export class WarrantyService implements OnModuleInit {
     if (dto.dealerNotes !== undefined) data.dealerNotes = dto.dealerNotes;
     if (dto.customerNotes !== undefined) data.customerNotes = dto.customerNotes;
     if (dto.status) data.status = dto.status;
-    await this.prisma.warranty.update({ where: { id }, data });
-    void warranty;
+    const after = await this.prisma.warranty.update({ where: { id }, data });
+    const snap = (w: typeof after) => ({ status: w.status, dealerNotes: w.dealerNotes, customerNotes: w.customerNotes, coverage: coverageText(this.readCoverage(w.coverage)) });
+    const changes = diffFields(snap(warranty), snap(after), ['status', 'dealerNotes', 'customerNotes', 'coverage']);
+    await this.activityLog.record({ actorId: userId, action: dto.status && dto.status !== warranty.status ? ActivityAction.STATUS_CHANGE : ActivityAction.UPDATE, entityType: 'Warranty', entityId: id, entityLabel: warranty.warrantyNumber, summary: `Updated warranty ${warranty.warrantyNumber}: ${Object.keys(changes).join(', ') || 'nothing'} changed`, changes });
     return this.detail(id);
   }
 
@@ -322,6 +337,14 @@ export class WarrantyService implements OnModuleInit {
           action: ActivityAction.UPDATE,
           entityType: 'Warranty',
           entityId: id,
+          entityLabel: warranty.warrantyNumber,
+          reason: dto.reason ?? null,
+          changes: {
+            ...Object.fromEntries(WARRANTY_MONTH_COMPONENTS.filter((c) => before[c] !== dto.months[c]).map((c) => [`${c.toLowerCase()}Months`, { from: before[c] ?? null, to: dto.months[c] }])),
+            ...(listed(extras) !== listed(extrasBefore) ? { extraItems: { from: listed(extrasBefore), to: listed(extras) } } : {}),
+            ...(periodMonths !== warranty.periodMonths ? { periodMonths: { from: warranty.periodMonths, to: periodMonths } } : {}),
+            ...(endDate.getTime() !== warranty.endDate.getTime() ? { endDate: { from: warranty.endDate.toISOString(), to: endDate.toISOString() } } : {}),
+          },
           summary: `Regenerated warranty ${warranty.warrantyNumber}${changes.length ? `: ${changes.join('; ')}` : ' as motor, battery, controller, charger and extra items'}${dto.reason ? ` — ${dto.reason}` : ''}`,
           metadata: { before, after: dto.months, extras: { from: extrasBefore, to: extras }, periodMonths: { from: warranty.periodMonths, to: periodMonths } },
         },
@@ -332,8 +355,11 @@ export class WarrantyService implements OnModuleInit {
   }
 
   async cancel(id: string, userId: string): Promise<WarrantyDetailDto> {
-    await this.getRowOrThrow(id);
-    await this.prisma.warranty.update({ where: { id }, data: { status: 'CANCELLED', updatedById: userId } });
+    const warranty = await this.getRowOrThrow(id);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.warranty.update({ where: { id }, data: { status: 'CANCELLED', updatedById: userId } });
+      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.CANCEL, entityType: 'Warranty', entityId: id, entityLabel: warranty.warrantyNumber, summary: `Cancelled warranty ${warranty.warrantyNumber}`, changes: { status: { from: warranty.status, to: 'CANCELLED' } } }, tx);
+    });
     return this.detail(id);
   }
 
@@ -349,8 +375,12 @@ export class WarrantyService implements OnModuleInit {
         remarks: dto.remarks ?? free.remarks,
       },
     });
-    void userId;
     const names = await technicianNames(this.prisma, [updated.technicianId]);
+    const before = await technicianNames(this.prisma, [free.technicianId]);
+    const snap = (f: typeof free, n: Map<string, string>) => ({ status: f.status, completedDate: f.completedDate, technician: f.technicianId ? (n.get(f.technicianId) ?? f.technicianId) : null, remarks: f.remarks });
+    const changes = diffFields(snap(free, before), snap(updated, names), ['status', 'completedDate', 'technician', 'remarks']);
+    const warrantyNo = (await this.prisma.warranty.findFirst({ where: { id: free.warrantyId }, select: { warrantyNumber: true } }))?.warrantyNumber ?? null;
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'Warranty', entityId: free.warrantyId, entityLabel: warrantyNo, summary: `Free service ${free.serviceNumber} of warranty ${warrantyNo ?? ''}: ${changesSummary(changes) || 'nothing changed'}`, changes, metadata: { freeServiceId: id, serviceNumber: free.serviceNumber } });
     return this.toFreeServiceDto(updated, names);
   }
 
@@ -358,10 +388,19 @@ export class WarrantyService implements OnModuleInit {
   /** Flip ACTIVE warranties/AMC past their end date to EXPIRED. Idempotent; cheap. */
   private async syncExpiry(): Promise<void> {
     const now = new Date();
-    await Promise.all([
-      this.prisma.warranty.updateMany({ where: { status: 'ACTIVE', endDate: { lt: now } }, data: { status: 'EXPIRED' } }),
-      this.prisma.amcPlan.updateMany({ where: { status: 'ACTIVE', endDate: { lt: now } }, data: { status: 'EXPIRED' } }),
+    const [warranties, plans] = await Promise.all([
+      this.prisma.warranty.findMany({ where: { status: 'ACTIVE', endDate: { lt: now } }, select: { id: true, warrantyNumber: true, endDate: true }, take: 500 }),
+      this.prisma.amcPlan.findMany({ where: { status: 'ACTIVE', endDate: { lt: now } }, select: { id: true, amcNumber: true, endDate: true }, take: 500 }),
     ]);
+    // Each one flipped is recorded once, as the app's own doing (the guard on ACTIVE makes a repeat a no-op).
+    for (const w of warranties) {
+      const { count } = await this.prisma.warranty.updateMany({ where: { id: w.id, status: 'ACTIVE' }, data: { status: 'EXPIRED' } });
+      if (count) await this.activityLog.record({ action: ActivityAction.STATUS_CHANGE, source: 'SYSTEM', entityType: 'Warranty', entityId: w.id, entityLabel: w.warrantyNumber, summary: `Warranty ${w.warrantyNumber} expired on ${w.endDate.toISOString().slice(0, 10)}`, changes: { status: { from: 'ACTIVE', to: 'EXPIRED' } } });
+    }
+    for (const p of plans) {
+      const { count } = await this.prisma.amcPlan.updateMany({ where: { id: p.id, status: 'ACTIVE' }, data: { status: 'EXPIRED' } });
+      if (count) await this.activityLog.record({ action: ActivityAction.STATUS_CHANGE, source: 'SYSTEM', entityType: 'AmcPlan', entityId: p.id, entityLabel: p.amcNumber, summary: `AMC ${p.amcNumber} expired on ${p.endDate.toISOString().slice(0, 10)}`, changes: { status: { from: 'ACTIVE', to: 'EXPIRED' } } });
+    }
   }
 
   private freeServiceSeed(company: string, warrantyId: string, start: Date, settings: { freeService1Days: number; freeService2Days: number; freeService3Days: number } | null): Prisma.FreeServiceCreateManyInput[] {

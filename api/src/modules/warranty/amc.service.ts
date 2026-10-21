@@ -16,10 +16,15 @@ import { CustomerTimelineService } from '../customers/customer-timeline.service'
 import { SequenceService } from '../sales/sequence.service';
 import { addMonths, daysBetween } from './warranty.helpers';
 import { warrantyInclude, technicianNames, type AmcRow } from './warranty.include';
+import { createdFields } from '../../activity-log/audit-diff';
+import { ActivityLogService } from '../../activity-log/activity-log.service';
+import { formatInrExact } from '../../common/utils/money';
+import { ActivityAction } from '@azad/shared';
 
 @Injectable()
 export class AmcService {
   constructor(
+    private readonly activityLog: ActivityLogService,
     private readonly prisma: PrismaService,
     private readonly tenant: TenantContext,
     private readonly sequence: SequenceService,
@@ -68,7 +73,7 @@ export class AmcService {
 
     const created = await this.prisma.$transaction(async (tx) => {
       const amcNumber = await this.sequence.next('amc', tx);
-      return tx.amcPlan.create({
+      const plan = await tx.amcPlan.create({
         data: {
           companyId: company,
           amcNumber,
@@ -84,6 +89,8 @@ export class AmcService {
         },
         include: warrantyInclude,
       });
+      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.CREATE, entityType: 'AmcPlan', entityId: plan.id, entityLabel: amcNumber, summary: `Sold AMC ${amcNumber} (${dto.planType}): ${dto.visitsIncluded} visits for ${formatInrExact(plan.price)}, until ${endDate.toISOString().slice(0, 10)}`, changes: createdFields({ planType: plan.planType, startDate, endDate, visitsIncluded: plan.visitsIncluded, price: plan.price, notes: plan.notes }), metadata: { unitId: dto.unitId } }, tx);
+      return plan;
     });
 
     await this.timeline.record({
@@ -124,6 +131,7 @@ export class AmcService {
       if (dto.coveredUnderAmc) {
         await tx.amcPlan.update({ where: { id }, data: { visitsUsed: { increment: 1 } } });
       }
+      await this.activityLog.recordInTransaction({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'AmcPlan', entityId: id, entityLabel: plan.amcNumber, summary: `AMC ${plan.amcNumber} visit #${created.visitNumber}${dto.coveredUnderAmc ? ` (covered — ${plan.visitsUsed + 1} of ${plan.visitsIncluded} used)` : ` — charged ${formatInrExact(created.amount)}`}: ${dto.workDone.slice(0, 140)}`, changes: createdFields({ visitNumber: created.visitNumber, workDone: created.workDone, partsUsed: created.partsUsed, amount: created.amount, coveredUnderAmc: created.coveredUnderAmc }), metadata: { visitId: created.id } }, tx);
       return created;
     });
 

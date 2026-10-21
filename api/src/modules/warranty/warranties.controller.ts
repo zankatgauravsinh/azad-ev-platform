@@ -20,6 +20,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { WarrantyService } from './warranty.service';
 import { WarrantyPdfService } from './warranty-pdf.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 @ApiTags('Warranty')
 @ApiBearerAuth('access-token')
@@ -51,6 +52,7 @@ export class WarrantiesController {
     return this.warranty.detail(id);
   }
 
+  @AuditDownload('Warranty certificate')
   @Get(':id/certificate.pdf')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Download the branded warranty certificate' })

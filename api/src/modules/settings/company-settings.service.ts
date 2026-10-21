@@ -10,6 +10,10 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.service';
+import { changesSummary, diffFields } from '../../activity-log/audit-diff';
+
+/** Bookkeeping and file-key columns; the GST registration has its own entry (auditGstChanges). */
+const SETTINGS_NOT_AUDITED: ReadonlySet<string> = new Set(['id', 'companyId', 'createdAt', 'updatedAt', 'createdById', 'updatedById', 'companyLogo', 'favicon', 'gstEnabled', 'gstNumber', 'gstStateCode', 'gstDiscountTreatment', 'gstExchangeTreatment']);
 
 interface UploadedFile {
   buffer: Buffer;
@@ -79,12 +83,17 @@ export class CompanySettingsService {
         updatedById: userId,
       },
     });
+    // Every setting that changed, old → new (GST registration gets its own entry below).
+    const fields = (Object.keys(updated) as (keyof CompanySetting)[]).filter((f) => !SETTINGS_NOT_AUDITED.has(f));
+    const changes = diffFields(current, updated, fields);
     await this.activityLog.record({
       actorId: userId,
       action: ActivityAction.UPDATE,
       entityType: 'CompanySetting',
       entityId: updated.id,
-      summary: 'Updated company settings',
+      entityLabel: 'Company settings',
+      summary: Object.keys(changes).length ? `Updated company settings: ${changesSummary(changes)}` : 'Saved company settings — nothing changed',
+      changes,
     });
     await this.auditGstChanges(current, updated, userId);
     return this.toDto(updated);
@@ -122,6 +131,7 @@ export class CompanySettingsService {
       data: { [kind]: stored.fileKey, updatedById: userId },
     });
     if (oldKey) await this.storage.remove(oldKey).catch(() => undefined);
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'CompanySetting', entityId: current.id, entityLabel: 'Company settings', summary: `${oldKey ? 'Replaced' : 'Uploaded'} the ${kind === 'companyLogo' ? 'company logo' : 'favicon'} ("${file.originalname}")`, metadata: { kind, fileName: file.originalname } });
     return this.toDto(updated);
   }
 
@@ -132,6 +142,8 @@ export class CompanySettingsService {
       where: { id: current.id },
       data: { [kind]: null, updatedById: userId },
     });
+    if (current[kind]) await this.activityLog.record({ actorId: userId, action: ActivityAction.DELETE, entityType: 'CompanySetting', entityId: current.id, entityLabel: 'Company settings', summary: `Removed the ${kind === 'companyLogo' ? 'company logo' : 'favicon'}`, metadata: { kind } });
+    else await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'CompanySetting', entityId: current.id, entityLabel: 'Company settings', summary: `No ${kind === 'companyLogo' ? 'company logo' : 'favicon'} to remove` });
     return this.toDto(updated);
   }
 

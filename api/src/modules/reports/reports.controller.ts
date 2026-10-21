@@ -5,6 +5,7 @@ import { EXPORT_FORMATS, REPORT_TYPES, reportRangeSchema, returnsReportQuerySche
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { ReportsService } from './reports.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 @ApiTags('Reports')
 @ApiBearerAuth('access-token')
@@ -51,6 +52,7 @@ export class ReportsController {
     return this.reports.returns(query);
   }
 
+  @AuditDownload('Report export')
   @Get(':type/export')
   @ApiOperation({ summary: 'Export a report as pdf | excel | csv' })
   @ApiQuery({ name: 'format', enum: EXPORT_FORMATS })

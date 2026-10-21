@@ -33,6 +33,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { ServiceJobsService, type Actor } from './service-jobs.service';
 import type { ServiceDocType } from './service-pdf.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 
 const PDF_DOCS: Record<string, ServiceDocType> = {
@@ -87,6 +88,7 @@ export class ServiceJobsController {
     return this.jobs.getById(id, this.actor(user));
   }
 
+  @AuditDownload('Service document')
   @Get(':id/pdf/:doc')
   @Permissions('service.view')
   @ApiParam({ name: 'id', format: 'uuid' })

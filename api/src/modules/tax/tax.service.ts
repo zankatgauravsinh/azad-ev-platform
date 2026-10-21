@@ -13,6 +13,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { periodsOverlap, startOfCalendarDay, toCalendarDate } from './tax-calendar';
+import { changesSummary, createdFields, diffFields, type FieldChanges } from '../../activity-log/audit-diff';
 
 type ClassificationWithRates = Prisma.TaxClassificationGetPayload<{ include: { rates: true } }>;
 type RateRow = Prisma.TaxRateGetPayload<Record<string, never>>;
@@ -73,7 +74,7 @@ export class TaxService {
     if (treatment === 'TAXABLE' && (code == null || code.trim() === '')) {
       throw new BadRequestException('A taxable classification needs an HSN/SAC code');
     }
-    await this.prisma.taxClassification.update({
+    const after = await this.prisma.taxClassification.update({
       where: { id },
       data: {
         name: dto.name,
@@ -85,7 +86,8 @@ export class TaxService {
         updatedById: userId,
       },
     });
-    await this.audit(userId, ActivityAction.UPDATE, id, `Updated tax classification ${dto.name ?? existing.name}`);
+    const changes = diffFields(existing, after, ['name', 'codeType', 'code', 'treatment', 'description', 'isActive']);
+    await this.audit(userId, ActivityAction.UPDATE, id, `Updated tax classification ${after.name}${Object.keys(changes).length ? `: ${changesSummary(changes)}` : ''}`, changes, after.name);
     return this.getClassification(id);
   }
 
@@ -93,13 +95,13 @@ export class TaxService {
     const existing = await this.loadClassification(id);
     // Soft delete (middleware converts delete → set deletedAt). Rates stay attached to the archived row.
     await this.prisma.taxClassification.delete({ where: { id } });
-    await this.audit(userId, ActivityAction.DELETE, id, `Deleted tax classification ${existing.name}`);
+    await this.audit(userId, ActivityAction.DELETE, id, `Deleted tax classification ${existing.name}`, diffFields(existing, {} as typeof existing, ['name', 'codeType', 'code', 'treatment', 'description']), existing.name);
     return { id };
   }
 
   // ── Rates ────────────────────────────────────────────────
   async addRate(classificationId: string, dto: CreateTaxRateInput, userId: string): Promise<TaxRateDto> {
-    await this.loadClassification(classificationId);
+    const cls = await this.loadClassification(classificationId);
     // Effective dates are calendar dates (both inclusive) — any time-of-day is dropped.
     const from = startOfCalendarDay(dto.effectiveFrom);
     const to = dto.effectiveTo ? startOfCalendarDay(dto.effectiveTo) : null;
@@ -117,7 +119,7 @@ export class TaxService {
         updatedById: userId,
       },
     });
-    await this.audit(userId, ActivityAction.CREATE, classificationId, `Added tax rate ${dto.ratePercent}%`);
+    await this.audit(userId, ActivityAction.CREATE, classificationId, `Added tax rate ${dto.ratePercent}% to ${cls.name} from ${from.toISOString().slice(0, 10)}${to ? ` to ${to.toISOString().slice(0, 10)}` : ''}`, createdFields({ ratePercent: created.ratePercent, effectiveFrom: created.effectiveFrom, effectiveTo: created.effectiveTo, isActive: created.isActive }), cls.name);
     return TaxService.toRateDto(created);
   }
 
@@ -140,14 +142,16 @@ export class TaxService {
         updatedById: userId,
       },
     });
-    await this.audit(userId, ActivityAction.UPDATE, existing.classificationId, `Updated a tax rate`);
-    return TaxService.toRateDto(await this.loadRate(rateId));
+    const after = await this.loadRate(rateId);
+    const changes = diffFields(existing, after, ['ratePercent', 'effectiveFrom', 'effectiveTo', 'isActive']);
+    await this.audit(userId, ActivityAction.UPDATE, existing.classificationId, `Updated a tax rate${Object.keys(changes).length ? `: ${changesSummary(changes)}` : ''}`, changes);
+    return TaxService.toRateDto(after);
   }
 
   async removeRate(rateId: string, userId: string): Promise<{ id: string }> {
     const existing = await this.loadRate(rateId);
     await this.prisma.taxRate.delete({ where: { id: rateId } });
-    await this.audit(userId, ActivityAction.DELETE, existing.classificationId, `Removed a tax rate`);
+    await this.audit(userId, ActivityAction.DELETE, existing.classificationId, `Removed the ${existing.ratePercent.toString()}% tax rate from ${existing.effectiveFrom.toISOString().slice(0, 10)}`, diffFields(existing, {} as typeof existing, ['ratePercent', 'effectiveFrom', 'effectiveTo', 'isActive']));
     return { id: rateId };
   }
 
@@ -187,8 +191,8 @@ export class TaxService {
     }
   }
 
-  private audit(userId: string, action: ActivityAction, entityId: string, summary: string): Promise<void> {
-    return this.activityLog.record({ actorId: userId, action, entityType: 'TaxClassification', entityId, summary });
+  private audit(userId: string, action: ActivityAction, entityId: string, summary: string, changes?: FieldChanges, label?: string): Promise<void> {
+    return this.activityLog.record({ actorId: userId, action, entityType: 'TaxClassification', entityId, entityLabel: label ?? null, summary, changes: changes ?? null });
   }
 
   static toDto(c: ClassificationWithRates): TaxClassificationDto {

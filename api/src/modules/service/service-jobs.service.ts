@@ -35,7 +35,7 @@ import { WarrantyService } from './warranty.service';
 import { ServicePdfService, type ServiceDocType } from './service-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { MonthlyClosingService } from '../finance/monthly-closing.service';
-import { createdFields, diffFields } from '../../activity-log/audit-diff';
+import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
 import { formatInrExact } from '../../common/utils/money';
 
 type Tx = Prisma.TransactionClient;
@@ -255,14 +255,17 @@ export class ServiceJobsService {
 
   // ── Update / workflow ──────────────────────────────────
   async update(id: string, dto: UpdateServiceJobInput, actor: Actor): Promise<ServiceJobDto> {
-    this.assertWritable(await this.load(id, actor));
+    const job = await this.load(id, actor);
+    this.assertWritable(job);
     const data: Prisma.ServiceJobUpdateInput = { updatedById: actor.id };
     if (dto.priority !== undefined) data.priority = dto.priority;
     if (dto.odometerKm !== undefined) data.odometerKm = dto.odometerKm;
     if (dto.scheduledDate !== undefined) data.scheduledDate = dto.scheduledDate;
     if (dto.expectedDelivery !== undefined) data.expectedDelivery = dto.expectedDelivery;
     if (dto.notes !== undefined) data.notes = dto.notes;
-    await this.prisma.serviceJob.update({ where: { id }, data });
+    const after = await this.prisma.serviceJob.update({ where: { id }, data });
+    const changes = diffFields(job, after, ['priority', 'odometerKm', 'scheduledDate', 'expectedDelivery', 'notes']);
+    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, entityLabel: job.code, summary: `Updated job card ${job.code}: ${changesSummary(changes) || 'nothing changed'}`, changes });
     return this.getById(id, actor);
   }
 
@@ -300,25 +303,32 @@ export class ServiceJobsService {
   }
 
   async assignTechnician(id: string, dto: AssignTechnicianInput, userId: string): Promise<ServiceJobDto> {
-    this.assertWritable(await this.load(id));
+    const job = await this.load(id);
+    this.assertWritable(job);
     if (dto.technicianId) await this.assertTechnician(dto.technicianId);
     await this.prisma.serviceJob.update({ where: { id }, data: { technicianId: dto.technicianId, updatedById: userId } });
-    await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, summary: dto.technicianId ? 'Assigned technician' : 'Unassigned technician' });
+    const names = await this.prisma.user.findMany({ where: { id: { in: [job.technicianId, dto.technicianId].filter((x): x is string => Boolean(x)) } }, select: { id: true, name: true } });
+    const nameOf = (uid: string | null | undefined): string | null => (uid ? (names.find((n) => n.id === uid)?.name ?? uid) : null);
+    await this.activityLog.record({ actorId: userId, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, entityLabel: job.code, summary: dto.technicianId ? `Assigned ${nameOf(dto.technicianId)} to job card ${job.code}` : `Unassigned the technician from job card ${job.code}`, changes: { technician: { from: nameOf(job.technicianId), to: nameOf(dto.technicianId) } } });
     return this.getById(id);
   }
 
   // ── Complaints ─────────────────────────────────────────
   async addComplaint(id: string, dto: AddComplaintInput, actor: Actor): Promise<ServiceJobDto> {
-    this.assertWritable(await this.load(id, actor));
+    const job = await this.load(id, actor);
+    this.assertWritable(job);
     await this.prisma.serviceComplaint.create({ data: { serviceJobId: id, description: dto.description, priority: dto.priority, createdById: actor.id, updatedById: actor.id } });
+    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, entityLabel: job.code, summary: `Added complaint to job card ${job.code}: ${dto.description.slice(0, 140)}`, changes: createdFields({ complaint: dto.description, priority: dto.priority }) });
     return this.getById(id, actor);
   }
 
   async resolveComplaint(id: string, complaintId: string, actor: Actor): Promise<ServiceJobDto> {
-    this.assertWritable(await this.load(id, actor));
+    const job = await this.load(id, actor);
+    this.assertWritable(job);
     const complaint = await this.prisma.serviceComplaint.findFirst({ where: { id: complaintId, serviceJobId: id } });
     if (!complaint) throw new NotFoundException('Complaint not found');
     await this.prisma.serviceComplaint.update({ where: { id: complaintId }, data: { resolved: true, updatedById: actor.id } });
+    await this.activityLog.record({ actorId: actor.id, action: ActivityAction.UPDATE, entityType: 'ServiceJob', entityId: id, entityLabel: job.code, summary: `Resolved complaint on job card ${job.code}: ${complaint.description.slice(0, 140)}`, changes: { resolved: { from: complaint.resolved, to: true } }, metadata: { complaintId } });
     return this.getById(id, actor);
   }
 

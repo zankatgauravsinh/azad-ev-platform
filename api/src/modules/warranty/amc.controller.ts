@@ -15,6 +15,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { AmcService } from './amc.service';
 import { WarrantyPdfService } from './warranty-pdf.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 @ApiTags('AMC')
 @ApiBearerAuth('access-token')
@@ -40,6 +41,7 @@ export class AmcController {
     return this.amc.detail(id);
   }
 
+  @AuditDownload('AMC agreement')
   @Get(':id/agreement.pdf')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Download the branded AMC agreement' })

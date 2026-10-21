@@ -19,6 +19,7 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { ExpensesService } from './expenses.service';
 import { FinancePdfService } from './finance-pdf.service';
+import { AuditDownload } from '../../activity-log/audit.decorators';
 
 interface MulterFile {
   buffer: Buffer;
@@ -52,6 +53,7 @@ export class ExpensesController {
     return this.expenses.get(id);
   }
 
+  @AuditDownload('Expense voucher')
   @Get(':id/voucher.pdf')
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOperation({ summary: 'Download the branded expense / payment voucher' })
