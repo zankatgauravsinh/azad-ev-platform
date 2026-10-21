@@ -9,6 +9,7 @@ import {
   markDeliveredSchema,
   scheduleDeliverySchema,
   updateBookingSchema,
+  reviseBookingTermsSchema,
   upsertFinanceSchema,
   upsertInsuranceSchema,
   type AddPaymentInput,
@@ -18,6 +19,7 @@ import {
   type MarkDeliveredInput,
   type ScheduleDeliveryInput,
   type UpdateBookingInput,
+  type ReviseBookingTermsInput,
   type UpsertFinanceInput,
   type UpsertInsuranceInput,
 } from '@azad/shared';
@@ -51,6 +53,13 @@ export class BookingsController {
     return this.bookings.create(dto, userId);
   }
 
+  @Get('sales-executives')
+  @Permissions('bookings.terms')
+  @ApiOperation({ summary: 'Active staff a booking can be credited to' })
+  salesExecutives() {
+    return this.bookings.salesExecutives();
+  }
+
   @Get(':id')
   @Permissions('bookings.view')
   @ApiParam({ name: 'id', format: 'uuid' })
@@ -64,6 +73,14 @@ export class BookingsController {
   @ApiOperation({ summary: 'Edit a booking (recomputes totals)' })
   update(@Param('id') id: string, @Body(new ZodValidationPipe(updateBookingSchema)) dto: UpdateBookingInput, @CurrentUser('id') userId: string) {
     return this.bookings.update(id, dto, userId);
+  }
+
+  @Patch(':id/terms')
+  @Permissions('bookings.terms')
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOperation({ summary: 'Correct price / offer, scooter, customer or sales executive before invoicing (reason required)' })
+  reviseTerms(@Param('id') id: string, @Body(new ZodValidationPipe(reviseBookingTermsSchema)) dto: ReviseBookingTermsInput, @CurrentUser('id') userId: string) {
+    return this.bookings.reviseTerms(id, dto, userId);
   }
 
   @Post(':id/confirm')

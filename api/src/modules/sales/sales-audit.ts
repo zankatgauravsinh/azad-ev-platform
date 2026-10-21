@@ -41,3 +41,18 @@ export function bookingPriceSnapshot(b: {
 
 export const FINANCE_AUDIT_FIELDS = ['financeCompany', 'downPayment', 'loanAmount', 'emiAmount', 'tenureMonths', 'interestRate', 'disbursedAmount', 'status'] as const;
 export const INSURANCE_AUDIT_FIELDS = ['provider', 'policyNumber', 'premium', 'startDate', 'endDate', 'status'] as const;
+
+/** What "change booking terms" can alter, as the audit trail shows it. */
+export const BOOKING_TERMS_AUDIT_FIELDS = [
+  'customer', 'vin', 'variant', 'salesExecutive', 'exShowroom', 'discount', 'exchangeValue', 'rto', 'insuranceCharge', 'registration', 'extendedWarranty', 'total',
+] as const;
+
+export function bookingTermsSnapshot(b: Parameters<typeof bookingPriceSnapshot>[0] & {
+  customer: { name: string }; unit: { vin: string; variant?: Variant }; salesExecutive: { name: string };
+}): Record<(typeof BOOKING_TERMS_AUDIT_FIELDS)[number], unknown> {
+  const p = bookingPriceSnapshot(b);
+  return {
+    customer: b.customer.name, vin: b.unit.vin, variant: variantText(b.unit.variant), salesExecutive: b.salesExecutive.name, exShowroom: p.exShowroom, discount: p.discount,
+    exchangeValue: p.exchangeValue, rto: p.rto, insuranceCharge: p.insuranceCharge, registration: p.registration, extendedWarranty: p.extendedWarranty, total: p.total,
+  };
+}

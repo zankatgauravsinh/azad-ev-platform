@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, Banknote, Bike, CalendarClock, CheckCircle2, ClipboardCheck, Eye, FileBadge, FileText, Pencil, Shield, Truck, Undo2, User } from 'lucide-react';
+import { ArrowLeft, Ban, Banknote, BadgeIndianRupee, Bike, CalendarClock, CheckCircle2, ClipboardCheck, Eye, FileBadge, FileText, Pencil, Shield, Truck, Undo2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookingStatus, PaymentStatus } from '@azad/shared';
 import { useCan } from '@/features/auth/auth-context';
@@ -16,6 +16,7 @@ import { salesApi } from '../api';
 import { BookingStatusBadge, DeliveryStatusBadge, FinanceStatusBadge, InsuranceStatusBadge, PaymentStatusBadge } from '../components/status-badges';
 import { CancelBookingDialog, FinanceDialog, InsuranceDialog, PaymentDialog, ScheduleDeliveryDialog } from '../components/booking-dialogs';
 import { BookingFormDialog } from '../components/booking-form-dialog';
+import { BookingTermsDialog } from '../components/booking-terms-dialog';
 import { DeliverDialog } from '../components/deliver-dialog';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { RtoInvoiceDetailDialog } from '@/features/rto-invoices/components/rto-invoice-detail-dialog';
@@ -36,6 +37,7 @@ export function BookingDetailPage(): JSX.Element {
   const invalidate = useSalesInvalidate();
   // Each booking action is independently authorized on the backend.
   const canUpdate = useCan('bookings.update');
+  const canChangeTerms = useCan('bookings.terms');
   const canPayment = useCan('bookings.payment');
   const canInvoice = useCan('bookings.invoice');
   const canViewRto = useCan('rto.view');
@@ -50,6 +52,7 @@ export function BookingDetailPage(): JSX.Element {
   const [rtoFormOpen, setRtoFormOpen] = useState(false);
   const [deliverOpen, setDeliverOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [termsOpen, setTermsOpen] = useState(false);
   const [vehicleOpen, setVehicleOpen] = useState(false);
   const [viewCustomer, setViewCustomer] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
@@ -118,6 +121,7 @@ export function BookingDetailPage(): JSX.Element {
         {active && (
           <div className="flex flex-wrap gap-2">
             {canUpdate && editable && <Button variant="outline" onClick={() => setEditOpen(true)}><Pencil className="h-4 w-4" /> Edit</Button>}
+            {canChangeTerms && editable && <Button variant="outline" onClick={() => setTermsOpen(true)}><BadgeIndianRupee className="h-4 w-4" /> Change terms</Button>}
             {canPayment && !paid && <Button onClick={() => setDialog('payment')}><Banknote className="h-4 w-4" /> Take payment</Button>}
             {canUpdate && <Button variant="outline" onClick={() => setDialog('finance')}><Banknote className="h-4 w-4" /> Finance</Button>}
             {canUpdate && <Button variant="outline" onClick={() => setDialog('insurance')}><Shield className="h-4 w-4" /> Insurance</Button>}
@@ -276,6 +280,7 @@ export function BookingDetailPage(): JSX.Element {
       <ReturnDetailDialog id={viewReturnId} onOpenChange={(o) => { if (!o) setViewReturnId(null); }} />
       <CancelBookingDialog open={cancelOpen} onOpenChange={setCancelOpen} booking={b} />
       {editable && <BookingFormDialog open={editOpen} onOpenChange={setEditOpen} booking={b} />}
+      {editable && canChangeTerms && <BookingTermsDialog open={termsOpen} onOpenChange={setTermsOpen} booking={b} />}
       <VehicleDetailsDialog open={vehicleOpen} onOpenChange={setVehicleOpen} unit={b.unit} />
       <RecordHistory entityType="Booking" entityId={b.id} collapsible />
     </div>

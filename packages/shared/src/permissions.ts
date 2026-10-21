@@ -89,6 +89,7 @@ const MODULE_ROWS: Record<PermissionModule, Row[]> = {
     ['cancel', 'Cancel bookings', true],
     ['payment', 'Record booking payment', true],
     ['invoice', 'Generate invoice'],
+    ['terms', 'Change booking price, vehicle or customer', true],
   ],
   rto: [
     ['view', 'View RTO invoices'],

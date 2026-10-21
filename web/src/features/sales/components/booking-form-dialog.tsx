@@ -106,7 +106,7 @@ export function BookingFormDialog({ open, onOpenChange, booking }: { open: boole
         <DialogHeader>
           <DialogTitle>{isEdit ? `Edit booking ${booking!.code}` : 'New booking'}</DialogTitle>
           <DialogDescription>
-            {isEdit ? 'Update delivery, finance and insurance needs, and notes. Pricing, customer and vehicle are fixed once booked.' : 'Allocates a specific scooter (VIN) to the customer.'}
+            {isEdit ? 'Update delivery, finance and insurance needs, and notes. To correct the price, offer, scooter or customer, use Change terms (owner).' : 'Allocates a specific scooter (VIN) to the customer.'}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="space-y-4" noValidate>

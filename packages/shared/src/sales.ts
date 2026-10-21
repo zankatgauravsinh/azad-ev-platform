@@ -119,6 +119,27 @@ export const updateBookingSchema = z.object({
 });
 export type UpdateBookingInput = z.infer<typeof updateBookingSchema>;
 
+/**
+ * Correcting a booking's commercial terms before it is invoiced (bookings.terms — owner-only by default):
+ * the price breakup / offer, the scooter, the customer and the sales executive. Only the fields sent change;
+ * the total is recalculated; a reason is required and kept in the audit log. Accessories, the booked advance
+ * and recorded payments are not changed here.
+ */
+export const reviseBookingTermsSchema = z.object({
+  customerId: z.string().uuid().optional(),
+  unitId: z.string().uuid().optional(),
+  salesExecutiveId: z.string().uuid().optional(),
+  exShowroom: paise.optional(),
+  discount: paise.optional(),
+  exchangeValue: paise.optional(),
+  rto: paise.optional(),
+  insurance: paise.optional(),
+  registration: paise.optional(),
+  extendedWarranty: paise.optional(),
+  reason: z.string().trim().min(3, 'Say why the booking is being changed').max(300),
+});
+export type ReviseBookingTermsInput = z.infer<typeof reviseBookingTermsSchema>;
+
 export const listBookingsQuerySchema = paginationQuerySchema.extend({
   status: z.enum(BOOKING_STATUSES as [BookingStatus, ...BookingStatus[]]).optional(),
   customerId: z.string().uuid().optional(),

@@ -16,6 +16,7 @@ import type {
   ScheduleDeliveryInput,
   UnitStatus,
   UpdateBookingInput,
+  ReviseBookingTermsInput,
   UpdateQuotationInput,
   UpsertFinanceInput,
   UpsertInsuranceInput,
@@ -168,6 +169,9 @@ export const salesApi = {
   getBooking: async (id: string): Promise<BookingDto> => (await apiClient.get(`/bookings/${id}`)).data,
   createBooking: async (input: CreateBookingInput): Promise<BookingDto> => (await apiClient.post('/bookings', input)).data,
   updateBooking: async (id: string, input: UpdateBookingInput): Promise<BookingDto> => (await apiClient.patch(`/bookings/${id}`, input)).data,
+  /** Owner: correct price / offer, scooter, customer or sales executive before invoicing (reason required). */
+  reviseBookingTerms: async (id: string, input: ReviseBookingTermsInput): Promise<BookingDto> => (await apiClient.patch(`/bookings/${id}/terms`, input)).data,
+  salesExecutives: async (): Promise<{ id: string; name: string }[]> => (await apiClient.get('/bookings/sales-executives')).data,
   cancelBooking: async (id: string, reason?: string): Promise<BookingDto> => (await apiClient.post(`/bookings/${id}/cancel`, { reason })).data,
   addPayment: async (id: string, input: AddPaymentInput): Promise<PaymentDto> => (await apiClient.post(`/bookings/${id}/payments`, input)).data,
   upsertFinance: async (id: string, input: UpsertFinanceInput): Promise<FinanceDto> => (await apiClient.post(`/bookings/${id}/finance`, input)).data,

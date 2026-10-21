@@ -28,6 +28,7 @@ vi.mock('../components/booking-dialogs', () => ({ PaymentDialog: () => null, Fin
 vi.mock('@/features/rto-invoices/components/rto-invoice-detail-dialog', () => ({ RtoInvoiceDetailDialog: () => null }));
 vi.mock('@/features/rto-invoices/components/rto-invoice-form-dialog', () => ({ RtoInvoiceFormDialog: () => null }));
 vi.mock('../components/booking-form-dialog', () => ({ BookingFormDialog: () => null }));
+vi.mock('../components/booking-terms-dialog', () => ({ BookingTermsDialog: () => null }));
 vi.mock('../components/deliver-dialog', () => ({ DeliverDialog: (p: { open: boolean; booking: { id: string } }) => (p.open ? <div data-testid="deliver-dialog" data-booking={p.booking.id} /> : null) }));
 vi.mock('../api', () => ({ salesApi: { deliver: h.deliver, generateInvoice: vi.fn(), invoicePdf: h.invoicePdf } }));
 vi.mock('@/features/delivery/api', () => ({ deliveryApi: { note: h.note } }));
@@ -93,6 +94,18 @@ describe('BookingDetailPage permission gating (each action independent)', () => 
     renderWith(['bookings.view', 'bookings.cancel']);
     expect(q.cancel()).not.toBeNull();
     expect(q.finance()).toBeNull();
+  });
+
+  it('bookings.terms (owner) → Change terms, only until the booking is invoiced', () => {
+    const terms = () => screen.queryByRole('button', { name: /Change terms/ });
+    renderWith(['bookings.view', 'bookings.update']);
+    expect(terms()).toBeNull();
+    cleanup();
+    renderWith(['bookings.view', 'bookings.terms']);
+    expect(terms()).not.toBeNull();
+    cleanup();
+    renderWith(['bookings.view', 'bookings.terms'], { status: 'CONVERTED', sale: { id: 's1', invoiceNumber: 'INV-1', status: 'INVOICED', invoicedAt: null } });
+    expect(terms()).toBeNull();
   });
 });
 

@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  AccessorySaleStatus,
   ActivityAction,
   BookingStatus,
   CustomerEventType,
@@ -18,6 +19,7 @@ import {
   type MarkDeliveredInput,
   type Paginated,
   type PaymentSummary,
+  type ReviseBookingTermsInput,
   type ScheduleDeliveryInput,
   type UpdateBookingInput,
   type UpsertFinanceInput,
@@ -40,7 +42,7 @@ import { formatInrExact } from '../../common/utils/money';
 import { EarlyDeliveryDateError, FutureDeliveryDateError, deliveryLowerBound, resolveDeliveryDate, type DeliveryLowerBound, type ResolvedDeliveryDate } from './delivery-date';
 import { computeTotal, sumAccessories } from './pricing';
 import { changesSummary, createdFields, diffFields } from '../../activity-log/audit-diff';
-import { FINANCE_AUDIT_FIELDS, INSURANCE_AUDIT_FIELDS, bookingPriceSnapshot } from './sales-audit';
+import { BOOKING_TERMS_AUDIT_FIELDS, FINANCE_AUDIT_FIELDS, INSURANCE_AUDIT_FIELDS, bookingPriceSnapshot, bookingTermsSnapshot } from './sales-audit';
 
 type Tx = Prisma.TransactionClient;
 
@@ -235,6 +237,79 @@ export class BookingsService {
     return this.getById(id);
   }
 
+  /**
+   * Correct a booking's commercial terms before it is invoiced (bookings.terms — owner-only by default): its
+   * price breakup / offer, scooter, customer and sales executive. The total is recalculated and may not fall
+   * below what has already been received; a reason is required and recorded with old → new in the audit log.
+   * Moving to another scooter allocates it (it must be available) and returns the old one to stock. Once an RTO
+   * invoice is issued (it names the customer and scooter) or accessories were sold with the booking (to its
+   * customer), the scooter / customer can no longer change. Accessories, the booked advance and payments stay.
+   */
+  async reviseTerms(id: string, dto: ReviseBookingTermsInput, userId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      // Locked so an invoice, a payment or another edit cannot slip in between these checks and the write.
+      await tx.$queryRaw`SELECT id FROM "Booking" WHERE id = ${id} FOR UPDATE`;
+      const b = await tx.booking.findFirst({ where: { id }, include });
+      if (!b) throw new NotFoundException('Booking not found');
+      if (b.status === BookingStatus.CONVERTED) throw new ConflictException('This booking is already invoiced — its terms can no longer be changed; use a sales return to correct the invoice');
+      this.assertEditable(b);
+
+      const customerId = dto.customerId && dto.customerId !== b.customerId ? dto.customerId : null;
+      const unitId = dto.unitId && dto.unitId !== b.unitId ? dto.unitId : null;
+      const salesExecutiveId = dto.salesExecutiveId && dto.salesExecutiveId !== b.salesExecutiveId ? dto.salesExecutiveId : null;
+      if ((customerId || unitId) && b.rtoInvoice) {
+        throw new ConflictException(`RTO invoice ${b.rtoInvoice.invoiceNumber} was issued for this customer and scooter — they can no longer be changed on this booking`);
+      }
+      const customer = customerId ? await tx.customer.findFirst({ where: { id: customerId, deletedAt: null }, select: { id: true, name: true } }) : b.customer;
+      if (!customer) throw new NotFoundException('Customer not found');
+      if (customerId && (await tx.accessorySale.count({ where: { bookingId: id, status: AccessorySaleStatus.ACTIVE } }))) {
+        throw new ConflictException('Accessories were sold to this customer with this booking — cancel those accessory sales before moving the booking to another customer');
+      }
+      const executive = salesExecutiveId ? await tx.user.findFirst({ where: { id: salesExecutiveId, isActive: true }, select: { id: true, name: true } }) : b.salesExecutive;
+      if (!executive) throw new BadRequestException('Choose an active staff member as the sales executive');
+
+      const price = {
+        exShowroom: BigInt(dto.exShowroom ?? b.exShowroom), discount: BigInt(dto.discount ?? b.discount), exchangeValue: BigInt(dto.exchangeValue ?? b.exchangeValue),
+        rto: BigInt(dto.rto ?? b.rto), insuranceCharge: BigInt(dto.insurance ?? b.insuranceCharge), registration: BigInt(dto.registration ?? b.registration),
+        extendedWarranty: BigInt(dto.extendedWarranty ?? b.extendedWarranty),
+      };
+      const total = computeTotal({ ...price, insurance: price.insuranceCharge, accessoriesTotal: b.accessoriesTotal, taxAmount: b.taxAmount });
+      const paid = (await tx.payment.aggregate({ where: { bookingId: id }, _sum: { amount: true } }))._sum.amount ?? 0n;
+      if (total < paid) throw new BadRequestException(`The new total ${formatInrExact(total)} is less than the ${formatInrExact(paid)} already received for this booking`);
+
+      if (unitId) {
+        await this.allocateUnit(tx, unitId, b.code, userId, customer.id);
+        await this.releaseUnit(tx, b.unitId, userId, `Booking ${b.code} moved to another scooter`);
+      }
+      const updated = await tx.booking.update({
+        where: { id },
+        data: { customerId: customer.id, unitId: unitId ?? b.unitId, salesExecutiveId: executive.id, ...price, total, updatedById: userId },
+        include,
+      });
+      const changes = diffFields(bookingTermsSnapshot(b), bookingTermsSnapshot(updated), BOOKING_TERMS_AUDIT_FIELDS);
+      if (!Object.keys(changes).length) throw new BadRequestException('Nothing was changed');
+
+      if (customerId) {
+        await this.timeline.record({ customerId: b.customerId, type: CustomerEventType.BOOKING, title: `Booking ${b.code} moved to ${customer.name}`, entityType: 'Booking', entityId: id, actorId: userId }, tx);
+        await this.timeline.record({ customerId: customer.id, type: CustomerEventType.BOOKING, title: `Booking ${b.code} moved from ${b.customer.name}`, entityType: 'Booking', entityId: id, actorId: userId }, tx);
+      }
+      if (customerId || unitId) {
+        await this.timeline.record({ customerId: customer.id, type: CustomerEventType.VEHICLE_ASSIGNED, title: `Vehicle allocated (${updated.unit.vin})`, entityType: 'InventoryUnit', entityId: updated.unitId, actorId: userId }, tx);
+      }
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.UPDATE, entityType: 'Booking', entityId: id, entityLabel: b.code,
+        summary: `Changed booking ${b.code} terms: ${changesSummary(changes)}`, changes, reason: dto.reason,
+        metadata: { received: paid.toString() },
+      }, tx);
+    });
+    return this.getById(id);
+  }
+
+  /** Active staff a booking can be credited to (for the change-terms form). */
+  salesExecutives(): Promise<{ id: string; name: string }[]> {
+    return this.prisma.user.findMany({ where: { isActive: true }, select: { id: true, name: true }, orderBy: { name: 'asc' } });
+  }
+
   async confirm(id: string, userId: string) {
     const booking = await this.getById(id);
     if (booking.status !== BookingStatus.DRAFT) throw new BadRequestException(`Booking is already ${booking.status}`);
@@ -418,6 +493,11 @@ export class BookingsService {
     // It never alters the commercial figures — the Sale still copies the booking's amounts as-is.
     const saleTax = await this.saleTax.prepare(booking, { invoicedAt });
     await this.prisma.$transaction(async (tx) => {
+      // The invoice copies the figures read above: refuse if the booking changed in the meantime (its terms
+      // may be corrected until it is invoiced), rather than invoice stale figures.
+      await tx.$queryRaw`SELECT id FROM "Booking" WHERE id = ${id} FOR UPDATE`;
+      const fresh = await tx.booking.findFirst({ where: { id }, select: { updatedAt: true } });
+      if (fresh?.updatedAt.getTime() !== booking.updatedAt.getTime()) throw new ConflictException('The booking was changed while the invoice was being prepared — check it and generate the invoice again');
       const invoiceNumber = await this.sequence.next('invoice', tx);
       const created = await tx.sale.create({
         data: {
