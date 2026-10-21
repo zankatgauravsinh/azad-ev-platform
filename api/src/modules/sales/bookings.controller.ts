@@ -10,6 +10,7 @@ import {
   scheduleDeliverySchema,
   updateBookingSchema,
   reviseBookingTermsSchema,
+  regenerateInvoiceGstSchema,
   upsertFinanceSchema,
   upsertInsuranceSchema,
   type AddPaymentInput,
@@ -20,6 +21,7 @@ import {
   type ScheduleDeliveryInput,
   type UpdateBookingInput,
   type ReviseBookingTermsInput,
+  type RegenerateInvoiceGstInput,
   type UpsertFinanceInput,
   type UpsertInsuranceInput,
 } from '@azad/shared';
@@ -161,6 +163,22 @@ export class BookingsController {
   }
 
   @AuditDownload('Booking confirmation')
+  @Get(':id/invoice/gst')
+  @Permissions('gst.manage')
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOperation({ summary: 'Preview: the invoice’s GST breakdown now, what regenerating it would give, or why it cannot' })
+  invoiceGstPreview(@Param('id') id: string) {
+    return this.bookings.invoiceGstPreview(id);
+  }
+
+  @Post(':id/invoice/gst')
+  @Permissions('gst.manage')
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOperation({ summary: 'Regenerate the tax invoice with GST: same number and date, GST as of the invoice date (reason required)' })
+  regenerateInvoiceGst(@Param('id') id: string, @Body(new ZodValidationPipe(regenerateInvoiceGstSchema)) dto: RegenerateInvoiceGstInput, @CurrentUser('id') userId: string) {
+    return this.bookings.regenerateInvoiceGst(id, dto, userId);
+  }
+
   @Get(':id/confirmation/pdf')
   @Permissions('bookings.view')
   @ApiParam({ name: 'id', format: 'uuid' })

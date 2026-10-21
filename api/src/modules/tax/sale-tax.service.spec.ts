@@ -125,14 +125,9 @@ describe('SaleTaxService', () => {
       await failsWith(service.prepare(booking(), { invoicedAt: INVOICED_AT }), 'SUPPLIER_GSTIN_MISSING');
     });
 
-    it('SUPPLIER_STATE_CODE_MISSING / CUSTOMER_STATE_CODE_MISSING', async () => {
+    it('SUPPLIER_STATE_CODE_MISSING (a customer without a state code is a showroom sale — see tax-supply)', async () => {
       prisma.companySetting.findFirst.mockResolvedValue(settingRow({ gstStateCode: null }));
       await failsWith(service.prepare(booking(), { invoicedAt: INVOICED_AT }), 'SUPPLIER_STATE_CODE_MISSING');
-      prisma.companySetting.findFirst.mockResolvedValue(settingRow());
-      prisma.customer.findFirst.mockResolvedValue({ gstStateCode: null });
-      await failsWith(service.prepare(booking(), { invoicedAt: INVOICED_AT }), 'CUSTOMER_STATE_CODE_MISSING');
-      prisma.customer.findFirst.mockResolvedValue(null);
-      await failsWith(service.prepare(booking(), { invoicedAt: INVOICED_AT }), 'CUSTOMER_STATE_CODE_MISSING');
       expect(engine.calculate).not.toHaveBeenCalled();
     });
 

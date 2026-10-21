@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, Banknote, BadgeIndianRupee, Bike, CalendarClock, CheckCircle2, ClipboardCheck, Eye, FileBadge, FileText, Pencil, Shield, Truck, Undo2, User } from 'lucide-react';
+import { ArrowLeft, Ban, Banknote, BadgeIndianRupee, Receipt, Bike, CalendarClock, CheckCircle2, ClipboardCheck, Eye, FileBadge, FileText, Pencil, Shield, Truck, Undo2, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { BookingStatus, PaymentStatus } from '@azad/shared';
 import { useCan } from '@/features/auth/auth-context';
@@ -17,6 +17,7 @@ import { BookingStatusBadge, DeliveryStatusBadge, FinanceStatusBadge, InsuranceS
 import { CancelBookingDialog, FinanceDialog, InsuranceDialog, PaymentDialog, ScheduleDeliveryDialog } from '../components/booking-dialogs';
 import { BookingFormDialog } from '../components/booking-form-dialog';
 import { BookingTermsDialog } from '../components/booking-terms-dialog';
+import { RegenerateInvoiceGstDialog } from '../components/regenerate-invoice-gst-dialog';
 import { DeliverDialog } from '../components/deliver-dialog';
 import { ConfirmDialog } from '@/components/common/confirm-dialog';
 import { RtoInvoiceDetailDialog } from '@/features/rto-invoices/components/rto-invoice-detail-dialog';
@@ -38,6 +39,7 @@ export function BookingDetailPage(): JSX.Element {
   // Each booking action is independently authorized on the backend.
   const canUpdate = useCan('bookings.update');
   const canChangeTerms = useCan('bookings.terms');
+  const canManageGst = useCan('gst.manage');
   const canPayment = useCan('bookings.payment');
   const canInvoice = useCan('bookings.invoice');
   const canViewRto = useCan('rto.view');
@@ -53,6 +55,7 @@ export function BookingDetailPage(): JSX.Element {
   const [deliverOpen, setDeliverOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
+  const [gstOpen, setGstOpen] = useState(false);
   const [vehicleOpen, setVehicleOpen] = useState(false);
   const [viewCustomer, setViewCustomer] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
@@ -131,6 +134,7 @@ export function BookingDetailPage(): JSX.Element {
             ) : (
               documents('default')
             )}
+            {canManageGst && b.sale && <Button variant="outline" onClick={() => setGstOpen(true)}><Receipt className="h-4 w-4" /> Regenerate invoice with GST</Button>}
             {canUpdate && b.sale && !b.actualDelivery && <Button variant="accent" onClick={() => setDeliverOpen(true)}><Truck className="h-4 w-4" /> Deliver</Button>}
             {canRequestReturn && b.sale && b.actualDelivery && <Button variant="outline" onClick={() => setReturnOpen(true)}><Undo2 className="h-4 w-4" /> Request return</Button>}
             {canCancel && b.status !== BookingStatus.CONVERTED && <Button variant="outline" className="text-destructive" onClick={() => setCancelOpen(true)}><Ban className="h-4 w-4" /> Cancel</Button>}
@@ -281,6 +285,7 @@ export function BookingDetailPage(): JSX.Element {
       <CancelBookingDialog open={cancelOpen} onOpenChange={setCancelOpen} booking={b} />
       {editable && <BookingFormDialog open={editOpen} onOpenChange={setEditOpen} booking={b} />}
       {editable && canChangeTerms && <BookingTermsDialog open={termsOpen} onOpenChange={setTermsOpen} booking={b} />}
+      {canManageGst && b.sale && <RegenerateInvoiceGstDialog open={gstOpen} onOpenChange={setGstOpen} bookingId={b.id} />}
       <VehicleDetailsDialog open={vehicleOpen} onOpenChange={setVehicleOpen} unit={b.unit} />
       <RecordHistory entityType="Booking" entityId={b.id} collapsible />
     </div>

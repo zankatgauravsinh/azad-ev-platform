@@ -30,8 +30,8 @@ describe('resolveSupplyContext', () => {
     expectCode(() => resolveSupplyContext(v, '24'), 'SUPPLIER_STATE_CODE_MISSING');
   });
 
-  it.each([null, undefined, '', '  '])('a missing customer state code (%p) fails closed — no fallback', (v) => {
-    expectCode(() => resolveSupplyContext('24', v), 'CUSTOMER_STATE_CODE_MISSING');
+  it.each([null, undefined, '', '  '])('a missing customer state code (%p) is a showroom (over-the-counter) sale: the showroom state, intra-state', (v) => {
+    expect(resolveSupplyContext('24', v)).toEqual({ supplyType: 'INTRA', supplierStateCode: '24', placeOfSupplyStateCode: '24' });
   });
 
   it.each(['GJ', 'Gujarat', '2', '024', '2A'])('a malformed code (%p) fails closed rather than being compared', (v) => {

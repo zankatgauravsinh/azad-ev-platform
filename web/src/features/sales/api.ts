@@ -17,6 +17,8 @@ import type {
   UnitStatus,
   UpdateBookingInput,
   ReviseBookingTermsInput,
+  InvoiceGstPreviewDto,
+  RegenerateInvoiceGstInput,
   UpdateQuotationInput,
   UpsertFinanceInput,
   UpsertInsuranceInput,
@@ -171,6 +173,9 @@ export const salesApi = {
   updateBooking: async (id: string, input: UpdateBookingInput): Promise<BookingDto> => (await apiClient.patch(`/bookings/${id}`, input)).data,
   /** Owner: correct price / offer, scooter, customer or sales executive before invoicing (reason required). */
   reviseBookingTerms: async (id: string, input: ReviseBookingTermsInput): Promise<BookingDto> => (await apiClient.patch(`/bookings/${id}/terms`, input)).data,
+  /** gst.manage: the invoice's GST breakdown now / after regenerating (same number and date), or why it can't. */
+  invoiceGstPreview: async (id: string): Promise<InvoiceGstPreviewDto> => (await apiClient.get(`/bookings/${id}/invoice/gst`)).data,
+  regenerateInvoiceGst: async (id: string, input: RegenerateInvoiceGstInput): Promise<InvoiceGstPreviewDto> => (await apiClient.post(`/bookings/${id}/invoice/gst`, input)).data,
   salesExecutives: async (): Promise<{ id: string; name: string }[]> => (await apiClient.get('/bookings/sales-executives')).data,
   cancelBooking: async (id: string, reason?: string): Promise<BookingDto> => (await apiClient.post(`/bookings/${id}/cancel`, { reason })).data,
   addPayment: async (id: string, input: AddPaymentInput): Promise<PaymentDto> => (await apiClient.post(`/bookings/${id}/payments`, input)).data,

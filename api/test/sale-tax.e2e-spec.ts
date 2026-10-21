@@ -414,10 +414,11 @@ describe('Sale GST snapshots (e2e)', () => {
       }
     });
 
-    it('customer GST state code is missing — no inference from free-text state', async () => {
+    it('customer GST state code is missing — a showroom sale: the showroom state, never the free-text state', async () => {
       const b = await newBooking(G, { exShowroom: 1_000_000 }, 'noState');
-      await prisma.customer.update({ where: { id: G.customers.noState }, data: { state: 'Gujarat', city: 'Una', pin: '362560' } });
-      await expectRefused(G, b.id, 'CUSTOMER_STATE_CODE_MISSING');
+      await prisma.customer.update({ where: { id: G.customers.noState }, data: { state: 'Maharashtra', city: 'Pune', pin: '411001' } });
+      await invoice(G, b.id).expect(201);
+      expect(await snapshotOf((await saleOf(b.id))!.id)).toMatchObject({ supplyType: 'INTRA', supplierStateCode: '24', placeOfSupplyStateCode: '24' });
     });
 
     it('accessory has no classification — never silently zero-rated', async () => {

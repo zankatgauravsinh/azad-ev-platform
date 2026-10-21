@@ -255,3 +255,40 @@ export interface GstFilingDto {
   /** Figures that differ now from the return as filed (money as paise strings, counts as numbers). */
   changesSinceFiling: { label: string; filed: string; now: string }[];
 }
+
+// ── Regenerate an issued scooter tax invoice with GST (same number, same date) ───────────────────────────
+
+export const regenerateInvoiceGstSchema = z.object({
+  reason: z.string().trim().min(5, 'Say why the invoice is being regenerated').max(300),
+});
+export type RegenerateInvoiceGstInput = z.infer<typeof regenerateInvoiceGstSchema>;
+
+export interface InvoiceGstBreakdownDto {
+  version: number;
+  supplyType: 'INTRA' | 'INTER';
+  placeOfSupply: string;
+  buyerName: string | null;
+  buyerGstin: string | null;
+  taxable: string;
+  cgst: string;
+  sgst: string;
+  igst: string;
+  totalTax: string;
+  lines: { description: string; code: string | null; codeType: 'HSN' | 'SAC'; ratePercent: string | null; treatment: string; taxable: string; tax: string }[];
+}
+
+/**
+ * What "Regenerate invoice with GST" would do: the invoice (number, date, total — none of them change), its GST
+ * breakdown now (null = none), the breakdown it would get as of the invoice date, and why it cannot be done.
+ */
+export interface InvoiceGstPreviewDto {
+  invoiceNumber: string;
+  invoiceDate: string;
+  total: string;
+  current: InvoiceGstBreakdownDto | null;
+  proposed: InvoiceGstBreakdownDto | null;
+  /** Why it cannot be regenerated now (null = it can). */
+  blocker: string | null;
+  /** The proposed breakdown is the same as the current one. */
+  unchanged: boolean;
+}

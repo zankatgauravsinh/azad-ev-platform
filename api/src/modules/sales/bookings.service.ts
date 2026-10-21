@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   AccessorySaleStatus,
@@ -20,6 +20,10 @@ import {
   type Paginated,
   type PaymentSummary,
   type ReviseBookingTermsInput,
+  type InvoiceGstBreakdownDto,
+  type InvoiceGstPreviewDto,
+  type RegenerateInvoiceGstInput,
+  gstPlaceOfSupply,
   type ScheduleDeliveryInput,
   type UpdateBookingInput,
   type UpsertFinanceInput,
@@ -32,12 +36,13 @@ import { SequenceService } from './sequence.service';
 import { SalesPdfService } from './sales-pdf.service';
 import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import { MonthlyClosingService } from '../finance/monthly-closing.service';
-import { SaleTaxService } from '../tax/sale-tax.service';
+import { SaleTaxService, type PreparedSaleTax } from '../tax/sale-tax.service';
+import { GstFilingService } from '../gst/gst-filing.service';
 import { SaleTaxSnapshotReader } from '../tax/sale-tax-snapshot.reader';
 import type { SaleTaxDocument } from '../tax/sale-tax-document';
 import { GstInvoiceDocumentError, buildGstInvoiceDocument, type GstInvoiceDocument } from './gst-invoice-document';
 import { GstInvoicePdfService } from './gst-invoice-pdf.service';
-import { isAfterBusinessToday, resolveTimeZone } from '../../common/utils/business-date';
+import { businessDateOf, isAfterBusinessToday, resolveTimeZone } from '../../common/utils/business-date';
 import { formatInrExact } from '../../common/utils/money';
 import { EarlyDeliveryDateError, FutureDeliveryDateError, deliveryLowerBound, resolveDeliveryDate, type DeliveryLowerBound, type ResolvedDeliveryDate } from './delivery-date';
 import { computeTotal, sumAccessories } from './pricing';
@@ -88,6 +93,7 @@ export class BookingsService {
     private readonly saleTax: SaleTaxService,
     private readonly taxSnapshots: SaleTaxSnapshotReader,
     private readonly gstPdf: GstInvoicePdfService,
+    private readonly gstFiling: GstFilingService,
   ) {}
 
   // ── Reads ──────────────────────────────────────────────
@@ -536,6 +542,99 @@ export class BookingsService {
       return created;
     });
     return this.getById(id);
+  }
+
+  // ── Regenerate the tax invoice with GST ────────────────
+  /** What regenerating this booking's tax invoice with GST would give, or why it cannot be done. Writes nothing. */
+  async invoiceGstPreview(id: string): Promise<InvoiceGstPreviewDto> {
+    const plan = await this.planInvoiceGst(id);
+    return {
+      invoiceNumber: plan.sale.invoiceNumber!, invoiceDate: plan.invoiceDate, total: plan.sale.total.toString(),
+      current: plan.current, proposed: plan.proposed, blocker: plan.blocker, unchanged: plan.unchanged,
+    };
+  }
+
+  /**
+   * Gives an issued tax invoice its GST breakdown as it should have been on the invoice date — the SAME invoice
+   * number and date, the same total (prices include GST): GST is due in the month of supply, so a new number dated
+   * today would move it to the wrong month. Allowed while that month's GSTR-1 is not marked filed and no credit note
+   * reverses the invoice. A new breakdown version is stored; earlier ones are kept. gst.manage; reason required.
+   */
+  async regenerateInvoiceGst(id: string, dto: RegenerateInvoiceGstInput, userId: string) {
+    const plan = await this.planInvoiceGst(id);
+    if (plan.blocker) throw new ConflictException(plan.blocker);
+    if (plan.unchanged || !plan.prepared || !plan.proposed) throw new BadRequestException('The invoice’s GST breakdown is already up to date — nothing would change');
+    const { booking, sale, prepared, proposed, current } = plan;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Booking" WHERE id = ${id} FOR UPDATE`;
+      const latest = await tx.taxSnapshot.findFirst({ where: { saleId: sale.id }, orderBy: { version: 'desc' }, select: { version: true } });
+      if ((latest?.version ?? 0) !== (current?.version ?? 0)) throw new ConflictException('The invoice’s GST was regenerated meanwhile — reload and check it again');
+      await this.saleTax.persist(tx, sale.id, prepared, userId, { version: proposed.version, reason: dto.reason });
+      const view = (b: InvoiceGstBreakdownDto | null) => ({ gstVersion: b?.version ?? null, supplyType: b?.supplyType ?? null, buyerGstin: b?.buyerGstin ?? null, taxable: b?.taxable ?? null, cgst: b?.cgst ?? null, sgst: b?.sgst ?? null, igst: b?.igst ?? null, totalTax: b?.totalTax ?? null });
+      const changes = diffFields(view(current), view(proposed), ['gstVersion', 'supplyType', 'buyerGstin', 'taxable', 'cgst', 'sgst', 'igst', 'totalTax']);
+      await this.timeline.record({ customerId: booking.customerId, type: CustomerEventType.INVOICE_GENERATED, title: `Invoice ${sale.invoiceNumber} regenerated with GST`, entityType: 'Sale', entityId: sale.id, actorId: userId }, tx);
+      await this.activityLog.recordInTransaction({
+        actorId: userId, action: ActivityAction.UPDATE, entityType: 'Booking', entityId: id, entityLabel: `${booking.code} · ${sale.invoiceNumber}`,
+        summary: `Regenerated tax invoice ${sale.invoiceNumber} with GST (version ${proposed.version}, dated ${plan.invoiceDate}): taxable ${formatInrExact(BigInt(proposed.taxable))}, GST ${formatInrExact(BigInt(proposed.totalTax))}${proposed.buyerGstin ? `, B2B ${proposed.buyerGstin}` : ''} — total ${formatInrExact(sale.total)} unchanged`,
+        changes, reason: dto.reason, metadata: { saleId: sale.id, invoiceNumber: sale.invoiceNumber, version: proposed.version },
+      }, tx);
+    });
+    return this.invoiceGstPreview(id);
+  }
+
+  private async planInvoiceGst(id: string): Promise<{
+    booking: Awaited<ReturnType<BookingsService['getById']>>;
+    sale: { id: string; invoiceNumber: string | null; invoicedAt: Date | null; total: bigint };
+    invoiceDate: string;
+    current: InvoiceGstBreakdownDto | null;
+    proposed: InvoiceGstBreakdownDto | null;
+    prepared: PreparedSaleTax | null;
+    blocker: string | null;
+    unchanged: boolean;
+  }> {
+    const booking = await this.getById(id);
+    if (!booking.sale?.invoicedAt) throw new BadRequestException('This booking has no tax invoice yet — generate the invoice first');
+    const sale = await this.prisma.sale.findFirstOrThrow({
+      where: { id: booking.sale.id },
+      select: {
+        id: true, invoiceNumber: true, invoicedAt: true, total: true,
+        creditNotes: { select: { creditNoteNumber: true } },
+        taxSnapshots: { orderBy: { version: 'desc' }, take: 1, include: { lines: { orderBy: { position: 'asc' } } } },
+      },
+    });
+    const setting = await this.prisma.companySetting.findFirst({ select: { gstEnabled: true, gstEffectiveFrom: true, timezone: true } });
+    const invoiceDate = businessDateOf(sale.invoicedAt!, resolveTimeZone(setting?.timezone));
+    const snap = sale.taxSnapshots[0];
+    const current: InvoiceGstBreakdownDto | null = snap ? {
+      version: snap.version, supplyType: snap.supplyType, placeOfSupply: gstPlaceOfSupply(snap.placeOfSupplyStateCode), buyerName: snap.buyerName, buyerGstin: snap.buyerGstin,
+      taxable: snap.totalTaxable.toString(), cgst: snap.totalCGST.toString(), sgst: snap.totalSGST.toString(), igst: snap.totalIGST.toString(), totalTax: snap.totalTax.toString(),
+      lines: snap.lines.map((l) => ({ description: l.description, code: l.code, codeType: l.codeType, ratePercent: l.ratePercent === null ? null : l.ratePercent.toFixed(2), treatment: l.treatment, taxable: l.taxableAmount.toString(), tax: l.taxTotal.toString() })),
+    } : null;
+
+    let blocker: string | null = null;
+    let prepared: PreparedSaleTax | null = null;
+    if (sale.creditNotes.length) blocker = `Credit note ${sale.creditNotes.map((c) => c.creditNoteNumber).join(', ')} reverses this invoice — its GST can no longer be changed`;
+    else if (sale.total !== booking.total) blocker = 'The invoice total differs from the booking, so its GST cannot be worked out again';
+    else if (!setting?.gstEnabled) blocker = 'GST is turned off in GST Management — turn it on first';
+    else if (await this.gstFiling.isFiled(sale.invoicedAt!, 'GSTR1')) blocker = `GSTR-1 for ${invoiceDate.slice(0, 7)} is marked filed — unlock the month in GST first, or correct the invoice with a credit note`;
+    else {
+      try {
+        prepared = await this.saleTax.prepare(booking, { invoicedAt: sale.invoicedAt! });
+      } catch (e) {
+        if (!(e instanceof HttpException)) throw e;
+        const body = e.getResponse() as { message?: string | string[] } | string;
+        blocker = typeof body === 'string' ? body : Array.isArray(body.message) ? body.message.join('; ') : body.message ?? e.message;
+      }
+      if (!prepared && !blocker) blocker = `The invoice is dated ${invoiceDate}, before the GST registration date (${setting.gstEffectiveFrom?.toISOString().slice(0, 10)}) — it carries no GST`;
+    }
+    const proposed: InvoiceGstBreakdownDto | null = prepared ? {
+      version: (snap?.version ?? 0) + 1, supplyType: prepared.supplyType, placeOfSupply: gstPlaceOfSupply(prepared.placeOfSupplyStateCode), buyerName: prepared.buyerName, buyerGstin: prepared.buyerGstin,
+      taxable: prepared.result.totals.totalTaxable.toString(), cgst: prepared.result.totals.totalCGST.toString(), sgst: prepared.result.totals.totalSGST.toString(),
+      igst: prepared.result.totals.totalIGST.toString(), totalTax: prepared.result.totals.totalTax.toString(),
+      lines: prepared.lines.map(({ plan, result }) => ({ description: plan.description, code: result.code, codeType: result.codeType, ratePercent: result.ratePercent, treatment: result.treatment, taxable: result.taxableAmount.toString(), tax: result.taxTotal.toString() })),
+    } : null;
+    const same = (b: InvoiceGstBreakdownDto): string => JSON.stringify({ ...b, version: 0, buyerName: null });
+    return { booking, sale, invoiceDate, current, proposed, prepared, blocker, unchanged: Boolean(current && proposed && same(current) === same(proposed)) };
   }
 
   /**

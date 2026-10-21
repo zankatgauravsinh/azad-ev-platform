@@ -9,6 +9,7 @@ import type { MonthlyClosingService } from '../finance/monthly-closing.service';
 import type { SaleTaxService } from '../tax/sale-tax.service';
 import type { SaleTaxSnapshotReader } from '../tax/sale-tax-snapshot.reader';
 import type { GstInvoicePdfService } from './gst-invoice-pdf.service';
+import type { GstFilingService } from '../gst/gst-filing.service';
 
 describe('BookingsService.paymentSummary (payment calculations)', () => {
   const service = new BookingsService(
@@ -22,6 +23,7 @@ describe('BookingsService.paymentSummary (payment calculations)', () => {
     {} as SaleTaxService,
     {} as SaleTaxSnapshotReader,
     {} as GstInvoicePdfService,
+    {} as GstFilingService,
   );
 
   it('reports PENDING when nothing is paid', () => {
