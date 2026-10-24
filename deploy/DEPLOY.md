@@ -191,6 +191,22 @@ pm2 logs <api-app-name> --lines 50             # no errors
 Then in a browser, smoke-test what the release touched. For any auth/role-gated feature,
 check it as the intended role **and** as a role that should not see it.
 
+## 7. Releases and tags (dev machine)
+
+Every release is a branch `release/X.Y` and an annotated tag `vX.Y.Z` (a release candidate: `vX.Y.Z-rc.N`), with a
+GitHub Release whose notes are its `CHANGELOG.md` section. **"Latest" on GitHub is what runs in production.**
+
+```
+git tag -a v3.8.0-rc.1 -m "v3.8.0-rc.1" release/3.8 && git push origin v3.8.0-rc.1   # before the deploy
+scripts/github-release.sh publish v3.8.0-rc.1                                       # pre-release
+# deployed and confirmed working → the final tag on the same commit, promoted:
+git tag -a v3.8.0 -m "v3.8.0" release/3.8 && git push origin v3.8.0
+scripts/github-release.sh promote v3.8.0                                            # marks it Latest
+```
+
+Deploy from the tag (`git checkout v3.8.0`) when you want the server pinned to exactly that release. The script needs
+the GitHub CLI logged in (`brew install gh`, `gh auth login`).
+
 ## Nightly backups (database + uploads, copied to S3)
 
 `deploy/azad-backup-docker.timer` runs `scripts/backup-nightly.sh` every night at 02:30 India time (caught up

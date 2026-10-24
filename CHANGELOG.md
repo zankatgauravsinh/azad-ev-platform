@@ -4,7 +4,47 @@ All notable changes to the AZAD EV POINT Showroom Management System are document
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project uses semantic-ish versioning during the module build-out.
 
 ## [Unreleased]
-### Added — Vendor management (release/3.4)
+### Planned
+- Test Rides module; more finance dashboard charts; S3 storage driver for attachments (interface already S3-ready).
+
+## [3.8.0] — release candidate (`release/3.8`, tag `v3.8.0-rc.1`)
+### Fixed
+- **Date ranges independent of the database's time zone.** Raw SQL compared stored UTC times with bound dates and `now()` in the database session's zone, so on a database running India time a sale invoiced before 11:00 IST dropped out of that day. Now in UTC everywhere (`api/src/prisma/sql-time.ts`): P&L cost of sales / returns / accessory cost of sales, sales report by model, dashboard / reports / finance-dashboard charts, overdue deliveries. No change on a UTC database. Regression test runs the app on UTC+14.
+- Version numbers follow the releases from here on (`package.json` 3.8.0); releases are tagged (`vX.Y.Z`) and published as GitHub Releases — the one in production is marked **Latest**.
+
+## [3.7.0] — 2026-10-22 (in production, tag `v3.7.0`)
+### Added — GST module
+- **GST data complete and frozen when issued**: GST registration date, versioned GST breakdown per invoice with the buyer's GSTIN (B2B), place of supply as "24-Gujarat"; service bills store rate, CGST / SGST / IGST, SAC / HSN; accessory invoices and credit notes keep theirs; vendor GST state code; input-credit eligibility on expense categories and bills.
+- **GST returns screen** (`/gst`, `gst.view`): a month's GSTR-1 (B2B, B2CL, B2CS, CDNR / CDNUR, HSN summary, documents issued), GSTR-3B (3.1, 3.2, Table 4, 6.1 set-off), sales and purchase registers, issues to fix before filing.
+- **Filing**: mark GSTR-1 / GSTR-3B filed with ARN and date (`gst.manage`) — figures frozen, the month's documents locked; unlock with a reason; changes since filing listed.
+- **Exports**: GSTR-1 in the GST Offline Tool Excel layout, GSTR-3B summary, sales and purchase registers.
+- **Regenerate invoice with GST** on a booking: same invoice number, date and total; GST as on the invoice date; new version kept with the old; refused once the month is filed.
+- Discount treatment guidance (a discount at sale reduces the taxable value, s.15(3)(a)); invoices issued otherwise are flagged to regenerate.
+### Changed
+- A customer without a GST state code is a showroom sale (place of supply = the showroom's state).
+- Finance → GST summary counts output tax on every invoice and claimable input credit (supplier GSTIN on record).
+### Fixed
+- Android / iOS app accepted by the API in production (CORS for the app's own origins).
+- Side menu scrolls when it is taller than the screen.
+
+Migrations: `20261023090000_gst_foundation`, `20261023100000_gst_return_filing`; `rbac:init` (83 permissions).
+
+## [3.6.0] — 2026-10-21
+### Added
+- **Change booking terms** (owner, `bookings.terms`): price / offer, scooter, customer and sales executive before the invoice, with a reason; total recalculated, never below what was received; audited.
+
+## [3.5.0] — 2026-10-21
+### Added — Audit trail
+- Who did what, when, from where and what changed (old → new) for every action, download, print, export, WhatsApp share and shared-link open; append-only (database trigger); Settings → Audit log (Owner + Manager) with filters and export; History panels on records.
+### Added — Operations
+- **Nightly backups for the Docker production host** (`scripts/backup-nightly.sh`, `deploy/azad-backup-docker.service` + `.timer`, 02:30 IST): database set, uploads archive, 14-day retention (`.keep` kept), off-server copy to S3 through a write-only instance role.
+### Changed
+- Reopening a closed finance month needs a reason.
+
+Migrations: `20261022090000_audit_actions`, `20261022090100_audit_trail`; `rbac:init`.
+
+## [3.4.0] — 2026-10-21
+### Added — Vendor management
 - **Vendors menu + vendor page** (`/vendors`, `/vendors/:id`): profile with type, contact person, PAN (taken from the GSTIN), credit days, bank / UPI; one default scooter vendor. Tabs: Overview (owed, overdue ageing 1–30 / 31–60 / 61–90 / 90+ days, advance, net payable, scooters bought / in stock / sold), Bills, Payments, Scooters, Statement, Purchase orders.
 - **Vendor picker everywhere a supplier is entered**: scooter form, CSV import (Supplier column must name a vendor; blank = default vendor), accessory purchases, expenses (`GET /vendor-options`, readable by anyone who records purchases). Existing scooters were linked to the vendor named in their supplier text, otherwise to COMPTECH.
 - **Scooter purchases owed per scooter**: a scooter bought from a vendor is a bill (price + GST + transport) until paid, due after the vendor's credit days; vendor bill number on the scooter; "Paid to the vendor now" when adding it; paid / not paid on the scooter page with a Pay vendor button.
@@ -21,12 +61,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the pro
 
 Migrations: `20261020090000_vendor_profile_and_scooter_vendor`, `20261021090000_vendor_payments_and_purchase_orders`. Tests: `vendors.e2e-spec.ts`, `vendor-payables.e2e-spec.ts` (25); 777 unit, all e2e suites, 527 web green.
 
-### Added — Operations
-- **Nightly backups for the Docker production host** (`scripts/backup-nightly.sh`, `deploy/azad-backup-docker.service` + `.timer`, 02:30 IST): database set via `backup-docker.sh`, the uploads folder as a checked `uploads-<stamp>.tar.gz`, 14-day retention on the server (`.keep` sets kept), and an off-server copy to S3 through an instance role that may only add files. `backup-docker.sh` gains the opt-in `RETENTION_DAYS` of `backup.sh` (shared `prune_backup_sets`). Setup in `deploy/DEPLOY.md` → Nightly backups.
+### Added — also in 3.4
+- Send quotation, tax invoice, delivery note and booking confirmation on WhatsApp.
+- Accessory purchases from vendors; P&L and GST for accessories.
 - The API build regenerates the Prisma client; Postgres is published on 127.0.0.1 only.
 
-### Planned
-- Test Rides module; more finance dashboard charts; S3 storage driver for attachments (interface already S3-ready).
+## [3.3.0] — 2026-10-17
+### Added
+- Component warranty months on the scooter → warranty card on delivery; accessory catalogue, opening stock and counter sales with their own invoice; delivery date from the purchase date.
+- Owner-only purchase cost breakdown (price, GST, transport); controller and charger numbers.
+
+## [3.2.0] — 2026-10-15
+### Added
+- Model and variant catalogue; vehicle identity locked once committed (owner-only correction after delivery).
+- Strict CSV import against the catalogue with preview and all-or-nothing confirm; per-user rate limits.
+- RTO invoices with HSN picker.
+- Safe, verifiable database backups and a release preparation guide.
 
 ## [0.12.0] — 2026-09-21
 Module — Delivery workflow. See `docs/modules/10-delivery.md`.

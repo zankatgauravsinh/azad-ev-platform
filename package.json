@@ -1,6 +1,6 @@
 {
   "name": "azad-ev-point",
-  "version": "0.1.0",
+  "version": "3.8.0",
   "private": true,
   "description": "AZAD EV POINT — Showroom Management System (single dealership)",
   "workspaces": [
