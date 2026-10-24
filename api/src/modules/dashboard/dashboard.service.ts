@@ -14,6 +14,7 @@ import {
   type UpcomingFreeService,
 } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UTC_NOW } from '../../prisma/sql-time';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { fillMonths } from './chart-utils';
 
@@ -283,11 +284,11 @@ export class DashboardService {
     const [sales, collections, leads] = await Promise.all([
       this.prisma.$queryRaw<{ month: string; amount: bigint; count: number }[]>`
         SELECT to_char(date_trunc('month', "invoicedAt"), 'YYYY-MM') AS month, COALESCE(SUM(total), 0)::bigint AS amount, COUNT(*)::int AS count
-        FROM "Sale" WHERE "invoicedAt" >= date_trunc('month', now()) - interval '5 months' AND "deletedAt" IS NULL AND "companyId" = ${company}
+        FROM "Sale" WHERE "invoicedAt" >= date_trunc('month', ${UTC_NOW}) - interval '5 months' AND "deletedAt" IS NULL AND "companyId" = ${company}
         GROUP BY 1 ORDER BY 1`,
       this.prisma.$queryRaw<{ month: string; amount: bigint; count: number }[]>`
         SELECT to_char(date_trunc('month', "paidAt"), 'YYYY-MM') AS month, COALESCE(SUM(amount), 0)::bigint AS amount, COUNT(*)::int AS count
-        FROM "Payment" WHERE "paidAt" >= date_trunc('month', now()) - interval '5 months' AND "companyId" = ${company}
+        FROM "Payment" WHERE "paidAt" >= date_trunc('month', ${UTC_NOW}) - interval '5 months' AND "companyId" = ${company}
         GROUP BY 1 ORDER BY 1`,
       this.prisma.customer.groupBy({ by: ['leadStatus'], _count: { _all: true } }),
     ]);

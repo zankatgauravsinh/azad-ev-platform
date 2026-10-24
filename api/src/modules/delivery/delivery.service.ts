@@ -14,6 +14,7 @@ import {
   type UpdateChecklistInput,
 } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UTC_NOW } from '../../prisma/sql-time';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { ActivityLogService } from '../../activity-log/activity-log.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/storage.service';
@@ -213,7 +214,7 @@ export class DeliveryService {
              CASE
                WHEN b."actualDelivery" IS NOT NULL THEN 'DELIVERED'
                WHEN (b.total - COALESCE(pp.paid, 0)) > 0 THEN 'AWAITING_PAYMENT'
-               WHEN b."expectedDelivery" IS NOT NULL AND b."expectedDelivery" < date_trunc('day', now()) THEN 'OVERDUE'
+               WHEN b."expectedDelivery" IS NOT NULL AND b."expectedDelivery" < date_trunc('day', ${UTC_NOW}) THEN 'OVERDUE'
                WHEN b."expectedDelivery" IS NOT NULL THEN 'SCHEDULED'
                ELSE 'READY'
              END AS status

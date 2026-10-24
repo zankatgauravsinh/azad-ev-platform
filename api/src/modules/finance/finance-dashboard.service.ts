@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { type FinanceDashboardDto } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UTC_NOW } from '../../prisma/sql-time';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { fillMonths } from '../dashboard/chart-utils';
 import { CashbookService } from './cashbook.service';
@@ -111,16 +112,16 @@ export class FinanceDashboardService {
         SELECT to_char(date_trunc('month', "expenseDate"), 'YYYY-MM') AS month, SUM(amount + "gstAmount")::bigint AS amount
         FROM "Expense"
         WHERE "deletedAt" IS NULL AND "companyId" = ${company} AND status = 'APPROVED'
-          AND "expenseDate" >= (now() - interval '6 months')
+          AND "expenseDate" >= (${UTC_NOW} - interval '6 months')
         GROUP BY 1 ORDER BY 1`;
     }
     return this.prisma.$queryRaw<MonthAmountRow[]>`
       SELECT month, SUM(amount)::bigint AS amount FROM (
         SELECT to_char(date_trunc('month', "incomeDate"), 'YYYY-MM') AS month, (amount + "gstAmount") AS amount
-        FROM "Income" WHERE "companyId" = ${company} AND "incomeDate" >= (now() - interval '6 months')
+        FROM "Income" WHERE "companyId" = ${company} AND "incomeDate" >= (${UTC_NOW} - interval '6 months')
         UNION ALL
         SELECT to_char(date_trunc('month', "paidAt"), 'YYYY-MM') AS month, amount
-        FROM "Payment" WHERE "companyId" = ${company} AND "paidAt" >= (now() - interval '6 months')
+        FROM "Payment" WHERE "companyId" = ${company} AND "paidAt" >= (${UTC_NOW} - interval '6 months')
       ) t GROUP BY month ORDER BY month`;
   }
 }

@@ -19,6 +19,7 @@ import type {
 } from '@azad/shared';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UTC_NOW, utcTimestamp } from '../../prisma/sql-time';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { ExportService, type ExportData } from '../../export/export.service';
 import { GstService } from '../gst/gst.service';
@@ -111,7 +112,7 @@ export class ReportsService {
         JOIN "InventoryUnit" u ON u.id = s."unitId"
         JOIN "ScooterVariant" v ON v.id = u."variantId"
         JOIN "ScooterModel" m ON m.id = v."modelId"
-        WHERE s."deletedAt" IS NULL AND s."companyId" = ${company} AND s."invoicedAt" BETWEEN ${fromDate} AND ${toDate}
+        WHERE s."deletedAt" IS NULL AND s."companyId" = ${company} AND s."invoicedAt" BETWEEN ${utcTimestamp(fromDate)} AND ${utcTimestamp(toDate)}
         GROUP BY m.name ORDER BY amount DESC`,
       this.prisma.booking.findMany({
         where: { createdAt: inRange },
@@ -168,7 +169,7 @@ export class ReportsService {
         ) t`,
       this.prisma.$queryRaw<{ month: string; count: number }[]>`
         SELECT to_char(date_trunc('month', "createdAt"), 'YYYY-MM') AS month, COUNT(*)::int AS count
-        FROM "Customer" WHERE "createdAt" >= date_trunc('month', now()) - interval '5 months' AND "deletedAt" IS NULL AND "companyId" = ${company}
+        FROM "Customer" WHERE "createdAt" >= date_trunc('month', ${UTC_NOW}) - interval '5 months' AND "deletedAt" IS NULL AND "companyId" = ${company}
         GROUP BY 1 ORDER BY 1`,
       this.prisma.$queryRaw<{ name: string; phone: string; orders: number; spent: bigint }[]>`
         SELECT c.name AS name, c.phone AS phone, COUNT(b.id)::int AS orders, COALESCE(SUM(b.total),0)::bigint AS spent
@@ -223,7 +224,7 @@ export class ReportsService {
         GROUP BY m.name, v.name, v.colour HAVING COUNT(*) <= 2 ORDER BY available ASC LIMIT 20`,
       this.prisma.$queryRaw<{ month: string; count: number }[]>`
         SELECT to_char(date_trunc('month', "createdAt"), 'YYYY-MM') AS month, COUNT(*)::int AS count
-        FROM "InventoryUnit" WHERE "createdAt" >= date_trunc('month', now()) - interval '5 months' AND "deletedAt" IS NULL AND "companyId" = ${company}
+        FROM "InventoryUnit" WHERE "createdAt" >= date_trunc('month', ${UTC_NOW}) - interval '5 months' AND "deletedAt" IS NULL AND "companyId" = ${company}
         GROUP BY 1 ORDER BY 1`,
     ]);
 
@@ -260,7 +261,7 @@ export class ReportsService {
       this.outstandingBalance(company),
       this.prisma.$queryRaw<{ date: string; amount: bigint; count: number }[]>`
         SELECT to_char(date_trunc('day', "paidAt"), 'YYYY-MM-DD') AS date, COALESCE(SUM(amount),0)::bigint AS amount, COUNT(*)::int AS count
-        FROM "Payment" WHERE "paidAt" >= (now() - interval '13 days')::date AND "companyId" = ${company}
+        FROM "Payment" WHERE "paidAt" >= (${UTC_NOW} - interval '13 days')::date AND "companyId" = ${company}
         GROUP BY 1 ORDER BY 1`,
       this.prisma.payment.findMany({
         where: { paidAt: inRange },
@@ -298,7 +299,7 @@ export class ReportsService {
   private async monthlyRevenue(company: string) {
     const rows = await this.prisma.$queryRaw<{ month: string; amount: bigint; count: number }[]>`
       SELECT to_char(date_trunc('month', "invoicedAt"), 'YYYY-MM') AS month, COALESCE(SUM(total),0)::bigint AS amount, COUNT(*)::int AS count
-      FROM "Sale" WHERE "invoicedAt" >= date_trunc('month', now()) - interval '5 months' AND "deletedAt" IS NULL AND "companyId" = ${company}
+      FROM "Sale" WHERE "invoicedAt" >= date_trunc('month', ${UTC_NOW}) - interval '5 months' AND "deletedAt" IS NULL AND "companyId" = ${company}
       GROUP BY 1 ORDER BY 1`;
     return fillMonths(rows);
   }

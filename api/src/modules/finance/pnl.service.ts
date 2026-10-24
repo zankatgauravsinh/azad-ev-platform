@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { type GstSummaryDto, type GstSummaryQuery, type ProfitLossDto, type ProfitLossLine, type PnlQuery } from '@azad/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { utcTimestamp } from '../../prisma/sql-time';
 import { TenantContext } from '../../tenant/tenant-context.service';
 import { fillMonths } from '../dashboard/chart-utils';
 import { financialYear, sumBig } from './finance.helpers';
@@ -71,18 +72,18 @@ export class PnlService {
       this.prisma.accessorySale.aggregate({ _sum: { subtotal: true }, where: { status: 'ACTIVE', invoiceDate: { gte: from, lte: to } } }),
       this.prisma.$queryRaw<{ cost: bigint | null }[]>`
         SELECT SUM(i."costAtSale" * i.qty)::bigint AS cost FROM "AccessorySaleItem" i JOIN "AccessorySale" s ON s.id = i."saleId"
-        WHERE s."companyId" = ${company} AND s.status = 'ACTIVE' AND s."invoiceDate" >= ${from} AND s."invoiceDate" <= ${to}`,
+        WHERE s."companyId" = ${company} AND s.status = 'ACTIVE' AND s."invoiceDate" >= ${utcTimestamp(from)} AND s."invoiceDate" <= ${utcTimestamp(to)}`,
       // Scooters sold (invoiced) in the period: what they cost before GST — price + transport. Their GST is input
       // GST, not cost. Scooters expensed before per-scooter tracking are left out (already in the expenses).
       this.prisma.$queryRaw<{ cost: bigint | null }[]>`
         SELECT SUM(u."purchasePrice" + u."transportCharge")::bigint AS cost FROM "Sale" s JOIN "InventoryUnit" u ON u.id = s."unitId"
         WHERE s."companyId" = ${company} AND s."deletedAt" IS NULL AND s.status <> 'CANCELLED' AND u."costInExpenses" = false
-          AND s."invoicedAt" >= ${from} AND s."invoicedAt" <= ${to}`,
+          AND s."invoicedAt" >= ${utcTimestamp(from)} AND s."invoicedAt" <= ${utcTimestamp(to)}`,
       // …less scooters back in stock from a return completed in the period (a scrapped one stays a cost).
       this.prisma.$queryRaw<{ cost: bigint | null }[]>`
         SELECT SUM(u."purchasePrice" + u."transportCharge")::bigint AS cost FROM "VehicleReturn" r JOIN "InventoryUnit" u ON u.id = r."unitId"
         WHERE r."companyId" = ${company} AND r.status = 'COMPLETED' AND r.disposition IN ('AVAILABLE', 'IN_SERVICE') AND u."costInExpenses" = false
-          AND r."completedAt" >= ${from} AND r."completedAt" <= ${to}`,
+          AND r."completedAt" >= ${utcTimestamp(from)} AND r."completedAt" <= ${utcTimestamp(to)}`,
     ]);
 
     const salesRevenueGross = salesPayments._sum.amount ?? 0n;
