@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, CheckCircle2, ClipboardList, FileDown, FileText, IndianRupee, Lock, PackagePlus, Pencil, RotateCcw, Send, Trash2, Upload } from 'lucide-react';
+import { ArrowLeft, Ban, CheckCircle2, ClipboardList, FileDown, FileText, IndianRupee, Link2, Lock, PackagePlus, Pencil, RotateCcw, Send, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -29,6 +29,7 @@ import { usePurchaseOrder, usePurchaseOrderMutations } from '../hooks';
 import { purchaseOrdersApi } from '../api';
 import { PurchaseOrderFormDialog } from '../components/purchase-order-form-dialog';
 import { ReceiveAccessoriesDialog } from '../components/receive-accessories-dialog';
+import { LinkStockDialog, type LinkStockLine } from '../components/link-stock-dialog';
 import { ReceiptBadge, orderStatusTone } from '../components/order-badges';
 import { RecordHistory } from '@/features/audit/components/record-history';
 
@@ -48,6 +49,7 @@ export function PurchaseOrderDetailPage(): JSX.Element {
   const [payingAdvance, setPayingAdvance] = useState(false);
   const [receivingLine, setReceivingLine] = useState<ReceiveAgainstLine | null>(null);
   const [receivingAccessories, setReceivingAccessories] = useState(false);
+  const [linkingLine, setLinkingLine] = useState<LinkStockLine | null>(null);
 
   if (isError) return <EmptyState icon={ClipboardList} title="Purchase order not found" description="It may belong to another showroom, or you may not have purchase-cost access." />;
   if (isLoading || !order) return <div className="space-y-4"><Skeleton className="h-8 w-56" /><Skeleton className="h-40 w-full" /></div>;
@@ -140,6 +142,9 @@ export function PurchaseOrderDetailPage(): JSX.Element {
                       {order.status === 'ORDERED' && l.kind === 'SCOOTER' && l.received < l.quantity && canAddScooters && (
                         <Button size="sm" variant="outline" onClick={() => receiveScooter(l)}><PackagePlus className="h-4 w-4" /> Receive</Button>
                       )}
+                      {order.status === 'ORDERED' && l.kind === 'SCOOTER' && l.received < l.quantity && canManage && (
+                        <Button size="sm" variant="ghost" className="ml-1" onClick={() => setLinkingLine({ orderId: order.id, lineId: l.id, poNumber: order.poNumber, description: l.description, remaining: l.quantity - l.received, unitCost: l.unitCost, gstRateBp: l.gstRateBp })}><Link2 className="h-4 w-4" /> From stock</Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -228,6 +233,7 @@ export function PurchaseOrderDetailPage(): JSX.Element {
       />
       {receivingLine && <UnitFormDialog open onOpenChange={(o) => !o && setReceivingLine(null)} orderLine={receivingLine} onSaved={() => void qc.invalidateQueries({ queryKey: ['purchase-orders'] })} />}
       <ReceiveAccessoriesDialog open={receivingAccessories} onOpenChange={setReceivingAccessories} order={order} />
+      {linkingLine && <LinkStockDialog line={linkingLine} onClose={() => setLinkingLine(null)} />}
       <RecordHistory entityType="PurchaseOrder" entityId={order.id} collapsible />
     </div>
   );

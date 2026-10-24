@@ -1,6 +1,8 @@
 import type {
   CancelPurchaseOrderInput,
   CreatePurchaseOrderInput,
+  LinkStockInput,
+  StockCandidateDto,
   ListPurchaseOrdersQuery,
   Paginated,
   PurchaseOrderDetailDto,
@@ -30,5 +32,8 @@ export const purchaseOrdersApi = {
     form.append('type', type);
     return (await apiClient.post(`/purchase-orders/${id}/documents`, form)).data;
   },
+  /** Scooters already in stock that can be linked to a scooter line, and linking them (owner). */
+  stockCandidates: async (id: string, lineId: string): Promise<StockCandidateDto[]> => (await apiClient.get(`/purchase-orders/${id}/lines/${lineId}/stock`)).data,
+  linkStock: async (id: string, lineId: string, body: LinkStockInput): Promise<PurchaseOrderDetailDto> => (await apiClient.post(`/purchase-orders/${id}/lines/${lineId}/link`, body)).data,
   removeDocument: async (id: string, documentId: string): Promise<PurchaseOrderDetailDto> => (await apiClient.delete(`/purchase-orders/${id}/documents/${documentId}`)).data,
 };

@@ -7,10 +7,12 @@ import {
   PURCHASE_ORDER_DOCUMENT_TYPES,
   cancelPurchaseOrderSchema,
   createPurchaseOrderSchema,
+  linkStockSchema,
   listPurchaseOrdersQuerySchema,
   updatePurchaseOrderSchema,
   type CancelPurchaseOrderInput,
   type CreatePurchaseOrderInput,
+  type LinkStockInput,
   type ListPurchaseOrdersQuery,
   type PurchaseOrderDocumentType,
   type UpdatePurchaseOrderInput,
@@ -23,6 +25,7 @@ import { PdfBrandService } from '../../common/pdf/pdf-brand.service';
 import type { AuthenticatedRequest } from '../../common/types/authenticated-request';
 import { FinancePdfService } from '../finance/finance-pdf.service';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { PurchaseOrderStockService } from './purchase-order-stock.service';
 import { AuditDownload } from '../../activity-log/audit.decorators';
 
 interface MulterFile {
@@ -45,6 +48,7 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 export class PurchaseOrdersController {
   constructor(
     private readonly orders: PurchaseOrdersService,
+    private readonly stock: PurchaseOrderStockService,
     private readonly resolver: PermissionResolver,
     private readonly pdf: FinancePdfService,
     private readonly brand: PdfBrandService,
@@ -98,6 +102,30 @@ export class PurchaseOrdersController {
   async update(@Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodValidationPipe(updatePurchaseOrderSchema)) dto: UpdatePurchaseOrderInput, @CurrentUser('id') userId: string, @Req() req: AuthenticatedRequest) {
     await this.requireCost(req);
     return this.orders.update(id, dto, userId);
+  }
+
+  @Get(':id/lines/:lineId/stock')
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOperation({ summary: 'Scooters already in stock that can be linked to this line (same variant, on no order, this vendor or none)' })
+  async stockCandidates(@Param('id', new ParseUUIDPipe()) id: string, @Param('lineId', new ParseUUIDPipe()) lineId: string, @Req() req: AuthenticatedRequest) {
+    await this.requireCost(req);
+    return this.stock.candidates(id, lineId);
+  }
+
+  @Post(':id/lines/:lineId/link')
+  @Permissions('vendors.manage')
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOperation({ summary: 'Link scooters already in stock to this line: they count as received; vendor, and price / GST where missing, from the order' })
+  async linkStock(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('lineId', new ParseUUIDPipe()) lineId: string,
+    @Body(new ZodValidationPipe(linkStockSchema)) dto: LinkStockInput,
+    @CurrentUser('id') userId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    await this.requireCost(req);
+    await this.stock.link(id, lineId, dto.unitIds, userId);
+    return this.orders.get(id);
   }
 
   @Post(':id/order')

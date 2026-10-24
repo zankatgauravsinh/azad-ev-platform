@@ -169,3 +169,29 @@ export const listPurchaseOrdersQuerySchema = paginationQuerySchema.extend({
   pending: z.enum(['true', 'false']).optional().transform((v) => (v === undefined ? undefined : v === 'true')),
 });
 export type ListPurchaseOrdersQuery = z.infer<typeof listPurchaseOrdersQuerySchema>;
+
+// ── Scooters already in stock, linked to an order line ──────────────────────────────────────────────────
+
+/**
+ * A scooter in stock that can belong to an order line: same model / variant, not on any order, its cost not already
+ * in expenses, and bought from the order's vendor (or no vendor recorded). Money in paise.
+ */
+export interface StockCandidateDto {
+  id: string;
+  vin: string;
+  status: string;
+  addedOn: string;
+  purchaseDate: string | null;
+  vendorName: string | null;
+  purchasePrice: string;
+  purchaseGst: string;
+  /** No purchase price or GST recorded: linking fills them from the order line. */
+  costMissing: boolean;
+  /** A purchase price is recorded and differs from the order line: linking keeps the scooter's own figure. */
+  costDiffers: boolean;
+}
+
+export const linkStockSchema = z.object({
+  unitIds: z.array(z.string().uuid()).min(1, 'Pick at least one scooter').max(500),
+});
+export type LinkStockInput = z.infer<typeof linkStockSchema>;
